@@ -218,33 +218,66 @@ def _walk_nav(
     fern_dir: Path,
     pages: dict[Path, str],
     folders: list[tuple[str, Path]],
+    *,
+    site_prefix: str | None = None,
 ) -> None:
+    if site_prefix is None:
+        site_prefix = prefix
     for node in nodes:
         if "section" in node:
-            section_path = f"{prefix}/{node.get('slug') or _slug_from_title(node['section'])}"
+            section_path = prefix
+            if node.get("skip-slug") != "true":
+                section_path = f"{prefix}/{node.get('slug') or _slug_from_title(node['section'])}"
             if node.get("path"):
                 pages[(fern_dir / node["path"]).resolve()] = section_path
-            _walk_nav(node.get("contents", []), section_path, fern_dir, pages, folders)
+            _walk_nav(
+                node.get("contents", []),
+                section_path,
+                fern_dir,
+                pages,
+                folders,
+                site_prefix=site_prefix,
+            )
         elif "page" in node and node.get("path"):
             slug = node.get("slug") or _slug_from_title(node["page"])
             pages[(fern_dir / node["path"]).resolve()] = f"{prefix}/{slug}"
         elif "folder" in node:
             folder = Path(node["folder"])
-            folders.append((f"{prefix}/{folder.name}", (fern_dir / folder).resolve()))
+            folder_route = f"{prefix}/{node.get('slug') or folder.name}"
+            folders.append((folder_route, (fern_dir / folder).resolve()))
+
+
+def _generated_slug(path: Path) -> str | None:
+    """Read a generated page's route override from its YAML frontmatter only."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "---":
+        return None
+    for line in lines[1:]:
+        if line == "---":
+            break
+        if line.startswith("slug:"):
+            return _yaml_value(line.partition(":")[2]) or None
+    return None
 
 
 def _generated_pages(
     folders: list[tuple[str, Path]],
+    *,
+    require_generated: bool = False,
+    site_prefix: str = "",
 ) -> tuple[set[str], list[str], dict[Path, str]]:
-    """Map generated (C++ API) page paths, or note prefixes whose tree is absent.
+    """Map generated library API paths, or note prefixes whose tree is absent.
 
     The generated tree is produced at build time and gitignored, so its links can only
-    be verified when it is present; otherwise those prefixes are accepted unchecked.
+    be verified when it is present; otherwise those prefixes are accepted unchecked
+    unless the caller requires generated output after generation or for publication.
     """
     known: set[str] = set()
     unchecked: list[str] = []
     paths: dict[Path, str] = {}
     for site_path, directory in folders:
+        if require_generated and not any(path.is_file() for path in directory.rglob("*.mdx")):
+            raise ValueError(f"generated navigation folder has no MDX pages: {directory}")
         if not directory.is_dir():
             unchecked.append(site_path)
             continue
@@ -252,15 +285,18 @@ def _generated_pages(
         known.add(site_path)
         for mdx in directory.rglob("*.mdx"):
             relative = mdx.relative_to(directory).with_suffix("")
-            generated_path = f"{site_path}/{'/'.join(part.lower() for part in relative.parts)}"
+            slug = _generated_slug(mdx)
+            route_root = site_prefix if slug else site_path
+            route = slug.strip("/") if slug else "/".join(part.lower() for part in relative.parts)
+            generated_path = f"{route_root}/{route}"
             known.add(generated_path)
             # Generated library navigation exposes intermediate directories as
             # folder routes even though they are not listed individually in
             # docs.yml. Fern redirects each route to its first generated page.
-            for parent in relative.parents:
+            for parent in Path(route).parents:
                 if parent == Path("."):
                     continue
-                known.add(f"{site_path}/{'/'.join(part.lower() for part in parent.parts)}")
+                known.add(f"{route_root}/{parent.as_posix()}")
             paths[mdx.resolve()] = generated_path
     return known, unchecked, paths
 
@@ -402,6 +438,7 @@ def _check_navigation(
     allow_legacy_links: bool,
     exclude_archives: bool = False,
     redirects_file: Path | None = None,
+    require_generated: bool = False,
 ) -> list[Finding]:
     """Validate one current or archived navigation tree."""
     if not nav_file.is_file():
@@ -412,7 +449,9 @@ def _check_navigation(
     _walk_nav(_load_nav(nav_file), prefix, nav_root, pages, folders)
     if not pages:
         raise ValueError(f"no pages found in {nav_file}")
-    generated, unchecked_prefixes, generated_by_path = _generated_pages(folders)
+    generated, unchecked_prefixes, generated_by_path = _generated_pages(
+        folders, require_generated=require_generated, site_prefix=prefix
+    )
     redirects = _load_redirects(redirects_file) if redirects_file is not None else []
     redirect_sources = {
         source.rstrip("/")
@@ -538,7 +577,7 @@ def _check_navigation(
     return findings
 
 
-def check(docs_root: Path, fern_dir: Path) -> list[Finding]:
+def check(docs_root: Path, fern_dir: Path, *, require_generated: bool = False) -> list[Finding]:
     docs_yml = fern_dir / "docs.yml"
     if not docs_yml.is_file():
         raise ValueError(f"missing Fern config: {docs_yml}")
@@ -553,6 +592,7 @@ def check(docs_root: Path, fern_dir: Path) -> list[Finding]:
         allow_legacy_links=False,
         exclude_archives=True,
         redirects_file=docs_yml,
+        require_generated=require_generated,
     )
 
     archive_dirs = sorted(
@@ -570,6 +610,7 @@ def check(docs_root: Path, fern_dir: Path) -> list[Finding]:
                 prefix=f"{prefix}/{_archive_slug(archive_dir)}",
                 report_root=docs_root,
                 allow_legacy_links=version < _STRICT_ARCHIVE_VERSION,
+                require_generated=require_generated,
             )
         )
     return findings
@@ -592,6 +633,11 @@ def main() -> int:
         help="Fern project directory (default: <docs-root>/fern).",
     )
     parser.add_argument(
+        "--require-generated",
+        action="store_true",
+        help="Require every generated navigation folder to contain MDX pages.",
+    )
+    parser.add_argument(
         "--local-files-only",
         action="store_true",
         help="Check local targets in every authored Markdown file under the public root.",
@@ -608,7 +654,7 @@ def main() -> int:
             findings = check_local_file_links(docs_root.parent)
         else:
             fern_dir = (args.fern_dir or docs_root / "fern").expanduser().resolve()
-            findings = check(docs_root, fern_dir)
+            findings = check(docs_root, fern_dir, require_generated=args.require_generated)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

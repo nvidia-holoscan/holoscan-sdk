@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "schemas": {
+    "holoscan.schema.Time": {
+      "max_prepared_bytes": 512,
+      "fields": {}
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schemas": {
+    "prepared_schema_test.Scalars": {
+      "max_prepared_bytes": 1024,
+      "fields": {
+        "modes": {
+          "max_elements": 4
+        }
+      }
+    }
+  }
+}

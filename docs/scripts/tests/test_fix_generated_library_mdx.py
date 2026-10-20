@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
 SCRIPT_DIR = Path(__file__).parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -13,155 +14,135 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from fix_generated_library_mdx import (  # noqa: E402
     collect_holoscan_api_targets,
     fix_file_content,
+    fix_python_routes,
+    normalize_python_layout,
     reconcile_codeblock_holoscan_links,
+)
+from fix_generated_library_mdx import (  # noqa: E402
+    main as postprocess,
 )
 
 
 class FixGeneratedLibraryMdxTestCase(TestCase):
+    def test_normalizes_python_layout_and_navigation(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            python_root = root / "api-reference/python"
+            package = python_root / "holoscan-python/holoscan"
+            (package / "payload").mkdir(parents=True)
+            body = (
+                "---\nslug: holoscan-python/holoscan\n---\n"
+                "[Payload](/holoscan-python/holoscan/payload)\n"
+                '<CodeBlock links={{"Schema": "/holoscan-python/holoscan/payload#Schema"}} />\n'
+            )
+            (package / "index.mdx").write_text(body, encoding="utf-8")
+            (package / "payload/index.mdx").write_text("Payload\n", encoding="utf-8")
+            navigation = python_root / "_navigation.yml"
+            original_navigation = (
+                "- type: page\n"
+                "  slug: holoscan-python/holoscan/payload\n"
+                "  pageId: holoscan-python/holoscan/payload/index.mdx\n"
+            )
+            navigation.write_text(original_navigation, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "needs post-processing"):  # noqa: PT027
+                normalize_python_layout(root, check=True)
+            assert (package / "index.mdx").read_text() == body
+            assert navigation.read_text() == original_navigation
+
+            normalize_python_layout(root)
+            assert not package.parent.exists()
+            assert (python_root / "holoscan/index.mdx").read_text() == body
+            assert (python_root / "holoscan/payload/index.mdx").read_text() == "Payload\n"
+            assert navigation.read_text() == fix_python_routes(original_navigation).replace(
+                "pageId: holoscan-python/", "pageId: "
+            )
+            normalize_python_layout(root)
+            normalize_python_layout(root, check=True)
+
+    def test_python_routes_in_reused_tree_are_checked_and_rewritten(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            page = root / "api-reference/python/holoscan/errors.mdx"
+            page.parent.mkdir(parents=True)
+            body = (
+                "---\nslug: holoscan-python/holoscan/errors\n---\n"
+                "[Root](/holoscan-python/holoscan)\n"
+                "[Error](/holoscan-python/holoscan/errors#Error)\n"
+                "[Prefixed](/holoscan/sdk-user-guide/holoscan-python/holoscan/errors)\n"
+                '<CodeBlock links={{"Error": "/holoscan-python/holoscan/errors#Error"}} />\n'
+                "[Local](#Error)\n"
+                "[Other](https://example.com/holoscan-python/holoscan/errors)\n"
+            )
+            page.write_text(body)
+            cpp = self._write_page(root, "api-reference/cpp/holoscan/Graph.mdx", "Graph")
+            cpp_before = cpp.read_bytes()
+            command = ["fix_generated_library_mdx.py", "--root", str(root)]
+            with patch.object(sys, "argv", [*command, "--check"]):
+                assert postprocess() == 1
+            assert page.read_text() == body
+            with patch.object(sys, "argv", command):
+                assert postprocess() == 0
+            expected = (
+                body.replace("slug: holoscan-python/", "slug: python/api-reference/")
+                .replace("](/holoscan-python/", "](/holoscan/sdk-user-guide/python/api-reference/")
+                .replace(
+                    '": "/holoscan-python/', '": "/holoscan/sdk-user-guide/python/api-reference/'
+                )
+                .replace(
+                    "](/holoscan/sdk-user-guide/holoscan-python/",
+                    "](/holoscan/sdk-user-guide/python/api-reference/",
+                )
+            )
+            assert page.read_text() == expected
+            with patch.object(sys, "argv", [*command, "--check"]):
+                assert postprocess() == 0
+            assert cpp.read_bytes() == cpp_before
+
+    def test_moves_previous_python_routes_in_reused_output(self) -> None:
+        text = (
+            "---\nslug: py-api-reference/holoscan/errors\n---\n"
+            "[Error](/holoscan/sdk-user-guide/py-api-reference/holoscan/errors#Error)\n"
+            '<CodeBlock links={{"Error": "/holoscan/sdk-user-guide/'
+            'py-api-reference/holoscan/errors#Error"}} />\n'
+        )
+        expected = text.replace("py-api-reference/", "python/api-reference/")
+        assert fix_python_routes(text) == expected
+        assert (
+            fix_python_routes(text.replace("py-api-reference/", "python-api-reference/"))
+            == expected
+        )
+        assert fix_python_routes(expected) == expected
+
+    def test_refuses_to_overwrite_python_output(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            python_root = root / "api-reference/python"
+            package = python_root / "holoscan-python/holoscan"
+            package.mkdir(parents=True)
+            existing = python_root / "holoscan/index.mdx"
+            existing.parent.mkdir()
+            existing.write_text("Existing output\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "refusing to overwrite"):  # noqa: PT027
+                normalize_python_layout(root)
+            assert existing.read_text() == "Existing output\n"
+            assert package.is_dir()
+
+    def test_leaves_cpp_only_output_unchanged(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            page = self._write_page(root, "api-reference/cpp/holoscan/Graph.mdx", "holoscan::Graph")
+            original = page.read_text()
+            normalize_python_layout(root)
+            normalize_python_layout(root, check=True)
+            assert page.read_text() == original
+
     @staticmethod
     def _write_page(root: Path, relative_path: str, title: str, body: str = "") -> Path:
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f'---\ntitle: {title}\ndescription: ""\n---\n\n{body}')
         return path
-
-    def test_unwraps_unpublished_gxf_api_links(self) -> None:
-        original = """\
-[Handle](../../../../nvidia/namespaces/gxf/classes/handle)
-[Current](/holoscan/sdk-user-guide/api-reference/nvidia/namespaces/gxf/classes/handle)
-[Legacy](/holoscan/sdk-user-guide/api-reference/cpp/nvidia/namespaces/gxf/classes/handle)
-<a href="../../../../nvidia/namespaces/gxf/classes/handle">Handle</a>
-[Component](../../../../nvidia/namespaces/gxf/classes/component)
-[GXFComponent](/holoscan/sdk-user-guide/api-reference/holoscan/namespaces/gxf/classes/gxfcomponent)
-"""
-
-        fixed = fix_file_content(original)
-
-        assert fixed == (
-            "Handle\n"
-            "Current\n"
-            "Legacy\n"
-            "Handle\n"
-            "Component\n"
-            "[GXFComponent](/holoscan/sdk-user-guide/api-reference/holoscan/namespaces/gxf/classes/gxfcomponent)\n"
-        )
-        assert fix_file_content(fixed) == fixed
-
-    def test_removes_unpublished_gxf_api_links_from_codeblocks(self) -> None:
-        original = (
-            '<CodeBlock links={{"CudaStreamHandler": "cudastreamhandler", '
-            '"Handle": "../../../../nvidia/namespaces/gxf/classes/handle"}}>\n'
-            '<CodeBlock links={{"Handle": "/holoscan/sdk-user-guide/api-reference/'
-            'nvidia/namespaces/gxf/classes/handle", "GXFComponent": '
-            '"/holoscan/sdk-user-guide/api-reference/holoscan/namespaces/gxf/'
-            'classes/gxfcomponent"}}>\n'
-            '<CodeBlock links={{"Component": "/api-reference/cpp/nvidia/namespaces/'
-            'gxf/classes/component"}}>\n'
-            '<CodeBlock links={{"Valid": "valid", "Count": 2}}>\n'
-        )
-
-        fixed = fix_file_content(original)
-
-        assert fixed == (
-            '<CodeBlock links={{"CudaStreamHandler": "cudastreamhandler"}}>\n'
-            '<CodeBlock links={{"GXFComponent": '
-            '"/holoscan/sdk-user-guide/api-reference/holoscan/namespaces/gxf/classes/gxfcomponent"}}>\n'
-            "<CodeBlock>\n"
-            '<CodeBlock links={{"Valid": "valid", "Count": 2}}>\n'
-        )
-        assert fix_file_content(fixed) == fixed
-
-    def test_preserves_codeblock_attributes_and_handles_multiline_links(self) -> None:
-        original = """\
-<CodeBlock title="Example" links={{
-  "Handle": "../../../../nvidia/namespaces/gxf/classes/handle",
-  "Operator": "operator"
-}} collapsible>
-"""
-
-        fixed = fix_file_content(original)
-
-        assert fixed == (
-            '<CodeBlock title="Example" links={{"Operator": "operator"}} collapsible>\n'
-        )
-        assert fix_file_content(fixed) == fixed
-
-    def test_reconciles_inherited_signature_links_with_generated_pages(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / "generated"
-            body = (
-                '<CodeBlock links={{"Allocator": "allocator", '
-                '"GXFResource": "../namespaces/gxf/classes/gxfresource", '
-                '"Handle": "../../nvidia/namespaces/gxf/classes/handle"}}>\n'
-                "```cpp showLineNumbers={false}\n"
-                "nvidia::gxf::Handle<nvidia::gxf::Component> "
-                "holoscan::gxf::GXFComponent::gxf_component()\n"
-                "```\n"
-                "</CodeBlock>\n"
-            )
-            allocator = self._write_page(
-                root,
-                "api-reference/cpp/holoscan/classes/Allocator.mdx",
-                "holoscan::Allocator",
-                body,
-            )
-            self._write_page(
-                root,
-                "api-reference/cpp/holoscan/namespaces/gxf/classes/GXFResource.mdx",
-                "holoscan::gxf::GXFResource",
-            )
-            self._write_page(
-                root,
-                "api-reference/cpp/holoscan/namespaces/gxf/classes/GXFComponent.mdx",
-                "holoscan::gxf::GXFComponent",
-            )
-            targets = collect_holoscan_api_targets(root)
-            original = allocator.read_text()
-
-            fixed = reconcile_codeblock_holoscan_links(
-                fix_file_content(original), path=allocator, targets=targets
-            )
-
-            assert (
-                '<CodeBlock links={{"GXFComponent": "../namespaces/gxf/classes/gxfcomponent"}}>'
-                in fixed
-            )
-            assert '"GXFResource"' not in fixed
-            assert '"Handle"' not in fixed
-            assert (
-                reconcile_codeblock_holoscan_links(
-                    fix_file_content(fixed), path=allocator, targets=targets
-                )
-                == fixed
-            )
-
-    def test_corrects_qualified_symbol_link_to_a_different_page(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir) / "generated"
-            derived_endpoint = self._write_page(
-                root,
-                "api-reference/cpp/holoscan/namespaces/gxf/classes/Endpoint.mdx",
-                "holoscan::gxf::Endpoint",
-                """\
-<CodeBlock links={{"Endpoint": "endpoint"}}>
-```cpp showLineNumbers={false}
-expected<size_t, RuntimeError> holoscan::Endpoint::read_trivial_type()
-```
-</CodeBlock>
-""",
-            )
-            self._write_page(
-                root,
-                "api-reference/cpp/holoscan/classes/Endpoint.mdx",
-                "holoscan::Endpoint",
-            )
-            targets = collect_holoscan_api_targets(root)
-
-            fixed = reconcile_codeblock_holoscan_links(
-                derived_endpoint.read_text(), path=derived_endpoint, targets=targets
-            )
-
-            assert '<CodeBlock links={{"Endpoint": "../../../classes/endpoint"}}>' in fixed
 
     def test_reconciles_allocator_inherited_signature(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -210,6 +191,10 @@ expected<size_t, RuntimeError> holoscan::Endpoint::read_trivial_type()
             )
             assert '"CudaMemoryResourceAllocator"' not in fixed
             assert '"CudaStreamAllocator"' not in fixed
+            assert (
+                reconcile_codeblock_holoscan_links(fixed, path=derived_allocator, targets=targets)
+                == fixed
+            )
 
     def test_omits_keys_that_would_link_substrings_of_longer_identifiers(self) -> None:
         with TemporaryDirectory() as tmpdir:

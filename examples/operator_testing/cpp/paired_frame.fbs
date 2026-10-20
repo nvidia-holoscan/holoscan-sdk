@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+include "tensor.fbs";
+namespace fixture_example;
+table FrameHeader {
+  sequence: ulong (id: 0);
+  source: string (id: 1);
+}
+table PairedFrame {
+  header: FrameHeader (id: 0);
+  first: holoscan.schema.Tensor (id: 1);
+  second: holoscan.schema.Tensor (id: 2);
+}
+root_type PairedFrame;
+file_identifier "OTPF";

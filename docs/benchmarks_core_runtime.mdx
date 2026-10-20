@@ -1,0 +1,331 @@
+The SDK ships its runtime performance coverage in-tree under the top-level
+`benchmark/` directory, alongside its correctness tests. This page separates
+public transport-through-Graph measurements from implementation
+microbenchmarks used by SDK developers. Channel-focused transport results are
+covered on [Channel Benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks).
+Application sensor-to-actuation measurements are not yet available and remain
+unpublished.
+
+<Note title="You will learn">
+- What one controlled x86_64 run measured through a running Graph.
+- Which internal suites help SDK developers diagnose runtime costs locally.
+</Note>
+
+<Note title="Controlled x86_64 results">
+  The EA2 tables report medians across seven repetitions on one controlled
+  x86_64 workstation. Single-process latency rows use at least 10,000 measured
+  samples and report p50, p99, and p99.9. Interprocess latency rows use 1,000
+  warmup plus at least 1,000 measured samples and deliberately stop at p99.
+  Throughput is unpaced. The 1:1 and chain latency rows use 200 µs pacing and
+  queue depth 1; fanout latency uses queue depth 2. Throughput also uses queue
+  depth 2.
+</Note>
+
+## Transport through a running Graph
+
+The controlled suite reports comparable payload and process-topology
+dimensions where matched HoloMQ, Channel, and Graph rows exist. Coverage is
+not identical across all three layers. These are independent measurement
+boundaries rather than additive substages: do not subtract one row from
+another to infer framework overhead.
+
+<svg viewBox="0 0 760 180" role="img" aria-labelledby="graph-measurement-boundaries-title" aria-describedby="graph-measurement-boundaries-desc" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="graph-measurement-boundaries-title">Independent transport measurement boundaries</title>
+  <desc id="graph-measurement-boundaries-desc">Three solid boxes represent separate HoloMQ transport, typed Channel facade, and running Graph measurements. A dashed fourth box marks future application end-to-end measurements that are not yet published.</desc>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">
+    <rect x="30" y="48" width="155" height="58" rx="6" fill="none" stroke="#76B900" strokeWidth="2"/>
+    <text x="107" y="72" textAnchor="middle" fontSize="13" fontWeight="600">HoloMQ transport</text>
+    <text x="107" y="91" textAnchor="middle" fontSize="12" opacity="0.75">independent boundary</text>
+    <line x1="185" y1="77" x2="215" y2="77" stroke="currentColor" strokeWidth="1.5" opacity="0.45"/>
+    <rect x="215" y="48" width="155" height="58" rx="6" fill="none" stroke="#76B900" strokeWidth="2"/>
+    <text x="292" y="72" textAnchor="middle" fontSize="13" fontWeight="600">Channel facade</text>
+    <text x="292" y="91" textAnchor="middle" fontSize="12" opacity="0.75">independent boundary</text>
+    <line x1="370" y1="77" x2="400" y2="77" stroke="currentColor" strokeWidth="1.5" opacity="0.45"/>
+    <rect x="400" y="48" width="155" height="58" rx="6" fill="none" stroke="#76B900" strokeWidth="2"/>
+    <text x="477" y="72" textAnchor="middle" fontSize="13" fontWeight="600">Running Graph</text>
+    <text x="477" y="91" textAnchor="middle" fontSize="12" opacity="0.75">independent boundary</text>
+    <line x1="555" y1="77" x2="585" y2="77" stroke="currentColor" strokeWidth="1.5" opacity="0.45"/>
+    <rect x="585" y="48" width="145" height="58" rx="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="7 5" opacity="0.75"/>
+    <text x="657" y="72" textAnchor="middle" fontSize="13" fontWeight="600">Application E2E</text>
+    <text x="657" y="91" textAnchor="middle" fontSize="12" opacity="0.75">not yet measured</text>
+    <text x="380" y="142" textAnchor="middle" fontSize="12" opacity="0.7">Compare matched rows; do not subtract independently timed boundaries.</text>
+  </g>
+</svg>
+
+{/* BENCHMARK-SUITE:GRAPH-LATENCY:BEGIN */}
+
+### Single-process Graph transport latency
+
+| Topology | Payload | Storage | Application payload | p50 | p99 | p99.9 | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| Single-process 1:1 | `BenchmarkPod64` | Inline | 64 B | 6.560 µs | 7.722 µs | 8.057 µs | Sleeping wait set |
+| Single-process 1:1 | `schema::TimeT` | Inline | 16 B | 6.533 µs | 7.131 µs | 7.575 µs | Generated-schema encode and decode |
+| Single-process 1:1 | `Tensor` | Pinned host | 1 MiB | 7.154 µs | 7.928 µs | 8.557 µs | Descriptor-only; backing pools initialized during warmup |
+| Single-process 1:1 | `Tensor` | Device | 1 MiB | 8.558 µs | 9.572 µs | 10.244 µs | Descriptor-only; backing pools initialized during warmup |
+| Single-process 1:1 | `runtime_benchmark::MultiTensorMessageT` | Pageable host | 2 MiB | 9.856 µs | 10.584 µs | 11.167 µs | Two rank-1 uint8 Tensor fields; independent preinitialized pools |
+| Single-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 8.499 µs | 9.228 µs | 9.579 µs | Generated schema with preinitialized Tensor backing |
+| Single-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 8.189 µs | 8.854 µs | 9.131 µs | As above; the sink borrows each sample with `selected_sample()` instead of an owning copy |
+| Single-process 1:2, shared partition | `BenchmarkPod64` | Inline | 64 B | 5.058 µs | 5.367 µs | 5.495 µs | Shared operator partition; direct-retained fanout; eventless; pump-free |
+| Single-process 1:2, separate partitions | `BenchmarkPod64` | Inline | 64 B | 8.362 µs | 9.095 µs | 9.395 µs | One source partition and one partition per subscriber; direct-retained fanout; eventless; pump-free |
+| Single-process 1:4, shared partition | `BenchmarkPod64` | Inline | 64 B | 9.617 µs | 10.001 µs | 10.163 µs | Shared operator partition; direct-retained fanout; eventless; pump-free |
+| Single-process 1:4, separate partitions | `BenchmarkPod64` | Inline | 64 B | 10.529 µs | 11.100 µs | 11.313 µs | One source partition and one partition per subscriber; direct-retained fanout; eventless; pump-free |
+| Single-process 10-operator chain | `BenchmarkPod64` | Inline | 64 B | 33.985 µs | 35.113 µs | 36.192 µs | Source, eight relays, and sink |
+
+### Interprocess Graph transport latency
+
+| Topology | Payload | Storage | Application payload | p50 | p99 | Notes |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| Two-process 1:1 | `BenchmarkPod64` | Inline | 64 B | 16.324 µs | 17.143 µs | Sleeping wait set |
+| Two-process 1:1 | `schema::TimeT` | Inline | 16 B | 16.566 µs | 17.554 µs | Generated-schema encode and decode |
+| Two-process 1:1 | `Tensor` | Pinned host | 1 MiB | 22.200 µs | 23.303 µs | Preinitialized backing; host writer, so no readiness fence |
+| Two-process 1:1 | `Tensor` | Pinned host | 1 MiB | 26.995 µs | 28.336 µs | Preinitialized backing; CUDA stream writer, so the consumer waits on its readiness fence |
+| Two-process 1:1 | `Tensor` | Device | 1 MiB | 26.964 µs | 28.199 µs | Preinitialized backing |
+| Two-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 21.567 µs | 22.697 µs | Generated schema with preinitialized Tensor backing |
+| Two-process 1:1 | `schema::ImageT` | Pinned host | 1 MiB | 24.010 µs | 25.199 µs | Generated schema with preinitialized Tensor backing; host writer, so no readiness fence |
+| Two-process 1:1 | `schema::ImageT` | Pinned host | 1 MiB | 28.878 µs | 30.129 µs | Generated schema with preinitialized Tensor backing; CUDA stream writer, so the consumer waits on its readiness fence |
+| Two-process 1:1 | `schema::ImageT` | Device | 1 MiB | 28.950 µs | 30.350 µs | Generated schema with preinitialized Tensor backing |
+| Two-process 1:1 | `runtime_benchmark::MultiTensorMessageT` | Pageable host | 2 MiB | 24.516 µs | 25.547 µs | Two rank-1 uint8 Tensor fields; independent preinitialized pools |
+| Three-process 1:2 | `BenchmarkPod64` | Inline | 64 B | 20.111 µs | 25.754 µs | Fanout |
+| Three-process chain | `BenchmarkPod64` | Inline | 64 B | 32.961 µs | 34.478 µs | Producer, relay, and consumer |
+
+{/* BENCHMARK-SUITE:GRAPH-LATENCY:END */}
+
+The table's latency boundary is `publication_to_receive`: its source timestamp
+is taken immediately before `emit()`, after any producer-side Tensor loan
+acquisition and writes, and its sink timestamp is taken immediately after
+`receive()`. The docs preset uses descriptor-only raw Tensor and multi-Tensor
+rows. Their compiler-owned pool backing is initialized during warmup, so no
+backing `memset` occurs during measured publications; the rows isolate
+descriptor publication, Runtime execution, retention, and receive. The full
+callback and Tensor phase timings remain available in the artifacts, and the
+runner retains a `full_write` profile for separate producer-work diagnostics.
+
+`runtime_benchmark::MultiTensorMessageT` contains one `uint64` sequence plus
+two independent rank-1 `uint8` pageable-host Tensor fields, `first` and
+`second`. Each field is 1 MiB and has its own compiler-owned pool, for a 2 MiB
+application payload. The interprocess 1:2 row uses queue depth 2 and 5 ms
+pacing to provide the flow-control headroom required by that topology.
+
+The p99 and p99.9 values are descriptive. Seven repetitions characterize this
+controlled run but do not establish a tail-latency acceptance bound. The
+interprocess rows use at least 1,000 measured samples, which support p99 but
+not a consistently useful p99.9 estimate, so the interprocess table omits that
+column.
+
+{/* BENCHMARK-SUITE:GRAPH-THROUGHPUT:BEGIN */}
+
+### Single-process Graph throughput
+
+| Topology | Payload | Storage | Application payload | Logical messages/s | Aggregate deliveries/s | Notes |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| Single-process 1:1 | `BenchmarkPod64` | Inline | 64 B | 197,837 | 197,837 | Sleeping wait set |
+| Single-process 1:1 | `schema::TimeT` | Inline | 16 B | 273,673 | 273,673 | Generated-schema encode and decode |
+| Single-process 1:1 | `Tensor` | Pinned host | 1 MiB | 193,925 | 193,925 | Descriptor-only; backing pools initialized during warmup |
+| Single-process 1:1 | `Tensor` | Device | 1 MiB | 120,092 | 120,092 | Descriptor-only; backing pools initialized during warmup |
+| Single-process 1:1 | `runtime_benchmark::MultiTensorMessageT` | Pageable host | 2 MiB | 98,638 | 98,638 | Two rank-1 uint8 Tensor fields; independent preinitialized pools |
+| Single-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 135,504 | 135,504 | Generated schema with preinitialized Tensor backing |
+| Single-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 147,535 | 147,535 | As above; the sink borrows each sample with `selected_sample()` instead of an owning copy |
+| Single-process 1:2, shared partition | `BenchmarkPod64` | Inline | 64 B | 168,961 | 337,922 | Shared operator partition; direct-retained fanout; eventless; pump-free |
+| Single-process 1:2, separate partitions | `BenchmarkPod64` | Inline | 64 B | 204,854 | 409,707 | One source partition and one partition per subscriber; direct-retained fanout; eventless; pump-free |
+| Single-process 1:4, shared partition | `BenchmarkPod64` | Inline | 64 B | 95,505 | 382,022 | Shared operator partition; direct-retained fanout; eventless; pump-free |
+| Single-process 1:4, separate partitions | `BenchmarkPod64` | Inline | 64 B | 161,003 | 644,010 | One source partition and one partition per subscriber; direct-retained fanout; eventless; pump-free |
+| Single-process 10-operator chain | `BenchmarkPod64` | Inline | 64 B | 34,236 | 34,236 | Source, eight relays, and sink |
+
+### Interprocess Graph throughput
+
+| Topology | Payload | Storage | Application payload | Logical messages/s | Aggregate deliveries/s | Notes |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| Two-process 1:1 | `BenchmarkPod64` | Inline | 64 B | 149,946 | 149,945 | Sleeping wait set |
+| Two-process 1:1 | `schema::TimeT` | Inline | 16 B | 157,342 | 157,341 | Generated-schema encode and decode |
+| Two-process 1:1 | `Tensor` | Pinned host | 1 MiB | 79,654 | 79,646 | Preinitialized backing; host writer, so no readiness fence |
+| Two-process 1:1 | `Tensor` | Pinned host | 1 MiB | 73,673 | 73,670 | Preinitialized backing; CUDA stream writer, so the consumer waits on its readiness fence |
+| Two-process 1:1 | `Tensor` | Device | 1 MiB | 73,764 | 73,755 | Preinitialized backing |
+| Two-process 1:1 | `schema::ImageT` | Pageable host | 1 MiB | 111,980 | 111,976 | Generated schema with preinitialized Tensor backing |
+| Two-process 1:1 | `schema::ImageT` | Pinned host | 1 MiB | 80,371 | 80,358 | Generated schema with preinitialized Tensor backing; host writer, so no readiness fence |
+| Two-process 1:1 | `schema::ImageT` | Pinned host | 1 MiB | 66,642 | 66,640 | Generated schema with preinitialized Tensor backing; CUDA stream writer, so the consumer waits on its readiness fence |
+| Two-process 1:1 | `schema::ImageT` | Device | 1 MiB | 58,765 | 58,760 | Generated schema with preinitialized Tensor backing |
+| Two-process 1:1 | `runtime_benchmark::MultiTensorMessageT` | Pageable host | 2 MiB | 80,424 | 80,420 | Two rank-1 uint8 Tensor fields; independent preinitialized pools |
+| Three-process 1:2 | `BenchmarkPod64` | Inline | 64 B | 125,174 | 250,343 | Fanout |
+| Three-process chain | `BenchmarkPod64` | Inline | 64 B | 88,993 | 88,991 | Producer, relay, and consumer |
+
+{/* BENCHMARK-SUITE:GRAPH-THROUGHPUT:END */}
+
+The tables preserve logical publications/s and aggregate deliveries/s as
+separate metrics. For fanout, one logical publication produces one delivery
+per subscriber, so aggregate delivery rate scales with subscriber count. The
+small 1:1 difference between the rates is measurement-window alignment, not
+data loss. The paired single-process fanout rows compare one shared operator
+partition with separate source and subscriber partitions. Both arrangements
+measure the default process-local direct-retained fanout: the source's
+`emit()` retains the sample for every subscriber directly, so neither needs an
+event wake or a channel-pump thread. The separate rows also give every
+subscriber its own partition on its own pinned CPU, which adds partition-owner
+wake and scheduling costs while allowing subscriber callbacks to run in
+parallel. The Notes column records the delivery path and wake mechanism present
+in each measurement.
+
+For representative 1:1 rows, the running Graph measured 6.533–9.856 µs
+single-process and 16.324–28.950 µs interprocess p50 latency. This boundary
+includes Runtime wake-up, controller and any channel-pump coordination,
+readiness selection, operator activation, and receive materialization. It is
+therefore expected to cost more than the lower-level HoloMQ and Channel
+measurements, but the boundaries are independently timed and must not be
+subtracted to infer one internal stage.
+
+### Provenance and caveats
+
+These measurements are evidence of cost structure on this machine, not
+performance guarantees for other hardware or application graphs.
+
+{/* BENCHMARK-SUITE:PROVENANCE:BEGIN */}
+
+| Field | Value |
+| --- | --- |
+| Run date and artifact digest | 2026-10-16; `summary.json` SHA-256 `7efd47e7021ef97ae92414946859ddadc48d584fdcb0358799ef930aa6b7fd5a` |
+| CPU and topology | x86_64; recorded topology covers 7 physical cores on 1 socket; SMT sibling topology reported |
+| Selected CPUs | Logical CPUs 2, 3, 4, 5, 6, 7, 8, 9; topology not recorded for CPU 8 |
+| GPU | NVIDIA RTX A6000 (driver 595.71.05) |
+| OS and kernel | Linux 6.8.0-139-generic on x86_64 |
+| Build | Release; c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0; Build cuda_13.0.r13.0/compiler.36424714_0 |
+| System controls | performance governor reported for CPUs with recorded topology; ASLR and CPU idle-state status are not recorded in suite artifacts |
+| Preset and repetitions | `docs-core-runtime`; 7 repetitions |
+| Run-to-run gate | 10% maximum primary-metric coefficient of variation; 48/48 rows passed |
+| Single-process latency | At least 10,000 measured samples; 1,000 warmup; p50, p99, and p99.9 |
+| Interprocess latency | 1,000 measured samples; 1,000 warmup; p50 and p99 |
+| Payload validation | Disabled in timed production rows; structural and completion checks retained |
+
+{/* BENCHMARK-SUITE:PROVENANCE:END */}
+
+Host checks confirmed that logical CPUs 2–9 were kernel-isolated
+(`isolcpus`, `nohz_full`, `rcu_nocbs`), their policies used the performance
+governor, and C1, C1E, and C6 were disabled. The suite artifact records the
+governor but does not yet capture CPU isolation or idle-state controls, so the
+generated provenance row remains conservative. The RTX A6000 also drove the
+workstation display, and GPU utilization was 6% immediately before the run, so
+GPU-sensitive rows may include that background load.
+
+The two-process pinned-host `Tensor` and `schema::ImageT` rows come in pairs.
+The host-writer rows fill each buffer on the CPU, so the consumer has no
+readiness fence to wait for. The CUDA-stream-writer rows fill it on the
+producer's stream, as a GPU producer would, so each slot returns to the pool
+only after the consumer's stream passes that fence; the device rows share that
+handoff. Compare pinned-host rows only with the same writer. Both writers run
+below pageable-host `schema::ImageT` because a pinned-host or device consumer
+orders each slot's release after its own CUDA stream, which costs CPU time on
+every sample. See
+[Pinned-host readiness follows the writer](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#pinned-host-readiness-follows-the-writer)
+for the contract and for when slot return limits throughput.
+
+### Reproducing the tables
+
+Run from the SDK source root on a native Linux x86_64 benchmark host. Measurements
+on other hardware need their own provenance. First save the current CPU
+configuration and apply the benchmark controls:
+
+```bash
+sudo ./benchmark/configure_cpu_performance.sh \
+  apply /tmp/holoscan-cpu-performance.state
+```
+
+Then run the rows used by this page in the SDK build container. `launch` starts
+in the selected target's build directory, so the benchmark uses `--build-dir .`.
+The explicit x86_64 target matches the `setarch` command and published hardware:
+
+```bash
+QA_CPUS=$(./benchmark/configure_cpu_performance.sh recommend 8)
+RESULTS_DIR="transport-suite-docs-core-runtime-$(date +%Y%m%d-%H%M%S)"
+
+./run launch --arch x86_64 \
+  --security-opt=seccomp=unconfined \
+  --run-cmd "setarch x86_64 -R \
+    python3 ../benchmark/run_transport_benchmark_suite.py \
+    --build-dir . \
+    --output-dir '${RESULTS_DIR}' \
+    --preset docs-core-runtime \
+    --cpus ${QA_CPUS}"
+```
+
+<Note title="Reduced-core systems">
+  The `docs-core-runtime` preset also accepts four or more distinct physical
+  cores. It runs every row whose operator and support-thread roles fit and
+  records the remaining rows as topology-based skips. The generated
+  `core-runtime-tables.md` is marked as partial; updating this public page with
+  `--update-doc` still requires the complete eight-core, 48-row run.
+</Note>
+
+After the benchmark finishes, use the same host shell to generate the tables
+from the preserved artifacts and update this page in place. Query the directory
+for the same target instead of reconstructing its name:
+
+```bash
+BUILD_DIR=$(./run get_build_dir --arch x86_64)
+python3 benchmark/summarize_runtime_benchmarks.py \
+  "${BUILD_DIR}/${RESULTS_DIR}" \
+  --update-doc docs/benchmarks_core_runtime.mdx
+```
+
+Finally, restore the saved host CPU configuration:
+
+```bash
+sudo ./benchmark/configure_cpu_performance.sh \
+  restore /tmp/holoscan-cpu-performance.state
+```
+
+See [Runtime benchmark hardware tuning](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/benchmark/runtime/HARDWARE_TUNING.md)
+for GPU clock controls, Jetson controls, verification, and recovery commands.
+
+## Internal suite inventory
+
+| Suite | Executable / directory | What it measures |
+| --- | --- | --- |
+| Dispatcher | `benchmark/runtime` (`runtime_dispatcher_benchmark`) | One preallocated dispatcher freeze/select/complete cycle over 1/8/64 ready candidates; readiness notification publish/drain/retire; one complete blocking `run(plan)` activation including session lifecycle and teardown. |
+| Runtime channel session | `benchmark/runtime` (`runtime_channel_benchmark`) | Channel-session activation prepare/retire cycles, readiness polls over retained bursts (up to 1,024 samples), and witness retirement as graph-wide channel counts scale. |
+| Runtime payload | `benchmark/runtime` (`runtime_payload_benchmark`) | Steady-state compiled-graph catalog publish/receive: encode, framing, submission, decode, and `Sample<T>` construction for POD, `schema::TimeT`, `schema::StringT`, and nested `schema::ImuT` payloads; reports wire size and per-sample allocations. |
+| Prepared schema Graph | `benchmark/runtime` (`runtime_prepared_schema_graph_benchmark`) | A running IMU source-transform-sink Graph in owning, borrowed, and prepared-transform modes, over direct and forced-HoloMQ routes with tracing off/on. Reports receive, scratch, publication, and whole-callback allocations separately, callback cost per transform hop, and source-to-sink p50/p95/p99. Its full-run queue pacing differs from the descriptor Graph benchmark's retirement acknowledgments, so their latency percentiles are not comparable. |
+| Temporal contract | `benchmark/temporal_contract` | The payload-independent temporal cache and selection engines: cache push, `Exact` and `LatestWithin` selection, cancellation, commit, and `DrainAll` batch paths at retained depths from 1 to 1,024. |
+| Graph authoring | `benchmark/graph` | Cold graph-authoring scaling: operator declarations, linear chains, fan-out DAGs with cycle/fan-in validation, snapshot construction and canonical hashing, and nested reusable graphs. |
+| Endpoint catalog | `benchmark/endpoint_catalog` | Cold endpoint-catalog construction and normalization: builder plus canonical build up to the schema maximum of 4,096 endpoints, and POD layout validation and digest derivation up to 1,024 fields. |
+| Time | `benchmark/time` | Clock-registry and clock-conversion paths (`ClockRegistry`, `ManualClock`, affine clock conversions). |
+| Runtime aggregate | `benchmark/runtime_aggregate` (`runtime_aggregate_benchmark`) | The cumulative runtime scenario set: it sequences selected cases from the dispatcher, compiled-channel, POD, and temporal suites (dispatch, multi-rate fresh/stalled scenarios, and more) through one CTest entry. |
+| Hello scaffold | `benchmark/core_hello` | The minimal Google Benchmark example against `holoscan::core`; the template for adding new suites. |
+
+## Running the suites locally
+
+All commands run from the repository root that contains the `benchmark/`
+directory. The `./run bench` helper executes inside the Holoscan build
+container with a Release build by default, rebuilds any stale benchmark
+targets, and runs the binaries directly so Google Benchmark output keeps its
+normal formatting:
+
+```bash
+./run bench --help    # full command reference and commented examples
+./run bench --list    # list registered benchmarks (CTest name + short alias)
+./run bench           # build what is missing and run all benchmarks
+```
+
+You can target one suite by alias or CTest name — for example
+`./run bench --name core_hello` and
+`./run bench --name BENCHMARK_CORE_HELLO` are equivalent. Suites are also
+registered with CTest under the `benchmark` label, so `ctest -L benchmark`
+runs them from an existing build tree.
+
+<Tip>
+  Benchmark defaults keep runtimes short enough for frequent developer and CI
+  smoke runs. For stable local measurements, use the reversible host tuning
+  helper and explicit CPU placement described above, close background
+  workloads, and use a production-quality preset.
+</Tip>
+
+## Recap
+
+- Controlled representative 1:1 Graph p50 latency ranged from 6.533–9.856 µs
+  in one process and 16.324–28.950 µs between two processes.
+- Single-process rows report p99.9 from at least 10,000 measurements;
+  interprocess rows use at least 1,000 measurements and stop at p99.
+- The generated tables compare shared and separate-partition 1:2 and 1:4
+  fanout, include a POD 10-operator single-process chain, and cover a generated
+  schema with two preallocated Tensor fields.
+- HoloMQ, Channel, and Graph measurements are independent boundaries; compare
+  matched rows and do not subtract them.
+- The internal microbenchmark inventory remains available for local diagnosis
+  and CI smoke coverage; it is not the public transport result table.

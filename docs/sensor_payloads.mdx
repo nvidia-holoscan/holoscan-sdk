@@ -1,0 +1,554 @@
+Two of the SDK schema payloads describe measurements rather than transport: `ImageT`
+carries a camera frame and `ImuT` carries one inertial sample. Both are ordinary
+[schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) — declare
+`Output<holoscan::schema::ImageT>`, wire it with `add_flow()`, and the runtime does the
+rest. What makes them worth a page of their own is that they are the SDK's opinion about
+what a sensor message means, and that opinion is load-bearing: a consumer fusing a frame
+against an inertial window is relying on facts the schema states normatively rather than
+on whatever the producer found convenient.
+
+Both are owned by `holoscan::sensor_io` rather than by Core, so a graph carrying either
+one links that library, which is installed by the `holoscan-sensor-io` component (required alongside `holoscan-core`; a Core install that omits it fails `find_package(holoscan)`). The type names
+did not move with the ownership: a FlatBuffers namespace is part of the wire identity, so
+these remain `holoscan::schema::ImageT` and `holoscan::schema::ImuT`.
+
+Python exposes the same values directly from the Core wheel. It bundles the generated
+modules, their codecs, and the separately linked `libholoscan_sensor_io` DSO, so
+`pip install holoscan-core` provides the complete built-in `holoscan.schema` surface.
+This Python packaging choice does not merge the native libraries: componentized C++
+installs still select and link the `holoscan-sensor-io` component explicitly.
+Likewise, a componentized native Python install must select both `holoscan-python_libs`
+and `holoscan-sensor-io-python_libs` to expose `Image` and `Imu`; a Core-only native
+install intentionally exposes only the Core-owned schema values.
+
+```python
+from holoscan.schema import Header, Image, Imu
+from holoscan.schema.image import (
+    UNKNOWN_IMAGE_SIGNIFICANT_BITS,
+    ColorSpace,
+    ImageEncoding,
+    ImagePlaneLayout,
+)
+from holoscan.schema.imu import ImuFlags
+
+image = Image(
+    header=Header(frame_id="camera"),
+    height=1080,
+    width=1920,
+    encoding=ImageEncoding.RGBA8,
+    color_space=ColorSpace.SRGB,
+    significant_bits=UNKNOWN_IMAGE_SIGNIFICANT_BITS,
+)
+imu = Imu(flags=ImuFlags.ORIENTATION_VALID)
+```
+
+`Image.significant_bits` has two distinct sentinel values. Zero means the sample uses the full
+per-component container width implied by its encoding; it is not an unknown value. Use
+`UNKNOWN_IMAGE_SIGNIFICANT_BITS` (255) when the precision is genuinely unknown. Values from 1
+through the container width state an exact precision, such as 10 significant bits in a 16-bit
+sample.
+
+`holoscan.schema.Time` and the other classes in this namespace are Python values: construct
+them, emit them, and declare a port with them when `receive_data()` should return the generated
+class. `holoscan.payload.schema.Time` is instead the canonical payload-identity token used by
+configuration and declarations; it is not a constructor. A port declared with that token accepts
+and returns the schema's plain mapping form, while a port declared with `holoscan.schema.Time`
+materializes `Time`. This lets identity-only code avoid depending on a particular value facade.
+
+Image and Imu are component-owned values, so declare their Python ports with
+`holoscan.schema.Image` and `holoscan.schema.Imu`. The fixed `holoscan.payload.schema` aliases cover
+the Core identities (`Header`, `String`, `TensorPacket`, and `Time`); resolving an optional identity
+by name is valid only after its component has installed that registry row.
+
+The classes are generated from the production `.fbs` files. Included `Header` and geometry
+fields reuse the canonical Core classes rather than generating competing nested types. `Image`
+uses the same Sensor I/O metadata and Tensor validation as C++, exposes its `data` Tensor through
+the read-only `image.tensors` mapping, and does not register a second generic codec.
+
+This page is about the contract rather than the mechanics. It covers what the shared
+`Header` promises and why, where a new field belongs when the shipped shape does not carry
+what you need, and what a schema change costs a deployment that is already running.
+
+<Note title="You will learn">
+  - How to borrow an input Image and edit bounded output metadata without copying
+    its generated descriptor or retaining its pixels
+  - Why `capture_timestamp_ns` is normatively the *start* of integration, and what
+    breaks when a producer publishes the midpoint instead
+  - How `device_sequence` differs from the runtime's own emit counter, and why only one
+    of the two can show you a dropped sample
+  - Why capture time and device sequence live inside the payload rather than only in the
+    runtime's `SampleMetadata` envelope
+  - When a new fact belongs in the schema, when it belongs in a port declaration, and
+    when it belongs in a table of your own
+  - Why composition, not inheritance, is how a vendor quantity stays out of the shared
+    schema
+  - What a schema change does to a deployed application, and exactly where the mismatch
+    is caught
+</Note>
+
+## The two payloads and their shared header
+
+Each payload gets its stable family identity from the generated fully qualified root name
+and a compatibility epoch. Its FlatBuffers file identifier is checked independently in
+every buffer.
+
+| Payload | Family name | Epoch | File identifier | Defined in |
+|---|---|---|---|---|
+| `holoscan::schema::ImageT` | `holoscan.schema.Image` | 1 | `HSIG` | `src/sensor_io/schemas/image.fbs` |
+| `holoscan::schema::ImuT` | `holoscan.schema.Imu` | 1 | `HSIM` | `src/sensor_io/schemas/imu.fbs` |
+
+Both include `schemas/header.fbs` and carry its `Header` table as their field 0. The
+`Header` is the part that is common to any sensor message: when the measurement happened,
+which coordinate frame it is expressed in, and which sample it is.
+
+```text
+table Header {
+  stamp: Time (id: 0);                  // deprecated; new producers must not set it
+  frame_id: string (id: 1);
+  capture_timestamp_ns: int64 (id: 2);
+  device_sequence: uint64 (id: 3);
+}
+```
+
+`ImageT` is a descriptor-Tensor payload: its `data` field is a Core `Tensor`, so pixel
+storage stays in the plan-owned pool and only the frame metadata is serialized. See
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) for what
+that means on the producing side. `ImuT` is an ordinary generated schema whose field set
+is deliberately the ROS `sensor_msgs/Imu` set: three measurements, their three
+covariances, a flag word, and the header.
+
+### Allocate Image pixels from the Runtime pool
+
+Python Image producers can allocate the singular `data` field through the same descriptor
+transaction used by schemas with several Tensor fields. Construct the metadata without a `data`
+value, request provider-owned storage by its canonical field name, and fill the loan inside the
+context:
+
+```python
+descriptor = Image(
+    height=1080,
+    width=1920,
+    encoding=ImageEncoding.RGBA8,
+)
+request = hs.tensor.LoanRequest(
+    shape=(1080, 1920, 4),
+    dtype=hs.tensor.DLDataType(1, 8, 1),
+)
+
+with self.out.allocate_tensors(descriptor, {"data": request}) as loan:
+    pixels = loan.tensors["data"]
+    # Fill pixels here while the write loan is live.
+```
+
+Successful context exit publishes the provider-owned Tensor and descriptor metadata atomically;
+an exception abandons the transaction. The requests mapping must contain every Tensor field, which
+for `Image` is exactly `data`.
+
+### Project an Image field to a Tensor consumer
+
+A consumer that needs only the pixel Tensor can explicitly project the `data` field instead of
+changing the producer's `Image` payload type. The Tensor input must opt in to this narrowing:
+
+```python
+import holoscan as hs
+
+
+class TensorSink(hs.Operator):
+    image = hs.Input("image", hs.Tensor)
+
+    def setup(self, spec):
+        spec.input(self.image).accepts_projected_tensor()
+
+
+camera = graph.op("example.ImageSource", "camera")
+sink = graph.op(TensorSink, "sink")
+graph.add_flow(camera.out.project("data"), sink["image"])
+```
+
+The projection selects a registered Tensor field and preserves its sample identity.
+Within one process, consumers share the original Tensor storage until their final leases retire.
+An unknown field, a non-Tensor target, a target
+that did not opt in, or endpoints from different Graphs is rejected explicitly.
+
+The same output can feed multiple Tensor consumers, each selecting its own field, alongside
+consumers of the complete schema. Add a flow for each consumer; each input has its own bounded
+queue and queue policy. For example, after creating another opted-in `TensorSink`:
+
+```python
+second_sink = graph.op(TensorSink, "second_sink")
+graph.add_flow(camera.out.project("data"), second_sink["image"])
+```
+
+Projection also works between process groups in one compiled graph. The producer uses the
+existing schema transport, and each receiver decodes the envelope and imports only its selected
+Tensor. Cross-process delivery requires bounded Tensor transfer contracts with `kCopyIfNeeded`
+for every schema Tensor field. Transport can reuse supported shareable backing or stage a copy;
+projection itself does not convert memory kind, dtype, shape, or layout. Metadata still travels
+as a schema envelope, whose maximum serialized capacity must fit the 32 KiB transport limit.
+
+Field selection happens at the receiver. Every schema Tensor field still participates in
+publication and any required producer-side staging, even if no remote consumer selects that
+field. Selecting a small field therefore does not eliminate the transfer cost of other fields.
+
+The single-consumer same-process path retains the Tensor directly. Projected fanout currently
+uses HoloMQ, including local projected consumers alongside remote consumers. Adding a projected
+consumer can therefore move an otherwise direct local fanout onto queued transport. The buffers
+remain shared within the process, but queue and scheduling work still applies.
+
+<Note>
+  Cross-process projection follows the existing process-placement and deployment facilities.
+  It does not add projection at independently attached external topic boundaries. Lifecycle-sized
+  queues retain their existing direct-delivery restrictions, and consumers must explicitly opt in.
+</Note>
+
+## The Header contract
+
+### Capture time is the start of integration
+
+`capture_timestamp_ns` is the instant the measurement was taken, in nanoseconds, in a
+clock domain the producer states out of band. Zero means absent, and absent means absent —
+a consumer must not substitute arrival or publication time, because a plausible wrong
+capture time biases every downstream window, alignment, and latency measurement instead of
+failing visibly.
+
+For a sensor that integrates over an interval rather than sampling an instant — an image
+sensor above all — the field is **normatively the start of that interval**, never its
+midpoint and never its end. This is not the producer's choice to make.
+
+<Warning>
+  **Publishing the midpoint is a different fact under the same name.** Two cameras that
+  both consider themselves conformant, one reporting the start of exposure and the other
+  its midpoint, produce a silent misalignment of half an exposure — not a visible error.
+  A consumer that wants the centre of integration derives it from
+  `capture_timestamp_ns` plus half of `Image::exposure_time_ns`, which is exactly what
+  that field is for. Publishing the midpoint in `capture_timestamp_ns` instead makes
+  `exposure_time_ns` useless for the correction it exists to enable.
+</Warning>
+
+`exposure_time_ns` is a duration, not an instant, and it is defined for single-exposure
+frames. A multi-exposure sensor reports one integration time per exposure, and a single
+scalar cannot say which exposure of an HDR frame it describes; representing that case is
+deferred rather than guessed at. Should rolling-shutter work later need the readout span,
+it arrives as a field under its own name rather than by redefining this one.
+
+### device_sequence versus the runtime's emit counter
+
+`device_sequence` is the monotonic per-source sample number **as the device reported it**,
+or zero when the device has none. It is named for the device because there are two counters
+in play and the runtime envelope already owns the shorter word: `SampleMetadata::sequence`
+increments once per emit.
+
+The distinction is the whole point. A publication counter can never reveal that the sensor
+dropped a sample, because the runtime faithfully counts what it was handed. A gap in
+`device_sequence` is exactly that evidence. Anyone reading a bare "sequence" would have no
+way to tell from the call site which of the two they had, and the two disagree precisely in
+the case someone is usually debugging when they go looking.
+
+### frame_id names a coordinate frame
+
+`frame_id` is the coordinate frame the payload is expressed in, carried as a name rather
+than an index. A name survives recording and crossing a process boundary, where a locally
+minted integer frame handle does not; consumers resolve it against the pose tree once and
+cache the handle.
+
+<Note>
+  `SampleMetadata::frame_id` is an unrelated field that happens to share the name. The
+  envelope's is a `std::uint64_t` application frame or sample identity; the `Header`'s is
+  a coordinate frame name. Neither is derived from the other.
+</Note>
+
+### Why these facts live in the payload
+
+Capture time and sequence numbers also exist on the runtime envelope, which invites the
+question of why the payload repeats them. The answer is lifetime: **the envelope does not
+survive recording.** `SampleMetadata` is a runtime record attached to a sample in flight.
+Once the stream is written to a container and read back later, what remains is the message
+bytes — and a recorded frame whose capture time lived only in the envelope is a frame
+nobody can align afterwards. Every sensor payload needs these facts, so they live in the
+one table every sensor payload includes.
+
+The same reasoning cuts the other way for publication time, which is why
+`publish_timestamp_ns` was deliberately removed from the `Header`. Publication is something
+the transport does, not something the sensor observed, so a payload copy would be a second
+answer to a question the payload does not own — and a producer could set the two
+inconsistently. `SampleMetadata` owns that answer in `publish_timestamp_ns` and the
+`publish_clock_id` that names its domain.
+
+<Note>
+Read publication time from the envelope, not the payload. The runtime stamps both fields from
+the Graph default clock at the instant it submits the sample, so `publish_time()` is a real
+coordinate for a sample your graph published. It reads absent on a sample imported across an
+external channel boundary, and it is comparable only within the clock generation that stamped
+it — do not subtract it from a reading taken in another process. See
+[time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+</Note>
+
+`Header::stamp` is a deprecated nested `Time` table, retained only so that existing
+producers keep deserializing while they migrate. New producers must not set it; a consumer
+that reads it cannot tell which instant it holds.
+
+### Combine provenance for a fused result
+
+`holoscan.sensor_io.ProvenanceAccumulator` combines the runtime metadata of several input
+samples according to the native Sensor I/O provenance rules. Publish the derived result as a
+fresh sample so that absent or conflicting contributor identities remain absent:
+
+```python
+import holoscan as hs
+
+
+accumulator = hs.sensor_io.ProvenanceAccumulator()
+for sample in contributors:
+    accumulator.observe(sample.metadata)
+
+options = accumulator.emit_options(hs.sensor_io.CaptureTimePolicy.LATEST)
+self.out.emit(fused_result, options=options)
+accumulator.reset()  # begin the next output group with no retained contributors
+```
+
+`emit_options()` takes a snapshot; it does not reset the accumulator. A retained accumulator
+continues combining every observation across callbacks, so call `reset()` after publishing each
+logical output group. Otherwise, old timestamps, identity conflicts, and degradation flags also
+affect later results.
+
+Do not pass accumulator-produced options to `Output.forward()`; the call raises
+`InvalidArgumentError`. Forwarding represents a one-to-one relationship with one received sample,
+so every field omitted from ordinary options inherits from that source sample. That inheritance is
+useful for passthrough operators but would restore provenance the accumulator intentionally removed
+from a many-to-one result.
+
+## Transforming images without owning descriptor copies
+
+For a C++ operator that needs the received Image only during `compute()`, use
+`input.selected_sample()`. The borrow exposes a const descriptor and envelope without
+the generated copies performed by `receive()` or `receive_data()`.
+
+When metadata is unchanged, pass the borrowed descriptor directly alongside a **fresh
+output Tensor loan**, after filling and committing that loan:
+
+```cpp
+HOLOSCAN_TRY(auto view, input.selected_sample());
+// Allocate output pixels, submit work, and commit the writer here.
+HOLOSCAN_TRY(output.emit_tensor(std::move(loan), view.data(),
+                              holoscan::sensor_io::derive_from(view.metadata())));
+```
+
+The descriptor's embedded Tensor is ignored by this overload: the loan is the authority
+for output pixels. `derive_from()` separately preserves the input envelope's capture
+time, frame identity, trace, and flags; a copied Image Header does not preserve those
+envelope fields by itself.
+
+For edits, keep an `std::optional<holoscan::sensor_io::ImageDescriptorScratch>` in your
+operator. Include `<holoscan/sensor_io/image_descriptor_scratch.hpp>` and prepare it
+during `start()`, before any resource-ready early return:
+
+```cpp
+if (!scratch_) {
+  auto created = holoscan::sensor_io::ImageDescriptorScratch::create();
+  if (!created) throw holoscan::RuntimeError(created.error());
+  scratch_.emplace(std::move(*created));
+}
+```
+
+Then copy metadata, not Tensor ownership, in each callback:
+
+```cpp
+HOLOSCAN_TRY(auto view, input.selected_sample());
+const auto& image = view.data();  // not "auto image", which would copy ImageT
+if (!image.data) {
+  return holoscan::make_unexpected(
+      holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
+}
+const holoscan::Tensor& pixels = *image.data;
+HOLOSCAN_TRY(scratch_->copy_metadata_from(image));
+scratch_->image().roi_offset_x = 3;  // Example metadata edit.
+// Read pixels on the admitted stream, fill a fresh output loan, and commit.
+HOLOSCAN_TRY(output.emit_tensor(std::move(loan), scratch_->image(),
+                              holoscan::sensor_io::derive_from(view.metadata())));
+```
+
+The scratch prepares capacity for four plane records and a 512-byte frame ID, plus
+optional Header and legacy Time storage. Within those bounds, metadata copying,
+resetting, and presence changes reuse that storage without hot-path allocations.
+Oversize input returns `kResourceExhausted` before modifying the scratch. These are
+container bounds, not a promise that every combination fits the complete serialized
+descriptor bound; publication validates that bound separately.
+
+<Warning>
+  Keep `scratch_->image().data` null. Do not assign a generated Image into the scratch,
+  replace its prepared Header/Time owners, or grow its containers beyond their reserved
+  bounds. Edit existing metadata fields and containers in place. A scratch must never
+  retain the received Tensor between callbacks.
+
+  The borrow is callback-scoped, including references to nested tables. GPU completion
+  is protected by Runtime's admitted-stream Tensor leases, not by keeping this host
+  descriptor view alive. New producers still must not populate deprecated `Header::stamp`;
+  the scratch only preserves it when forwarding an existing descriptor.
+</Warning>
+
+The [compiled C++ example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/borrowed_image_transform/cpp)
+checks fresh output pixels, an edited ROI, and preserved provenance in a running graph.
+Owning receives remain available when ownership is needed. This C++ API does not add
+Python borrowing, schema-to-Tensor port projection, or an escaping receive loan, and
+does not promise that transport publication or third-party GPU wrappers allocate nothing.
+
+## Extending a sensor payload
+
+When the shipped shape does not carry what you need, there are three places the addition
+could go, and only one of them is right for any given case.
+
+| What you want to add | Where it belongs |
+|---|---|
+| A new fact about the measurement itself | A field in the schema, following the compatibility rules below |
+| A constraint on how the payload is carried, or on a Tensor member's layout, memory, or allocation | A port declaration in `setup()` |
+| A vendor- or device-specific quantity | A table of your own that includes the shared one |
+
+### A new fact about the measurement is a schema field
+
+If a consumer cannot interpret the payload correctly without knowing the thing, it is a
+schema field. `Image` gained `significant_bits` this way: a 10-bit sensor packed into
+16-bit words needs somewhere to say so, because black level, normalization, and display
+mapping are all wrong without it.
+
+The test is what a consumer that ignores the field does. If it produces a *wrong* result
+rather than merely a less observable one, the fact is payload semantics and nothing outside
+the schema can carry it. That test is why `sub_frame_offset` — the metadata gap most often
+raised for the Holoscan Sensor Bridge — is image schema rather than diagnostics: it changes
+how the pixels are decoded, so carrying it on a side channel would let the payload be
+interpreted correctly only by consumers who also subscribed to that channel.
+
+### A port declaration cannot add a fact
+
+Port declarations look like the cheap place to put things, because they do not change the
+`.fbs` definition. They cannot carry a measurement fact at all.
+`payload_options()` states carriage: inline byte bounds, Tensor byte spans, and
+materialization policy. `tensor_field()` selects a Tensor member of a descriptor-backed
+schema and states that member's layout, allocation, and memory-conversion contract. Both
+describe how bytes travel and what a Tensor must look like.
+
+<Warning>
+  **A port declaration is not a place to encode payload semantics.** Schema identity is
+  port-wide and comes from the type, not from anything a declaration says, so a fact
+  expressed only in `setup()` is invisible to every other participant: it does not enter
+  the payload, it does not enter the schema identity, and it does not survive recording.
+  A consumer in another process cannot see it, and neither can you when you replay the
+  stream.
+</Warning>
+
+### Composition is usually the right answer
+
+Between "amend the shared schema" and "there is nowhere to put this" sits the answer that
+is usually correct: declare your own table that carries the shared one as a field. `imu.fbs`
+documents the pattern for a vendor reporting die temperature:
+
+```text
+table ImuVectorNavVn {
+  base: Imu;
+  temperature_c: float;
+}
+```
+
+This **composes rather than inherits** — FlatBuffers has no inheritance — and the
+consequence is deliberate. `ImuVectorNavVnT` is a distinct port type with its own identity,
+and it will not connect to a port expecting an `ImuT`. That is the feature, not a
+limitation to work around: a pipeline that wants both feeds the vendor table to
+vendor-aware consumers and publishes a plain `ImuT` alongside it. A consumer that knows
+only `Imu` can still decode the `base` table out of the vendor message without knowing
+anything about the vendor.
+
+The `.fbs` sources install to `share/holoscan/schemas/sensor_io` for exactly this reason —
+a schema that includes another needs the source to compile against, not just the generated
+C++. Generate your table with `holoscan_add_flatbuffer_schema()` as described in
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas);
+nothing about the SDK's own registration is a private mechanism, and a vendor schema
+registers itself identically.
+
+## What a schema change costs
+
+### Compatible changes retain family identity
+
+Image and Imu follow the same generated family-identity and FlatBuffers evolution rules as
+application-owned schemas. Compatible edits retain the family name, epoch, file identifier, and
+existing field ids; exact BFBS fingerprints remain optional build provenance rather than admission
+identity. There is no generated version or digest for a Sensor I/O maintainer to copy into a traits
+header. See
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+for the canonical compatible-edit, intentional-break, and `flatc --conform` workflows.
+
+### Where a mismatch is caught
+
+The current release supports only the latest schema set rebuilt together; it does not promise
+cross-release N/N+1 endpoint compatibility. Where an incompatible family mismatch surfaces
+depends on whether the participant is in your graph.
+
+Within a single graph it **fails closed at construction**, before `compile()` runs:
+
+- `add_flow()` rejects a connection between ports whose payload identities differ with
+  `kIncompatible` and the diagnostic `GRAPH_PORT_TYPE_MISMATCH`.
+- Registering an external topic whose declared schema disagrees with the port's identity
+  fails with `kIncompatible` and `GRAPH_TOPIC_SCHEMA_MISMATCH`.
+
+Across processes, a peer is not in your graph, so there is nothing to check at
+construction. The mismatch surfaces at run time in two stages. When an endpoint attaches,
+the family identity, file identifier, and any descriptor-Tensor carriage profile are
+compared and a mismatch is refused with `kIncompatible`, so a wrong peer never reaches
+steady state. Then every received message revalidates the family id, file identifier,
+envelope ABI, and endpoint generation and fails with `kProtocolError` before a single
+payload byte is exposed.
+
+<Warning>
+  **There is no build-time gate across a process boundary.** A cross-process schema
+  mismatch is a hard, diagnosable refusal at run time — never misinterpreted bytes, and
+  never a partially decoded value reaching `compute()`. But it is not a compile error and
+  not a `compile()` failure. Independently built peers that disagree link and start
+  cleanly; they fail when they meet. Roll producer and consumer out together and treat a
+  schema change as a coordinated deployment.
+</Warning>
+
+### header.fbs is the shared evolution surface
+
+`Header` is the coupling worth knowing about because both payloads include it. A compatible
+addition to `header.fbs` can retain both root families when it follows the same explicit-id
+evolution rules. An incompatible `Header` edit changes the wire contract of every root that
+contains it, so each affected root needs an intentional family break even when its own
+`.fbs` text did not change.
+
+Renaming the shared counter to `device_sequence`, for example, preserved its field id and wire
+type. That rename changed the generated API and required the early-access participants to rebuild,
+but it no longer requires a synthetic schema version or a manually pinned digest. Anyone proposing
+a shared-header edit must still review both sensor roots for FlatBuffers compatibility and
+source-level API impact. Exact artifact fingerprints may change after a shared include edit, but
+they are optional build provenance rather than compatibility identity.
+
+## Recap
+
+- Borrow callback-local Image inputs with `selected_sample()`; use cold-prepared
+  `ImageDescriptorScratch` for bounded metadata edits and a fresh Tensor loan for output.
+- Borrow callback-local IMU inputs the same way; use `SchemaScratch<schema::ImuT>` plus
+  `emit_ref()` for bounded allocation-free native edits. The compiled `schema_payloads` example
+  shows the complete transform.
+- `ImageT` and `ImuT` share the `Header` table: capture time, coordinate frame, and the
+  device's own sample number.
+- `capture_timestamp_ns` is normatively the **start** of integration. Derive a midpoint
+  from it plus half of `Image::exposure_time_ns`; never publish the midpoint under this
+  name.
+- `device_sequence` is the device's counter; `SampleMetadata::sequence` counts emits. Only
+  a gap in the former is evidence that the sensor dropped a sample.
+- Capture time and device sequence live in the payload because the runtime envelope does
+  not survive recording. Publication time deliberately does not, because the runtime owns
+  that answer and carries it out of band.
+- A new fact about the measurement is a schema field; a port declaration expresses
+  carriage and Tensor contracts and can never add a fact; a vendor quantity belongs in
+  your own table that includes the shared one.
+- Composition is not inheritance: the composed table is a distinct port type that will not
+  connect to an `ImuT` port, and that is what keeps vendor quantities out of the shared
+  schema.
+- Compatible edits retain the generated family identity; intentional incompatible edits
+  move the compatibility epoch or define a new root family and file identifier. In-graph
+  family mismatches fail closed at construction; cross-process mismatches fail at attach
+  and then per message with `kProtocolError`.
+- `header.fbs` is shared evolution surface. Review an edit against both sensor roots.
+
+Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+covers generating your own `.fbs` definition, including the composed vendor table this
+page recommends.

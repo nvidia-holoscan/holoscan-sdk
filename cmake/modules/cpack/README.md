@@ -11,7 +11,7 @@ The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/h
 
 ## Getting Started
 
-Visit the Holoscan User Guide to get started with the Holoscan SDK: <https://docs.nvidia.com/holoscan/sdk-user-guide/introduction/getting-started>
+Visit the Holoscan User Guide to get started with the Holoscan SDK: <https://docs.nvidia.com/holoscan/sdk-user-guide/getting-started>
 
 The Holoscan User Guide includes:
 
@@ -26,7 +26,7 @@ community projects and reusable components available for your Holoscan project.
 
 We appreciate community discussion and feedback in support of Holoscan platform users and developers. We ask that users:
 
-- Review the [Holoscan SDK Frequently Asked Questions](https://docs.nvidia.com/holoscan/sdk-user-guide/faq/faq) for common solutions and workarounds.
+- Review the [Holoscan SDK Frequently Asked Questions](https://docs.nvidia.com/holoscan/sdk-user-guide/resources/faq) for common solutions and workarounds.
 - Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757).
 - Enter SDK issues on the [SDK GitHub Issues board](https://github.com/nvidia-holoscan/holoscan-sdk/issues).
 

@@ -1,283 +1,1142 @@
-## Overview
+The operator test fixture runs your C++ operator in a small graph with finite
+input producers and output collectors. It uses the same `Graph`, compiler,
+`RunSession`, contracts, selection, and lifecycle as a production graph. You can
+assert the owning results with GoogleTest or another C++ test framework.
 
-Holoscan provides a test harness interface for testing Holoscan operators with:
+<Note title="You will learn">
+  - How to configure parameters and stage named or typed inputs.
+  - How to test timestamp alignment and grouped input frames.
+  - How to capture Tensor and schema content without retaining finite pool slots.
+  - How to override native graph and deployment configuration.
+  - How to release finite input phases and test native managed restart.
+  - How to test Python and registered C++ operators from pytest.
+  - When whole-graph and pure-function tests are more appropriate.
+</Note>
 
-- **Input/Output Port Management**: Easy setup of test data and validation
-- **Condition Support**: Add execution conditions like CountCondition, PeriodicCondition
-- **Validation Framework**: Built-in validators for exact equality, floating-point comparison, and custom validation
-- **Fluent API**: Chainable method calls for clean, readable test setup
+**Complete C++ example:**
+[`examples/operator_testing/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/operator_testing/cpp).
+It includes an executable and an optional GoogleTest test.
 
-## Concepts
+## Test one operator
 
-### Test Harness
+Link the opt-in testing component. The SDK testing library has no GoogleTest dependency;
+your test executable chooses its assertion framework. SDK builds enable the library
+by default with `HOLOSCAN_BUILD_TESTING_LIBRARY=ON`. Turn it OFF to omit the library,
+headers and its examples. Debian installations include these files in `holoscan-core`
+when the library is enabled.
 
-The `OperatorTestHarness` is a specialized Holoscan application designed to test individual operators in isolation. It automates the setup of a test pipeline by creating source operators to provide input data and sink operators to collect and validate output data.
+Use Testing and Core from the **same SDK build**. Testing calls private Core hooks;
+equal SOVERSION values do not guarantee compatibility between independently rebuilt
+libraries. Debian installations ship Testing and Core together in `holoscan-core`.
+Source and archive installations must preserve the same build pairing themselves.
 
-**Main Components:**
-
-1. **`OperatorTestHarness<OperatorType, Args...>`**: The main test harness class that orchestrates the test
-   - Creates and manages source operators for each input port
-   - Creates and manages sink operators for each output port
-   - Connects all operators in the test pipeline
-   - Provides a fluent API for configuration
-
-2. **`TestHarnessSourceOp<T>`**: A specialized operator that emits predetermined test data
-   - Emits one value per compute cycle from a provided vector
-   - Automatically manages iteration through test data
-   - Used internally by the test harness for each input port
-
-3. **`TestHarnessSinkOp<T>`**: A specialized operator that collects and validates outputs
-   - Receives data from the operator under test
-   - Applies validation functions to each received value
-   - Tracks received data count for verification
-   - Used internally by the test harness for each output port
-
-4. **`OperatorTestBase`**:
-   - A base test fixture class designed for use with Google Test (`gtest`).
-   - Just a skeleton fixture, does not currently extend `SetUp` or `TearDown` methods.
-
-**How It Works:**
-
-When you create a test harness with `create_operator_test<YourOp>()`:
-
-1. The harness creates a Holoscan application with your operator in the middle
-2. For each `add_input_port()` call, it creates a `TestHarnessSourceOp` that feeds test data
-3. For each `add_output_port()` call, it creates a `TestHarnessSinkOp` that collects and validates output
-4. When you call `run_test()`, the entire pipeline executes and validations are performed automatically
-
-The test harness ensures that:
-
-- All input ports receive the same number of data elements
-- Data flows correctly from sources through your operator to sinks
-- Conditions (like `CountCondition`) control execution properly
-- Validation failures are reported via Google Test assertions
-
-### Validator Functions
-
-Validator functions are callable objects that verify operator outputs during test execution. They follow the signature `void(const T&)` where `T` is the output data type. Validators are called automatically by `TestHarnessSinkOp` for each value received from the operator under test.
-
-**Built-in Validators:**
-
-Holoscan provides three types of built-in validators:
-
-1. **`create_exact_equality_validator<T>(expected_values)`**
-   - Compares each output against expected values using `operator==`
-   - Best for: integers, strings, and other types with well-defined equality
-   - Automatically tracks which output index is being validated
-
-   ```cpp
-   std::vector<int> expected = {2, 4, 6};
-   auto validator = create_exact_equality_validator(expected);
-   ```
-
-2. **`create_float_equality_validator<T>(expected_values, tolerance = T{})`**
-   - Compares floating-point values with approximate equality
-   - Uses Google Test's `EXPECT_FLOAT_EQ` (default) or `EXPECT_NEAR` (with tolerance)
-   - Best for: float, double, and other floating-point types
-
-   ```cpp
-   std::vector<float> expected = {1.5f, 2.7f, 3.1f};
-   auto validator = create_float_equality_validator(expected, 0.01f);
-   ```
-
-3. **`create_transform_equality_validator<InputT, OutputT>(expected_values, transform_func)`**
-   - Applies a transformation before comparing
-   - Best for: complex types where you want to validate a specific property
-
-   ```cpp
-   auto validator = create_transform_equality_validator&lt;MyStruct, int&gt;(
-     {10, 20, 30},
-     [](const MyStruct& s) { return s.field; }
-   );
-   ```
-
-**Using Multiple Validators:**
-
-You can apply multiple validators to a single output port using the `validators<T>()` helper:
-
-```cpp
-test->add_output_port<float>("output", validators<float>(
-  create_float_equality_validator(expected_values),
-  custom_range_validator,
-  custom_format_validator
-));
+```cmake
+find_package(holoscan COMPONENTS testing REQUIRED)
+find_package(GTest CONFIG REQUIRED)
+add_executable(scale_test scale_test.cpp)
+target_link_libraries(scale_test PRIVATE holoscan::testing GTest::gtest_main)
 ```
 
-**Custom Validators:**
-
-Create custom validators by providing any callable that matches `void(const T&)`:
+For the example's `ScaleOp`, whose input and output are `std::int32_t`:
 
 ```cpp
-auto custom_validator = [](const int& value) {
-  EXPECT_GT(value, 0) << "Value must be positive";
-  EXPECT_LT(value, 100) << "Value must be less than 100";
-};
+#include <gtest/gtest.h>
+#include <holoscan/testing/operator_test_harness.hpp>
+#include "operators.hpp"
 
-test->add_output_port<int>("output", validators<int>(custom_validator));
-```
+using namespace operator_testing_example;
 
-Custom validators can perform any verification logic and use any Google Test assertion macros (`EXPECT_*`, `ASSERT_*`). Validation failures will cause the test to fail with descriptive error messages.
+TEST(ScaleOperator, ConfiguredFactor) {
+  auto h = holoscan::testing::create_operator_test<ScaleOp>();
+  h.set_params(ScaleParams{.factor = 2});
+  h.push(&ScaleOp::in, std::int32_t{21});
+  h.capture<std::int32_t>("out");
 
-## Basic Test Structure
+  const auto result = h.run();
 
-Suppose we have an operator (`DoublerOp`) that has a single input and single output port, both `int`. The operator simply doubles the input value and emits that.
-
-There are **two ways** to set up tests:
-
-### Approach 1: Fluent API
-
-*Fluent* is a design pattern that enables code to be written in a way that flows naturally, often by chaining method calls together. This style improves readability and expressiveness, making it easier to set up complex objects or configurations in a concise and intuitive manner. The term "fluent API" refers to this general programming approach and is not specific to Holoscan.
-
-```cpp
-#include <holoscan/test/test_harness.h>
-#include <holoscan/test/validation_functions.h>
-
-using namespace holoscan::test {
-
-TEST_F(OperatorTestBase, BasicFluentTest) {
-  // Test data
-  std::vector<int> input_data = {1, 2, 3};
-  std::vector<int> expected_output = {2, 4, 6};
-
-  // Create and configure test with fluent API - everything in one chain
-  auto test_harness = create_operator_test<DoublerOp>()
-    ->add_input_port<int>("input", input_data)
-    ->add_output_port<int>("output", holoscan::test::validators<int>(
-      create_exact_equality_validator(expected_output)))
-    ->add_condition<holoscan::CountCondition>("count", input_data.size());
-
-  test_harness->run_test();
-
-  // Additional verification if needed
-  auto sink = test_harness->get_sink<int>("output");
-  EXPECT_EQ(sink->get_received_count(), expected_output.size());
+  ASSERT_TRUE(result.ok()) << result.describe_failure();
+  EXPECT_EQ(result.value<std::int32_t>("out"), 42);
 }
-
-}  // namespace holoscan::test
 ```
 
-### Approach 2: Step-by-Step Setup
+`push(&ScaleOp::in, value)` infers the declared payload type and resolves the
+member against the configured Graph prototype. `push("in", value)` is the named
+counterpart. Neither requires registering a typed C++ operator globally.
+The named overload requires the exact declared payload type. `push` never interprets a container as a batch;
+use `push_many` for a sequence. Core does not admit a raw `std::vector<T>` as a
+port payload. Put a vector field in an admitted generated schema when it belongs
+to one logical message; staging that schema still publishes one message.
+
+Constructor arguments go to `create_operator_test<Op>(args...)` and are replayed
+for every fresh attempt. `set_params` uses the ordinary Graph parameter path.
+Replacing parameters must preserve the operator's port declarations. Use
+constructor-selected variants for different port shapes, and native capacity
+expressions for parameter-derived bounds.
+
+### Execution and result ownership
+
+`run()` builds and compiles a fresh graph, runs it asynchronously internally,
+and joins before returning. It does not install process signal handlers.
+Finite producers close their outputs; the ordinary Runtime decides admission,
+selection, and natural completion. A source operator must declare a finite
+completion rule such as `ComputeCalls`. There is no callback-bypassing
+`run_once()`. Use `run_async()` when the test needs control between input phases.
+
+Each run creates fresh Runtime operator instances. Pending input is consumed
+once an admitted attempt starts, including failed attempts. Authoring errors and
+rejected plans preserve pending input so configuration can be corrected. Capture
+declarations and configuration persist. Stage new input before another run.
+
+Configuration setters validate selectors against a fresh configured operator
+prototype. A missing port, wrong direction or wrong payload type is reported at
+the setter, with the port name. Contracts that depend on final wiring or deployment
+are checked during compilation. A late Graph hook can still cause an authoring
+exception at `run()`.
+
+| Failure | How it is reported |
+|---|---|
+| Invalid argument, selector shape or unsupported fixture setting | `std::invalid_argument` |
+| Active or moved-from fixture misuse | `std::logic_error` |
+| Native Graph authoring rejection | `holoscan::RuntimeError`, before a result exists |
+| Rejected compiled plan, startup, execution, capture or cleanup failure | A `TestResult` with `ok() == false` |
+
+Catch authoring exceptions around staging/configuration as well as `run()` when
+those errors are part of your test. An `ASSERT_TRUE(result.ok())` cannot inspect a
+result when authoring threw before returning one.
+
+- `result.ok()` accepts natural completion (`kCompleted`) and a successful operator
+  completion request (`kRequestedCompleted`). It does not infer success from the
+  number of captured outputs.
+- A clean `kStopped` outcome is accepted only with `TestRunOptions::expect_stop`
+  or the documented controlled-clock/Retain completion proof. Failure diagnostics,
+  capture errors, lost diagnostic evidence and watchdog expiry always veto success.
+- `describe_failure()` names the termination, explains it, and includes failures
+  keyed by captured output. `diagnostics()`, `termination()`, and `plan()` retain
+  the underlying native evidence.
+- `value<T>("out")` requires exactly one captured value.
+- `values<T>("out")` returns all values, including an empty vector.
+- `samples<T>("out")` also returns capture timestamps and other sample metadata.
+- A finite capture limit fails on overflow and preserves earlier complete records.
+  `capture_failure("out")` returns the failed sample metadata and copy/capacity error.
+
+Capture every output that will publish, or connect an explicit native consumer
+through `configure_graph`. Uncaptured outputs remain unwired, with ordinary
+Runtime publication errors; the fixture adds no implicit discard collectors.
+Declared device-storage outputs still require explicit placement even when
+uncaptured. A placement configures the device and leaves connectivity unchanged.
+
+Results remain valid after the fixture is destroyed or run again. The default
+cooperative watchdog is 30 seconds. Configure the blocking path explicitly for
+slow initialization, sanitizer tests or an operator that intentionally stops:
 
 ```cpp
-#include <holoscan/test/test_harness.h>
-#include <holoscan/test/validation_functions.h>
+using namespace std::chrono_literals;
+const auto result = h.run({.timeout = 2min, .expect_stop = true});
+```
 
-using namespace holoscan::test {
+Call `h.run()` or `h.run({})` for ordinary defaults, or
+`h.run({.timeout = 2min})` to change only the watchdog. Controlled ticks use
+the separate `h.run_controlled_clock({.tick = 1000ms})` operation. Both the typed
+harness and `NativeOperatorTest` support these spellings.
 
-TEST_F(OperatorTestBase, BasicStepByStepTest) {
-  // Test data
-  std::vector<int> input_data = {1, 2, 3};
-  std::vector<int> expected_output = {2, 4, 6};
+`expect_stop` accepts a clean cooperative stop; it does not prove input drain or
+suppress errors. Assert the required output content separately. Timeouts must be
+positive. The watchdog requests stop and then joins; it cannot interrupt a callback
+or kernel that never returns. Use a separate process with an external timeout for
+intentional hang tests. Do not call blocking `run()` from a Runtime callback.
 
-  // Create test harness first
-  auto test_harness = create_operator_test<DoublerOp>();
+A fixture supports move construction but not move assignment. Methods on a
+moved-from fixture throw `std::logic_error`. Reconstruct a fixture in a loop, or
+use `std::optional::emplace`; resetting an optional does not require move assignment.
 
-  // Add components step by step (allows for conditional logic)
-  test_harness->add_input_port<int>("input", input_data);
-  test_harness->add_output_port<int>("output", holoscan::test::validators<int>(
-    create_exact_equality_validator(expected_output)));
-  test_harness->add_condition<holoscan::CountCondition>("count", input_data.size());
+### Fixture defaults
 
-  test_harness->run_test();
+| Setting | Default |
+|---|---|
+| Tested operator name | `operator` |
+| Partition | `fixture`, including all fixture operators unless configured otherwise |
+| Clock | A `RealtimeClock` named `fixture_clock`; `run_controlled_clock` uses a `SyntheticClock` |
+| Independent input helper | `OnClock{1ms}` and one compute call that publishes the staged sequence |
+| Helper names | `input_source_` / `output_collector_` plus an escaped port name; grouped source is `frame_source` |
+| Queue depth | Derived from the staged input count or capture capacity |
+| Capture limit | 1024 records; overflow fails instead of truncating |
+| Snapshot byte limit | 64 MiB per record |
+| Attempt watchdog | 30 seconds, configurable with `TestRunOptions` for blocking or managed runs |
+| Grouped frame release | `FrameRelease::kAutomatic`; manual mode requires `run_async()` |
 
-  // Additional verification
-  auto sink = test_harness->get_sink<int>("output");
-  EXPECT_EQ(sink->get_received_count(), expected_output.size());
+Staging, member selection and port configuration may construct fresh prototype
+operators before execution. Keep constructors inexpensive and put Runtime resources
+in the ordinary lifecycle methods. Prototype construction is separate from each
+run's fresh execution instance.
+
+### Operators in a separate library
+
+The test executable can stage and capture generated schema and registered POD
+payloads declared by an operator in a hidden-visibility shared library. Both modules
+must use the same native C++ definitions and compatible ABI from the matching SDK
+build. The harness checks semantic identity **and** exact native type identity;
+equal schema names alone do not authorize a native cast. Keep provider modules loaded
+while their factories, staged inputs, plans or results are alive.
+
+Local enum payloads still require the same module-local type token. Stage their
+values and construct capture requests in the operator's module; token mismatches
+include the port and module-local restriction in the error. Built-in arithmetic
+scalars and `Tensor` do not have this restriction.
+
+For an erased `NativeOperatorTest`, use public owning factories rather than
+implementation adapters:
+
+```cpp
+native.stage_input("in", holoscan::testing::staged_values<std::int32_t>({1, 2, 3}));
+native.declare_capture("out", holoscan::testing::value_capture<std::int32_t>(16));
+// For Tensor-bearing outputs, use snapshot_capture<T>() or retain_capture<T>().
+```
+
+`StagedInput` and `CaptureRequest` are immutable owning handles. Snapshot results
+use the public `Snapshot<T>` alias. Direct adapter subclassing is not a supported
+extension API.
+
+## Managed execution and restart
+
+`run_async()` returns a move-only `RunningFixture` that owns the native session,
+collectors and provider state independently of the builder. The builder may move
+or be destroyed while that attempt runs. Its setters remain frozen until the
+running owner joins or is destroyed. `finish()` joins and returns the same owning
+result on repeated calls; it is the only way to access captured payloads. Destroying
+a running owner requests cooperative stop and joins. Serialize `finish`, moves and
+destruction with other calls on that owner. Joining or destroying a live owner from a
+Runtime compute, lifecycle, or Dispatcher callback is a fatal native contract
+violation and terminates the process. `finish()` can throw `std::system_error` if
+a native or watchdog thread join fails; a moved-from owner rejects `finish()`,
+`output_count()` and `wait_for_output()` with `std::logic_error`. Stop requests on
+a moved-from owner are harmless, and its status is not running. Move assignment
+is unavailable. For `std::optional<RunningFixture>`, call `reset()` before
+evaluating the next `run_async()` expression passed to `emplace()` so the prior
+attempt has released the builder.
+
+Both facades share `TestRunOptions` in member order `timeout`, `expect_stop`,
+`frames`. `run_async()` uses the same positive whole-attempt watchdog and result
+success rules as blocking `run(TestRunOptions)`: clean natural/requested completion,
+or explicitly expected clean stop, with all failure vetoes preserved. Native
+restart does not reset the watchdog or relax the controlled/Retain proof. For
+example, `TestRunOptions{.timeout = 5s, .expect_stop = true,
+.frames = FrameRelease::kManual}` uses declaration order. Blocking `run(options)`
+rejects manual release before consuming inputs because it cannot return a driver.
+
+`output_count("out")` observes complete collector appends cumulatively across all
+restart generations in this attempt. The bounded
+`wait_for_output("out", n, timeout)` returns false on timeout or terminal completion
+before the requested count. Neither operation proves callback retirement, input
+suppression, quiescence or restart completion. A caller timeout does not cancel a
+native restart. `request_stop()` requests cooperative stop without joining.
+A later status read reports the current state; it cannot determine whether the
+wait's timeout or termination happened first. For a required prefix, a caller can
+request stop if work is still outstanding, then join to inspect the final evidence:
+
+```cpp
+if (!running.wait_for_output("out", 1U, 5s)) {
+  if (running.is_running())
+    running.request_stop();
+  const auto incomplete = running.finish();
+  FAIL() << "required output prefix was not observed; " << incomplete.describe_failure();
 }
-
-}  // namespace holoscan::test
 ```
 
-## API Reference
+A compile-rejected `RunningFixture` is already terminal. Its control errors say
+that the attempt was rejected before start and direct the caller to `finish()`
+for the original admission diagnostics. A live source waiting for Arm instead
+reports `kNotReady`; a previously running manual attempt reports `kClosed` after
+stop. These states do not lose the joined result or make a rejected attempt run.
 
-### Creating Test Harness
+### Release finite input phases
+
+Stage all payloads before running, then choose manual frame release:
 
 ```cpp
-// Without parameters
-auto test = create_operator_test<DoublerOp>();
+using namespace holoscan;
+using namespace holoscan::testing;
+using namespace std::chrono_literals;
 
-// With parameters
-auto test = create_operator_test<DoublerOp>(
-  holoscan::Arg("param1") = value1,
-  holoscan::Arg("param2") = value2
-);
+auto h = create_operator_test<ScaleOp>();
+h.set_params(ScaleParams{.factor = 2});
+h.push_frame(frame_at(0ms, input("in", std::int32_t{21})));
+h.push_frame(frame_at(1ms, input("in", std::int32_t{5})));
+h.capture<std::int32_t>("out");
+h.configure_graph([](auto& view) {
+  view.graph().lifecycle().allow_external_restart(view.tested_operator());
+  view.compile_options().lifecycle_transactions = LifecycleTransactionOptions{
+      .max_pending_requests = 4U, .max_pending_transactions = 4U, .max_receipts = 8U,
+      .max_fenced_operators = 16U, .max_candidate_generations = 8U, .max_events = 64U,
+      .max_audit_records = 32U, .max_quiesce_records = 64U, .max_rollback_records = 64U};
+});
+auto running = h.run_async({.frames = FrameRelease::kManual});
 ```
 
-### Adding Input Ports
+Each successful `release_frame()` posts one native notification and releases at
+most one pre-staged row. Use `release_frame(5s)` to retry only `kNotReady` before
+startup and `kBackpressured` before the preceding notification retires. Zero makes
+one immediate attempt; negative or unrepresentable durations return
+`kInvalidArgument` before posting. A positive exhausted retry budget returns
+`kTimeout`. Stale endpoints, closed attempts and all other native errors return
+without retry; no failed call advances the script. The complete
+[`managed_restart.cpp` example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/operator_testing/cpp/managed_restart.cpp)
+uses this installed bounded overload.
 
-The values that are passed to the operator's input ports are defined and added via the `add_input_port` function. This function takes a `std::vector<DataType>` object, the elements of which will be passed to the operator one-by-one.
+Manual mode accepts grouped staging only. It accepts no new payload after startup,
+and a failed post does not advance the script. Stop or restart cancellation does
+not replay accepted notifications. Ordinary `run()` and automatic `run_async()`
+release finite producers through their existing clock contracts.
+
+The plan in a manual-frame result remains inspectable. Directly running that
+plan again fails promptly with a diagnostic explaining that it has no live
+release driver, including when the original startup failed before Arm. Stage a
+fresh fixture attempt to repeat the test. Automatic finite plans still support
+reconstruction with fresh captures, and native restart/rearm within the original
+manual session remains supported.
+
+### Request and observe a native restart
+
+Graph authoring grants restart authority; a running handle can only restrict it.
+An empty `LifecycleAccessPolicy` grants no targets or stages. Continue the example
+with a policy limited to the operator and `kArm`. This also allows a native
+closure containing the manual frame source to reacquire its sender:
 
 ```cpp
-test->add_input_port<DataType>("port_name", test_data_vector);
+ASSERT_TRUE(running.release_frame(5s));
+ASSERT_TRUE(running.wait_for_output("out", 1U, 5s));
+const auto target = running.operator_ref();
+ASSERT_TRUE(target);
+const std::array targets{*target};
+constexpr std::array stages{LifecycleStage::kArm};
+auto control = running.lifecycle_control(
+    {.allowed_targets = targets, .allowed_from_stages = stages});
+ASSERT_TRUE(control);
+const auto accepted = control->request_restart(*target, {.from_stage = LifecycleStage::kArm});
+ASSERT_TRUE(accepted);
+const auto terminal = control->await(*accepted, 5s);
+ASSERT_TRUE(terminal);
+ASSERT_EQ(terminal->state, LifecycleTransactionState::kPublished);
+EXPECT_EQ(terminal->effective_stage, LifecycleStage::kArm);
+ASSERT_TRUE(running.release_frame(5s));
+ASSERT_TRUE(running.wait_for_output("out", 2U, 5s));
+const auto result = running.finish();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+EXPECT_EQ(result.values<std::int32_t>("out"), (std::vector<std::int32_t>{42, 10}));
 ```
 
-### Adding Output Ports
+Request acceptance is separate from terminal publication. Native transactions can
+roll back, fail during restoration, or be canceled by stop or callback failure.
+Use `inspect` or bounded `await` on the native handle and preserve both receipt
+outcome and joined result diagnostics. The fixture adds no restart engine or
+receipt-retirement API. A self-restarting operator uses
+`ExecutionContext::request_restart()` after Graph grants `allow_self_restart`;
+the complete example exercises both self and external requests.
 
-The output ports of the operator are added to the test harness using the `add_output_port` function. This function can be used in two ways: without a validator, to simply collect the output data, or with a validator function to automatically check that the output matches expected results.
+Restart keeps one native session and its progress. Running the builder again
+creates a new graph and fresh instances. Runtime owns the effective closure,
+fences and generations: queued old-generation input can be discarded during a
+restart. Test resumed data using a separately released phase after publication.
+Captured prefixes remain owning records; they are not outstanding input claims.
+
+### Resource and integration limits
+
+- Native notification senders are acquired at `kArm`. If the native restart closure
+  contains a manual frame source, choose `kArm` or an earlier stage. `kStart` alone
+  invalidates its sender without reacquiring one, so a later release can return
+  `kStaleEndpoint`; treating that error as retryable cannot repair the generation.
+  After stop, release returns `kClosed`. Include the real helper/operator closure;
+  do not exclude a helper to manufacture progress.
+- Retained Tensor/schema capture keeps the finite source-only, single-output,
+  single-collector, single-partition profile. Whole-run `ComputeCalls` and maximum
+  emissions bound every field plus producer and retirement reserves. Deep restart
+  uses Runtime's bounded predecessor inventory (`max_receipts`). Lifecycle-bound
+  queue recipes are not qualified, even with an authored fixed depth, and reject
+  before startup. Input-driven tests use scalar captures or independent snapshots.
+- Retain still requires the exact complete emission bound. Stopping after a shorter
+  prefix leaves readable captured records but `result.ok()` is false. Restart does
+  not reset that bound or make incomplete capture successful.
+- Device captures respect native readiness. When copying retained CUDA tensors
+  yourself, use an explicit consumer stream on the tensor's device. Snapshot
+  captures return independent host bytes.
+- The controlled-clock overload remains blocking and keeps its documented profile.
+  Manual release is not a time-stepping API, and count observation cannot replace
+  the controlled-clock retirement evidence.
+- The non-template native facade follows the same ownership and restart rules for
+  registered operators. A provider can configure Graph authority inside its module
+  without exposing the operator definition. Native instance identity is separate
+  from Python object identity; Python host replay and binding integration require
+  their own qualification.
+
+## Sequences and timestamp alignment
+
+`push_many` stages an ordered batch. An explicit empty batch creates a producer
+that closes without emitting. `push_samples` stages independent capture
+coordinates without sorting delivery or advancing the fixture clock:
 
 ```cpp
-// Without validation
-test->add_output_port<DataType>("port_name");
-
-// With validation
-test->add_output_port<DataType>("port_name",
-  holoscan::test::validators<DataType>(validator_function));
+using namespace std::chrono_literals;
+using holoscan::testing::sample_at;
+auto h = holoscan::testing::create_operator_test<AlignedSumOp>();
+h.push_samples<std::int32_t>("left", {
+    sample_at(std::int32_t{10}, 1s), sample_at(std::int32_t{20}, 2s)});
+h.push_samples<std::int32_t>("right", {
+    sample_at(std::int32_t{1}, 1100ms), sample_at(std::int32_t{2}, 2100ms)});
+h.capture<std::int32_t>("sum");
+const auto result = h.run();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+EXPECT_EQ(result.values<std::int32_t>("sum"), (std::vector<std::int32_t>{11, 22}));
 ```
 
-### Adding Conditions
+Caller order determines source publication order. Runtime still chooses activation
+order and selected inputs according to the operator contract; with out-of-order
+capture coordinates, observed processing order can differ. The fixture does not
+replace those rules with FIFO execution. Capture coordinates may be negative,
+zero, or in the future, and are independent of publication time.
+
+The example operator declares `OnAligned{.ports = ports(left, right),
+.window = 100ms}` with `Exact` selection. Both pairs lie on the inclusive 100 ms
+boundary. Test 99 ms, 100 ms, and 101 ms separately to establish boundary behavior.
+Alignment compares capture coordinates between ports. It does not mean that the
+inputs are no older than 100 ms relative to the current clock; that is a different
+contract using age-based selection such as `LatestWithin`.
+
+### Grouped inputs and optional controls
+
+A frame emits supplied fields in order from one multi-output source with one
+capture coordinate. This is useful for paired data and a control value:
+
+In this example, `ControlledPairOp` computes `(left + right) * factor`. Its
+required `left` and `right` inputs form an `OnAligned` trigger. It declares
+`control` with `.optional()`, selects it with `Exact`, and uses `SafeDefault`
+when selection is missing. The compute method uses `Params::factor` in that
+case; neither `.optional()` nor the harness inserts a parameter value into
+the input. Keep this grouped source and the tested operator in the same
+execution partition, as the default fixture setup does.
 
 ```cpp
-test->add_condition<holoscan::CountCondition>("name", count);
-test->add_condition<holoscan::PeriodicCondition>("name",
-  holoscan::Arg("recess_period") = std::string("100ms"));
+using holoscan::testing::frame_at;
+using holoscan::testing::input;
+auto h = holoscan::testing::create_operator_test<ControlledPairOp>();
+h.set_params(ScaleParams{.factor = 3});
+h.push_frame(frame_at(1s,
+    input("control", std::int32_t{2}),
+    input("left", std::int32_t{4}),
+    input("right", std::int32_t{5})));
+h.capture<std::int32_t>("out");
+const auto result = h.run();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+EXPECT_EQ(result.value<std::int32_t>("out"), 18);
 ```
 
-### Running Tests
+An omitted field publishes nothing. It does not clear a previous selection or
+publish a default value. The operator's selector and `on_missing` policy decide
+what omission means. Do not mix grouped and independent producers for one input.
+A malformed frame or batch is rejected atomically before replacing pending input.
+During execution, a publication failure can leave an accepted prefix; the frame
+is not an atomic multi-port delivery transaction.
+
+`spec.input(control, "control").optional()` permits an unwired port. It does
+not make a connected control sample available before the required pair:
+
+| Control input | Selection behavior |
+|---|---|
+| No connection for the entire run | The optional port reports safe-default absence with reason `kNotConnected` when reached. |
+| Connected, but omitted from one frame | Ordinary connected selection and missing-input policy apply. An earlier sample is not cleared; `Exact` and `Latest` can therefore behave differently. |
+| Connected in a different execution partition | The same native rules apply; a shared timestamp and ordered emissions do not establish visibility before selection. |
+
+If any staged frame contains control, the helper keeps that port connected for
+the run. A later frame without control is the second case in the table, not the
+first. Optional ports cannot be members of `OnAligned::ports`, even when wired;
+the required data inputs provide activation authority.
+
+<Warning title="Optional controls across execution partitions">
+The harness qualifies exact per-frame override/fallback assertions when the
+grouped source and tested operator share one execution partition. It adds no
+cross-partition guarantee that the optional control is visible before the
+required data triggers selection. Publishing control first does not establish
+that guarantee on its own.
+
+For the example above, the expected override result is 18. If a separate
+partition selects the required pair before control is visible, the operator's
+fallback factor of 3 would instead produce 27. This describes the limitation;
+it does not promise that a particular interleaving will occur.
+
+For deterministic override assertions, keep the source and operator together.
+Multi-partition tests of required aligned inputs remain supported. Tests that
+separate optional control from the operator must use the native selection
+contract and independently establish the visibility needed by their assertion.
+Do not use a sleep or silently make control required to manufacture that evidence.
+</Warning>
+
+## Testing one controlled clock tick
+
+For an operator using `OnClock` and `LatestWithin`, capture timestamps and the
+evaluation clock are separate. At a 1000 ms tick with `max_age = 100ms`, a 900 ms
+sample meets the boundary. Use `run_controlled_clock` to establish
+Runtime input availability before advancing the clock and collector retirement
+before stopping:
 
 ```cpp
-test->run_test();
+using namespace std::chrono_literals;
+auto h = holoscan::testing::create_operator_test<FreshPairOp>();
+h.push_samples<std::int32_t>("left", {holoscan::testing::sample_at(1, 900ms)});
+h.push_samples<std::int32_t>("right", {holoscan::testing::sample_at(2, 900ms)});
+h.capture<std::int32_t>("out");
+const auto result = h.run_controlled_clock(holoscan::testing::ControlledClockRun{.tick = 1000ms});
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+EXPECT_EQ(result.termination(), holoscan::RunTermination::kStopped);
+EXPECT_EQ(result.clock_outcome(), holoscan::testing::ClockTestOutcome::kRetired);
+EXPECT_EQ(result.value<std::int32_t>("out"), 3);
 ```
 
-## Testing Patterns
+Here `FreshPairOp` declares a 10 ms `OnClock` period, `LatestWithin{100ms}` on
+both required scalar inputs, and `Skip` for missing inputs. A suppressed tick
+reports `ClockTestOutcome::kSuppressed`; an admitted callback that emits nothing
+still reports `kRetired`. `clock_selection("left")` returns Runtime's actual
+selection state and reason. Terminal input handling may affect that reason;
+the harness does not invent a stale/future classification from output absence.
 
-### Source Operators
+The fixture owns a shared SyntheticClock initially frozen at zero. The real
+startup tick still occurs; a capture timestamp does not advance that clock.
+The controlled run then advances once to the requested exact period boundary. Captures
+include any output from the startup tick as well as the requested tick.
 
-Operators with output ports, but no input ports.
+An unstamped `h.push("left", 1)` has **absent capture time**, not capture time zero.
+It cannot satisfy `LatestWithin`; native missing-input policy decides the outcome.
+Use `sample_at(value, coordinate)` or `push_at(name, value, coordinate)` for
+freshness tests, even when the intended coordinate is zero.
+
+With an explicit zero coordinate, an input ingested before the operator's startup
+tick can satisfy that startup selection. In the `FreshPairOp` example, Runtime
+consumes the finite pair once; the requested tick can then be suppressed while the
+result still contains the earlier output. Inspect `samples<T>()` and their
+`metadata.publish_timestamp_ns` values to distinguish when each output was emitted.
+For an assertion intended only for the later tick, stage a positive capture
+coordinate inside that tick's freshness window, as above. Capture cardinality
+follows the operator's actual contract; the fixture does not suppress a real
+startup activation or promise exactly one output per controlled run.
+
+<Warning title="Controlled-clock qualification limits">
+This operation currently requires one ordinary execution partition, at least one
+required scalar input with exactly one staged sample per port (or one grouped
+frame), `OnClock` with its ordinary startup phase, `LatestWithin` with `Skip`,
+and one collector for every output. Edges must be local and non-dropping. The
+late Graph hook must preserve the fixture clock. Tensor/schema payloads, multiple
+frames, batch selectors, managed restart and composite execution are not
+qualified for this operation. Unsupported configuration rejects before execution;
+staged inputs remain available for correction.
+
+These limits apply to controlled-clock runs. Ordinary finite `run()` supports
+the separately documented timestamp sequences, grouped frames and Tensor/schema
+profiles. Observation overflow or a failed retirement makes the controlled run
+fail; neither can prove absence of output. The steady-clock watchdog is
+cooperative and cannot terminate a callback or CUDA kernel that never returns.
+
+`observation_capacity` bounds cumulative Runtime records and output publication
+attempts for the entire controlled run, including the startup tick and collector
+work. Input or output port counts alone cannot prove that this budget is enough.
+If it is exhausted, the result fails with observation diagnostics; increasing it
+does not admit an otherwise unsupported Tensor or `Retain` configuration.
+</Warning>
+
+## Tensor and schema snapshots
+
+A copied Tensor can still pin a finite pool slot. Use `capture_snapshot<T>` to
+copy content into independent host-owned storage before releasing the incoming
+sample. Raw Tensor and descriptor-Tensor schema payloads require an explicit
+capture policy; ordinary `capture<T>` does not silently retain their storage.
 
 ```cpp
-auto test = create_operator_test<SourceOp>(params)
-  ->add_condition<CountCondition>("count", iterations)
-  ->add_output_port<T>("output", validators);
-
-test->run_test();
-
-// Verify internal state (optional)
-auto src_op = test->get_operator_under_test();
-// Check src_op internal state...
+auto h = holoscan::testing::create_operator_test<MyTensorOperator>();
+h.push("in", input_tensor);
+h.capture_snapshot<holoscan::Tensor>("out", 16, 1024 * 1024);
+const auto result = h.run();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+const auto snapshot = result.snapshot<holoscan::Tensor>("out");
+EXPECT_EQ(snapshot.shape(), expected_shape);
+EXPECT_EQ(snapshot.bytes(), expected_bytes);
 ```
 
-### Sink Operators
+The last two capture arguments bound the record count and bytes per record.
+`snapshots<T>` returns every complete record. Shape, strides, dtype, source device,
+byte offset, and sample metadata describe the original Tensor; bytes are owned
+by the snapshot. CUDA capture waits for producer readiness before copying.
+Nonempty staging and snapshots require valid contiguous Tensor views. A valid
+zero-element Tensor is still one published/captured record: its bytes are empty,
+and its dtype, shape, source device and representable stride metadata are retained.
+A default/uninitialized Tensor is not an empty value. A valid non-contiguous
+view is outside the current staging and snapshot profile; it is not necessarily
+a malformed Tensor. General strided staging is deferred. Invalid or overflowing
+layouts are rejected, and unsupported layouts are never repacked silently.
 
-Operators with input ports, but no input ports.
+`schema::ImageT` keeps its schema identity. With the Sensor I/O provider included,
+use the same fixture with `ImageT` values:
 
 ```cpp
-auto test = create_operator_test<SinkOp>()
-  ->add_input_port<T>("input", test_data);
-
-test->run_test();
-
-// Verify internal state (optional)
-auto sink_op = test->get_operator_under_test();
-// Check sink_op internal state...
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
+using Image = holoscan::schema::ImageT;
+auto h = holoscan::testing::create_operator_test<MyImageOperator>();
+h.push("image", image);
+h.capture_snapshot<Image>("image");
+const auto result = h.run();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+const auto snapshot = result.snapshot<Image>("image");
+EXPECT_EQ(snapshot.metadata().width, image.width);
+EXPECT_EQ(snapshot.tensor(holoscan::schema::ImageTensorFields::data).bytes(), expected_bytes);
 ```
 
-### Transform Operators
+`metadata()` returns a fresh deep copy of ordinary metadata with Tensor members
+unset. For a generated multi-Tensor schema, access each field with its generated
+`TensorFields` selector. Every present field is copied in canonical field order;
+a failing field prevents a partial record from appearing, while earlier records
+remain available. Custom schema providers must supply the qualified metadata
+clone operation. An ordinary C++ copy constructor alone does not establish deep
+metadata ownership.
 
-Operators with both input and output ports
+The installed [multi-Tensor schema example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/operator_testing/cpp/schema_snapshot.cpp)
+generates its own two-field schema, stages timestamped records, then checks nested
+metadata and both Tensor fields independently after the run has joined.
+
+Staging takes an owning value copy even when the caller moves a schema. Generated
+schemas detach their metadata and Tensor wrapper objects, so retained caller aliases
+cannot redirect the staged value. Custom payload adapters must supply equivalent
+owning-copy semantics. Staging retains each Tensor's backing under a Core read lease. Native mutable
+access is denied while the pending fixture or a replayable result plan owns that
+input; it becomes available again when the last such owner is destroyed. The
+helper copies the input into its native output allocation during execution.
+Previously borrowed raw pointers and external producers must not write that
+backing during this interval. Keep external CUDA readiness streams valid through
+all executions that use the staged input.
+The helper derives contracts from the finite staged values, including each schema
+Tensor field. Inconsistent representations or missing required fields reject the
+whole candidate batch. A native Tensor override validates the contract; it does
+not cast dtype or transfer storage to another device.
+
+### Retaining native Tensor backing
+
+Use `Retain` when a test needs the native Tensor layout or backing after shutdown:
 
 ```cpp
-auto test = create_operator_test<TransformOp>(params)
-  ->add_input_port<InputT>("input", input_data)
-  ->add_output_port<OutputT>("output", output_validators)
-  ->add_condition<CountCondition>("count", data_size);
+auto h = holoscan::testing::create_operator_test<FiniteTensorSource>();
+h.capture<holoscan::Tensor>("out", holoscan::testing::Retain{.max_records = 8U});
+const auto result = h.run();
+ASSERT_TRUE(result.ok()) << result.describe_failure();
+EXPECT_EQ(result.termination(), holoscan::RunTermination::kStopped);
+const auto tensors = result.values<holoscan::Tensor>("out");
 ```
+
+The qualified profile has one finite source, one output, one collector and one
+partition. Managed restart preserves that whole-attempt bound and its compiled
+capacity proof; see the [managed resource limits](#resource-and-integration-limits).
+It also accepts `ImageT` and descriptor schemas
+with several Tensor fields. Native owning copies preserve metadata, field presence
+and layout; retained Tensors grant no write-loan authority. Ordinary Tensor mutability
+still follows native access rules; retention does not force the payload to become read-only.
+
+Before execution, the fixture derives the whole-run bound from the source's
+`ComputeCalls` limit multiplied by its declared maximum emissions per callback.
+Every output field's compiled pool must accommodate that bound plus native
+producer and retirement reserves. `max_records` must cover the bound. An
+unproved topology, insufficient pool or dropping edge rejects before pending
+inputs are consumed. Use snapshots for input-driven operators and variable
+output counts.
+
+A retained result pins pool slots, so ordinary EOS retirement cannot finish while
+those handles remain alive. The collector requests cooperative stop only after
+it captures the complete proved output bound. After join, the fixture verifies
+native successful-compute progress, run identity and cleanup. `ok()` accepts
+that observed boundary while `termination()` remains `kStopped`. Fewer outputs,
+callback failure, capture failure or watchdog expiry are failures, even with
+`expect_stop = true`; an expected assertion count never truncates execution. A zero `ComputeCalls` limit completes
+naturally with no retained records.
+
+Retention validates actual current-run output-pool provenance for every present
+Tensor field and finishes producer readiness before its Runtime stream is
+destroyed. Later device reads still require a caller-owned stream on the matching
+device. Padded native views remain padded; retention does not silently compact
+content or change schema layout metadata.
+
+## Graph configuration and deployment
+
+Common settings use deferred native values, deeply owned before the setter returns:
+
+```cpp
+h.input_queue_depth("in", 4U); // Input history depth.
+h.input_flow("in", holoscan::ConnectionOptions{.queue_depth = 8U}); // Edge capacity.
+h.output_flow("out", holoscan::ConnectionOptions{.queue_depth = 8U});
+h.input_flow("in", std::nullopt); // Clear a previous override.
+```
+
+`input_tensor_spec`, `output_tensor_spec`, and `input_source_tensor_spec` accept
+native Tensor specifications. Operator specifications apply before helper wiring;
+helpers derive compatible promises from staged payloads. Graph configuration can
+tighten supported contracts, but cannot replace a lifecycle-derived pool's
+allocation authority. Multi-field schema overrides remain subject to the native
+Graph API's field-specific capabilities.
+
+GPU placement is explicit and per output port, including helper outputs:
+
+```cpp
+h.input_source_device("in", holoscan::DeviceId{1});
+h.output_device("out", holoscan::DeviceId{1});
+```
+
+Bind every device-storage output that requires placement. Do not bind host-only
+outputs. A grouped source with two device outputs needs two bindings; one-device-
+per-operator restrictions still apply. The fixture preserves native rejection
+for invalid placement and does not insert cross-device copies.
+
+For manual partitions, regions, or less common native configurators, use the
+replacing `configure_graph` callback:
+
+```cpp
+h.configure_graph([](auto& f) {
+  auto source = f.graph().partition("source");
+  f.add_sources_to(source);
+  f.graph().partition("operator").add(f.tested_operator());
+  auto collector = f.graph().partition("collector");
+  f.add_collectors_to(collector);
+});
+```
+
+This example separates the sources from the tested operator. For grouped
+optional-control assertions, place both in the same partition instead; see
+[Grouped inputs and optional controls](#grouped-inputs-and-optional-controls).
+Manual partitioning does not strengthen the input visibility contract.
+
+`tested_operator()` is a fresh Graph authoring handle, not a running operator.
+`source_output<T>(input_name)` and `capture_input<T>(output_name)` resolve helper
+ports with exact type checks. `input_flow<T>` and `output_flow<T>` return typed
+flow handles for native `graph.configure` calls. Callback handles and views are borrowed; do not
+retain them after the callback. The hook runs after wiring, so it cannot repair
+an edge that already failed compatibility checks. Each call replaces the previous
+hook; `configure_graph(nullptr)` clears it.
+
+Native `CompileOptions` carries deployment settings without a second testing DSL:
+
+```cpp
+holoscan::CompileOptions options;
+options.deployment.bind_thread_placement("operator", holoscan::ThreadPlacement{
+    .affinity = holoscan::CPUAffinity{2}});
+h.set_compile_options(options);
+```
+
+Use the same deployment object for `bind_cuda_green_context(partition_name,
+CudaGreenContextPlacement{...})`, scheduling policy, priority, and wake settings.
+These retain ordinary platform, privilege, and hardware admission rules. The
+callback's `compile_options()` edits only the current build's copy. Its
+`output_device_placement` and `input_source_device_placement` helpers return
+native placement records; fixture setters store deferred settings. Do not
+configure the same placement through both routes: duplicate native authority is
+rejected.
+
+The installed [`operator_testing_device` example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/operator_testing/cpp/device_inputs.cpp)
+combines two timestamp-aligned CUDA inputs, explicit bindings for both grouped
+source outputs, a device operator output, and three manual partitions. Run it with
+an explicit device ID and optionally `--green-context`. It checks copied output
+content and the accepted Green Context device. Unsupported hardware is reported as
+a skip; native admission and execution failures remain failures.
+
+## Whole-graph clock tests
+
+For whole-graph scenarios, bind a shared `SyntheticClock` with
+`graph.bind_shared_clock` and `graph.set_default_clock`, then compile and use
+`holoscan::run_async(plan)`. Advance time from one controlling thread. Runtime
+polls the clock through its own waiting mechanism; changing clock time alone is
+not proof that a callback was admitted or retired.
+
+A sound test waits for input availability, the relevant tick or selection outcome,
+and collector drain as separate observations. Calling `advance_by` several times
+and immediately requesting stop can discard work. An output count proves those
+outputs arrived, but cannot prove a skipped activation or absence of an extra
+output. Keep negative clock assertions behind a Runtime-owned observation barrier.
+See [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)
+for clock semantics.
+
+## Compile-plan checks in CI
+
+`compile()` is a pure, cold transform: it never runs `compute()`, creates
+endpoints, or touches your thread's scheduling. That makes it cheap and safe
+to call inside a unit test — and it turns your CI into a graph-validity gate
+that catches wiring, admission, and contract errors long before hardware is
+involved.
+
+The baseline check is two lines plus diagnostics on failure:
+
+```cpp
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_plan.hpp>
+
+TEST(FusionPipeline, PlanIsAdmitted) {
+  holoscan::Graph graph = make_production_graph();  // your app's real composition
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+
+  for (const holoscan::Diagnostic& d : plan.diagnostics()) {
+    // d.token is a stable registry token, not log prose — grep-able in CI logs.
+    std::cerr << (d.severity == holoscan::DiagnosticSeverity::kError ? "error: " : "warning: ")
+              << d.token << '\n';
+  }
+  ASSERT_TRUE(plan.ok());
+}
+```
+
+Remember the failure model: admission failure is a **rejected plan, not an
+exception**, so the test inspects `ok()` and `diagnostics()` rather than
+wrapping `compile()` in a try/catch (see
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)).
+
+The second, stronger check catches *unintended* plan changes. An admitted plan
+serializes deterministically — `plan.json()` is canonical JSON and
+`plan.digest()` is a 256-bit semantic digest (`holoscan::PlanDigest`, an
+`std::array<std::byte, 32>` comparable with `==`) covering normalized plan
+semantics. Check the digest of your known-good plan into the repository and
+diff against it:
+
+```cpp
+TEST(FusionPipeline, PlanMatchesBaseline) {
+  holoscan::Graph graph = make_production_graph();
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+  ASSERT_TRUE(plan.ok());
+
+  const holoscan::PlanDigest baseline = load_baseline_digest();  // checked-in bytes
+  EXPECT_EQ(plan.digest(), baseline)
+      << "Execution plan changed. Review the canonical JSON diff, then refresh "
+         "the baseline if the change is intentional:\n"
+      << plan.json();
+}
+```
+
+The division of labor: **diff with `digest()`, read with `json()`**. Digest
+equality tells you *whether* the plan changed without parsing anything; when
+it fails, checking the canonical JSON into the repo alongside the digest gives
+reviewers a human-readable diff of *what* changed — partitioning, channel
+capacities, temporal triggers, clock catalog, and the rest. A refactor that
+was supposed to be behavior-neutral but silently altered an endpoint name or a
+queue capacity shows up as a red CI job instead of a runtime surprise.
+
+For plan-inspection tooling beyond assert-and-diff — record accessors,
+artifact bundles, and working with plans outside tests — see
+[Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+<Tip>
+  Compile-plan tests need no GPU and no runtime bindings, so run them in the
+  cheapest CI tier on every commit. Reserve simulated-clock graph tests for
+  the same tier where possible, and hardware-in-the-loop runs for merge gates.
+</Tip>
+
+## Testing `compute()` logic with constructed inputs
+
+An operator is three declarations — `setup()` for structure, `contract()` for
+time, `compute()` for work — and `compute()` is intentionally oblivious to
+temporal concerns. Exploit that: keep the *work* in plain functions that take
+constructed values, and let `compute()` be a thin shell that receives, calls,
+and emits. The plain functions then test like any other C++ code.
+
+```cpp
+// fusion_math.hpp — pure logic, no runtime types.
+Control fuse(const Frame& frame, const ImuSample& imu);
+
+// fusion_math_test.cpp — ordinary GoogleTest, no graph, no clock, no runtime.
+TEST(FuseLogic, LargeTiltCommandsCorrection) {
+  const Frame frame = make_test_frame(/* ... */);
+  const ImuSample imu{.tilt_rad = 0.4};
+  const Control control = fuse(frame, imu);
+  EXPECT_GT(control.correction, 0.0);
+}
+```
+
+Inside the operator, `compute()` reduces to plumbing — receive inputs, call
+`fuse()`, emit the result — so the part that carries your domain risk has
+direct, fast, deterministic coverage, and the plumbing is exercised by the
+simulated-clock graph tests above.
+
+What you *cannot* do today is instantiate an operator and invoke its
+`compute()` directly: the `holoscan::ExecutionContext` handed to `compute()`
+is constructed by the runtime for each activation and is not something user
+code can build by hand. The runtime boundary is therefore the seam — put logic
+you want to unit-test on the far side of it.
+
+## Choosing the right layer
+
+| You want to verify… | Use | Cost |
+|---|---|---|
+| Numeric/domain logic is correct | Pure-function unit tests with constructed inputs | Milliseconds, no runtime |
+| The graph is valid and unchanged | Compile in a test: `ok()` + digest/JSON baseline | Milliseconds, no runtime |
+| One operator obeys its parameters, ports, and contract | Operator test fixture | Real Runtime with finite synthetic inputs |
+| Operators interact correctly over time | Whole-graph run with explicit observation barriers | Full Runtime; hardware depends on operators |
+| Real sensors and drivers behave | Hardware-in-the-loop run | Minutes, real devices |
+
+Work down the table only as far as the property under test requires; each row
+down costs more and diagnoses less precisely. When a graph-level test fails,
+the failure taxonomy in
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+tells you which phase — authoring, compile, or run — to look at first.
+
+## Python operator tests
+
+The `holoscan-core-cu13` wheel includes `holoscan.testing`, its public typing,
+and the separate native testing library. Importing `holoscan` does not eagerly
+import testing, and the Core native library does not depend on testing.
+Building the Python testing component requires both Python and
+`HOLOSCAN_BUILD_TESTING_LIBRARY=ON` (the default). Custom testing-disabled
+builds omit this component; release wheels include it.
+The private Core/testing bridge still rejects incompatible build identities at
+import. This guard does not provide a stable C++ plugin ABI.
+
+For a build published as `5.0.0` (replace it with your build's exact version):
+
+```bash
+python -m pip install "holoscan-core-cu13==5.0.0" pytest
+```
+
+`pytest` is a test dependency; CPU fixture tests do not import optional GPU
+Python packages. Native CUDA library dependencies still follow the SDK installation
+requirements.
+
+Use the same harness for a registered C++ operator descriptor and a Python
+`holoscan.Operator` subclass:
+
+```python
+from typing import cast
+
+import holoscan as hs
+from holoscan.testing import OperatorTestHarness
+
+class ScaleOp(hs.Operator):
+    inp = hs.Input("in", hs.payload.uint32)
+    out = hs.Output("out", hs.payload.uint32)
+    factor = hs.Param(2)
+
+    def compute(self, context):
+        self.out.emit(cast(int, self.inp.receive_data()) * self.factor)
+
+with OperatorTestHarness(ScaleOp, params={"factor": 2}) as h:
+    h.push_many("in", [1, 2, 3])
+    result = h.run()
+assert result.values("out") == [2, 4, 6]
+```
+
+Each run constructs fresh instances through ordinary Graph parameter and port
+services. Staged input is finite and consumed by that attempt. `set_params`
+replaces parameters atomically after validating pending inputs, explicit captures
+and retained queue, flow, Tensor and device overrides against the proposed ports.
+A rejected update leaves the previous parameters and pending input usable.
+Automatic captures follow configured outputs; an explicit capture selector or
+limit cannot silently disappear when parameters change.
+
+`push` stages exactly one payload; `push_many` stages an explicit sequence and
+rejects strings, bytes and mappings as ambiguous batches. Use `push` to stage one
+such object, or pass an explicit list of payloads to `push_many`. An admitted
+Python-object list or `None` remains one payload. Conversion of a whole batch or
+frame succeeds before pending input changes. Core's ordinary Python-object ports
+also accept `None` as data through `emit` and `receive_data`; it is not an omitted
+input or end-of-stream marker. Other payload types retain their canonical checks.
+
+For a registered C++ operator, first install and import its provider. With the
+illustrative `custom_holoscan` provider from
+[Registered Operators](/holoscan/sdk-user-guide/python/registered-operators)
+installed, its finite `CounterSource` can be tested with the same harness:
+
+```python
+from custom_holoscan.operators import CounterSource
+from holoscan.testing import OperatorTestHarness
+
+with OperatorTestHarness(CounterSource, params={"limit": 10}) as h:
+    result = h.run()
+assert len(result.values("out")) == 10
+```
+
+`custom_holoscan` is a separately supplied example provider, not a Core built-in.
+The harness uses its registration and canonical payload adapters; it does not
+need a testing-specific Python wrapper for the operator.
+
+`run(check=True)` raises the existing typed `holoscan.errors.HoloscanError`
+with native diagnostics and available traceback information; `.result` retains
+partial outputs. `run(check=False)` returns the failed result directly.
+Construction and staging errors raise immediately. Reading results never reruns
+the operator, and results remain valid after closing the harness.
+
+Use `result_of(error)` for typed inspection of a failed run. It returns the
+attached `TestResult` unchanged, or `None` when there is no testing result. It
+does not search chained exceptions, execute an operator, or join an attempt.
+The existing `.result` attachment and exception subclasses remain unchanged.
+
+```python
+from holoscan.errors import HoloscanError
+from holoscan.testing import result_of
+
+with OperatorTestHarness(ScaleOp) as h:
+    h.capture("out", capacity=1)
+    h.set_output_flow("out", queue_depth=2)
+    h.push_many("in", [1, 2])
+    try:
+        h.run()
+    except HoloscanError as error:
+        failed = result_of(error)
+        assert failed is not None
+        assert not failed.ok
+        assert failed.values("out") == [2]
+```
+
+The same helper works with `running.finish()` failures. Repeated
+`finish(check=False)` calls and `result_of(error)` expose the same cached joined
+result, including partial captures.
+
+### Timestamped and grouped input
+
+```python
+from holoscan.testing import sample_at
+
+h.push_samples("in", [sample_at(10, capture_timestamp_ns=0),
+                       sample_at(20, capture_timestamp_ns=100_000_000)])
+h.push_frame([("left", 1), ("right", 2)], capture_timestamp_ns=100_000_000)
+```
+
+These are alternative staging examples for matching operator declarations.
+A frame also accepts an ordered mapping. Omitted ports publish nothing.
+Integer nanosecond coordinates use the fixture clock's real identity. They do
+not advance time, sort input, or force a callback. Native selectors determine
+which records are consumed. Independent and grouped producers cannot feed the
+same input. `run_controlled_clock(ControlledClockRun(tick_ns=...))` retains the
+native restricted finite profile, including startup callbacks and suppressed
+tick observations.
+
+### Capture ownership
+
+All configured outputs are captured by default; `outputs=["out"]` selects a
+subset, and `outputs="out"` selects that single port. Scalars and ordinary schemas
+use canonical owned values. Python-object captures retain strong references without deep copying; subsequent mutation of
+the same object remains visible. Tensor and Tensor-bearing schemas use
+independent host snapshots by default, including every admitted Tensor field.
+
+<Warning>
+  Output selection controls which collectors the fixture wires; it does not
+  disable the operator's other outputs. An unselected output still needs a
+  consumer if the operator's ordinary Graph contract requires one. Selecting a
+  subset can therefore reject compilation or fail when publishing. Keep the default selection unless
+  the operator admits its unconnected outputs. Unselected outputs cannot be read
+  through the result.
+</Warning>
+
+Use `values`/`value` and `samples` for value captures, `snapshots`/`snapshot` for
+snapshot captures. Singular access requires exactly one record. Unknown outputs
+and mismatched accessors raise. Schema snapshots expose copied `.metadata`,
+`.sample_metadata`, `.has_tensor(name)` and `.tensor(name)`. Tensor snapshots
+expose host `.bytes`, `.shape`, `.dtype` and the original source device, strides,
+offset and sample metadata. The source metadata describes the original Tensor,
+not the host snapshot destination.
+
+The capture setters replace both the policy and its finite limits:
+
+- `capture(name, capacity=1024)` selects canonical value capture. It does not
+  preserve an automatically selected Tensor snapshot policy; Tensor and
+  Tensor-bearing schema ports require `capture_snapshot` or `capture_native`.
+- `capture_snapshot(name, capacity=1024, maximum_bytes=67_108_864)` selects an
+  independent host snapshot. The byte limit covers all Tensor fields in one record.
+
+Overflow fails the attempt while preserving
+the complete captured prefix. `capture_native(name, Retain(max_records=...))`
+opts into native retention and its capacity, topology and completion checks.
+Unsupported payloads, constructors and layouts retain canonical rejection;
+the fixture does not infer a conversion.
+
+### Managed execution and restart
+
+```python
+from holoscan.testing import FrameRelease, TestRunOptions
+
+with OperatorTestHarness(ScaleOp) as h:
+    h.push_frame({"in": 21})
+    with h.run_async(TestRunOptions(frames=FrameRelease.MANUAL)) as running:
+        running.release_frame(timeout_ms=5000)
+        assert running.wait_for_output("out", 1, timeout_ms=5000)
+        result = running.finish()
+assert result.value("out") == 42
+```
+
+`wait_for_output` requires an explicit integer `timeout_ms`; zero only polls the
+current count, and a timed-out or completed wait returns `False` if the requested
+count was not reached. `release_frame(timeout_ms=None)` (the default) and zero
+make one nonblocking release attempt; positive values permit waiting for the
+requested number of milliseconds.
+
+The running owner retains the entire attempt independently of the builder.
+Live observations expose counts, not payloads. `finish(check=True)` joins and
+checks the same cached result on repeated calls; `check=False` returns failure
+evidence. `close` or context exit requests cooperative stop and joins with the
+GIL released. It has no hard timeout for non-cooperating work. Runtime callbacks
+can request stop, but explicit joins there raise. Unsafe finalization transfers
+the full attempt to Core's shared cleanup mechanism; interpreter shutdown keeps
+its bounded best-effort policy. The default cooperative watchdog is 30 seconds.
+
+`operator_ref(plan_ref=None)` and `lifecycle_control(policy)` reuse Core's
+run-bound references and restriction-only lifecycle control. Core's
+`LifecycleAccessPolicy(targets=[...])` accepts these references as well as Graph
+authoring handles. A reference from another run is not authority over this run;
+Core rejects mismatched identities. A restart requires native Graph permission,
+a declared lifecycle stage and bounded lifecycle transaction options. Configure the
+tested operator's permissions with an immutable owning value:
+
+```python
+from holoscan.testing import TestLifecycleOptions
+
+h.set_lifecycle_options(TestLifecycleOptions(allow_external_restart=True))
+# Both flags are independent and default to False.
+h.set_lifecycle_options(TestLifecycleOptions(
+    allow_self_restart=True, allow_external_restart=True,
+))
+h.clear_lifecycle_options()  # Or h.set_lifecycle_options(None).
+```
+
+Set permissions and compile options between attempts. The setter copies a complete
+replacement for subsequent fresh graphs; clear removes both permissions without
+resetting staging or compile options. No Python Graph callback runs during fixture
+construction. Permissions alone do not issue a restart or bypass the runtime
+access policy. The complete installed
+[managed restart example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/operator_testing/python/test_advanced_testing.py)
+declares the `ARM` stage, sets transaction capacities, creates a restricted control
+handle, waits for the restart receipt to reach `PUBLISHED`, then releases the next
+frame and checks both outputs after joining.
+
+Use explicit configuration setters before starting an attempt:
+
+```python
+h.set_input_queue_depth("in", 4)  # Tested-operator input history.
+h.set_input_flow("in", queue_depth=8, max_inflight_samples=8)
+h.set_output_flow("out", queue_depth=8)
+h.clear_input_flow("in")  # Restore native fixture derivation.
+```
+
+Input history and edge queue capacity are different native settings. Flow setters
+accept Graph's `queue_policy`, `queue_depth`, `topic_name`, `memory_conversion` and
+`max_inflight_samples` keywords, with the same type/range validation. Calling a
+flow setter with no keywords installs default options; only its `clear_` method
+removes the override and restores fixture derivation. Omitted or `None` fields use
+canonical option defaults. Values are copied, and failed updates leave previous
+configuration intact.
+
+Tensor/device overrides use `set_input_tensor_spec`, `set_output_tensor_spec`,
+`set_input_source_tensor_spec`, `set_input_source_device` and `set_output_device`.
+Each has a corresponding `clear_` method; passing `None` to a non-flow setter also
+clears its override. Setters preserve native application order and reject changes
+during an active attempt. `set_compile_options` copies the Core value. Core
+lifecycle `await_terminal(timeout=5.0)` uses seconds; testing timeouts use integer
+milliseconds.
+
+The installed [Python examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/operator_testing/python)
+separate the basic scalar/timestamp workflow, Tensor/schema ownership, and
+advanced failure inspection and managed restart. Run them with
+`python -m pytest path/to/operator_testing/python`.
+
+## Recap
+
+- Use an operator fixture for ordinary Runtime contract and lifecycle behavior;
+  keep pure algorithms in fast function tests.
+- Stage exact typed values, timestamped sequences, or grouped frames, then run
+  and inspect owning results after the join.
+- Use explicit snapshots for independent Tensor and schema content.
+- Reuse native Graph and deployment configuration, with common overrides applied
+  before wiring and advanced hooks applied afterward.
+- Clock advancement needs observation barriers before asserting completed work.
+
+Next: [The performance model](/holoscan/sdk-user-guide/performance/performance-model).

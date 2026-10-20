@@ -1,0 +1,33 @@
+From ba098a5dc6521a44bd346fdca5344deac0a43815 Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Fri, 9 Oct 2026 13:08:39 -0400
+Subject: [PATCH] build: make tl-expected installation optional
+
+Holoscan builds against the pinned tl-expected source, while installed
+consumers use the distribution libexpected-dev package. Add an
+EXPECTED_INSTALL option so the SDK can suppress the nested header and
+package-configuration install rules without dropping the build-tree
+target export.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a04345e5..49c9ecd8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -55,12 +55,15 @@ install(EXPORT ${PROJECT_NAME}-targets
+   NAMESPACE tl::
+   FILE "${PROJECT_NAME}-targets.cmake")
+ 
++option(EXPECTED_INSTALL "Install tl-expected headers and CMake package" ON)
++if(EXPECTED_INSTALL)
+ install(FILES
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+ 
+ install(DIRECTORY "include/" TYPE INCLUDE)
++endif()
+ 
+ export(TARGETS expected
+   NAMESPACE tl::

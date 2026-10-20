@@ -1,0 +1,51 @@
+{
+  "$schema": "urn:holoscan:module:v2",
+  "module": {
+    "name": "holoscan-inference",
+    "version": "5.0.0",
+    "description": "Holoscan SDK TensorRT inference toolkit (HoloInfer) and inference operators",
+    "authors": [
+      {
+        "name": "Holoscan Team",
+        "affiliation": "NVIDIA"
+      }
+    ],
+    "license": "Apache-2.0",
+    "language": [
+      "C++",
+      "Python"
+    ],
+    "namespace": {
+      "cpp": "holoscan::ops",
+      "python": "holoscan.inference"
+    },
+    "holoscan_sdk": {
+      "minimum_required_version": "5.0.0",
+      "tested_versions": [
+        "5.0.0"
+      ]
+    },
+    "platforms": [
+      "x86_64",
+      "aarch64"
+    ],
+    "tags": [
+      "Inference",
+      "AI",
+      "TensorRT",
+      "CUDA"
+    ],
+    "source_repository": "https://github.com/nvidia-holoscan/holoscan-sdk",
+    "operator_names": [
+      "InferenceOp",
+      "TensorPreprocessorOp"
+    ],
+    "binary_packages": {
+      "debian": "holoscan-inference",
+      "pypi": "holoscan-inference-cu13"
+    },
+    "documentation": {
+      "readme": "README.md"
+    }
+  }
+}

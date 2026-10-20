@@ -6,17 +6,21 @@ set -e
 
 # This script downloads a sample dataset for some of the examples.
 
-# Creates the data directory
-# Note: we assume this script is installed in the `examples` folder
-SCRIPT_DIR="$(dirname $(realpath $0))"
-DATA_DIR=${SCRIPT_DIR}/../data
-mkdir -p ${DATA_DIR}
+# Creates the data directory. The installed wrapper lives under
+# <prefix>/lib/holoscan/examples while download_ngc_data is in <prefix>/bin.
+if ! DOWNLOAD_NGC_DATA="$(command -v download_ngc_data)"; then
+    echo "ERROR: download_ngc_data is not in PATH." >&2
+    exit 1
+fi
+INSTALL_PREFIX="$(dirname "$(dirname "$(realpath "${DOWNLOAD_NGC_DATA}")")")"
+DATA_DIR="${HOLOSCAN_INPUT_PATH:-${INSTALL_PREFIX}/share/holoscan/data}"
+mkdir -p "${DATA_DIR}"
 
 # Download the racerx sample data
 racerx_version="20231009"
 racerx_md5="b67492afea29610105995c4c27bd5a05"
 
-${SCRIPT_DIR}/../bin/download_ngc_data \
+"${DOWNLOAD_NGC_DATA}" \
     --url https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/data/racerx/racerx_${racerx_version}.zip \
     --download_dir ${DATA_DIR} \
     --download_name racerx \

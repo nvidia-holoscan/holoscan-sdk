@@ -1,0 +1,95 @@
+Python applications use the same graph, compiler, execution plan, and runtime
+as C++ applications. The Python API composes registered C++ operators and
+Python-defined operators, freezes the graph into the same canonical plan, and
+runs that plan through an inspectable session.
+
+Use this section for behavior that is genuinely Python-specific. The
+[Getting Started](/holoscan/sdk-user-guide/getting-started) and
+[Composing Applications](/holoscan/sdk-user-guide/composing-applications/graph-composition)
+tracks show C++ and Python together where their public surfaces are parallel.
+
+<Note title="You will learn">
+  - What the current Python API supports
+  - How Python spells the compose → compile → run lifecycle
+  - Where installation, operator discovery, configuration, errors, and signal
+    behavior differ from C++
+</Note>
+
+## The supported authoring model
+
+Python can author root and Python-defined reusable graphs from registered C++
+operators and Python operators, and it can embed reusable graph types
+registered by C++ providers.
+It configures schema-declared parameters, wires typed ports, declares graph
+policy and external scalar or inline-schema topics, compiles an immutable plan,
+and controls a run session. `Tensor` values also interoperate with NumPy, CuPy,
+PyTorch, and other DLPack or CUDA Array Interface producers and consumers.
+
+Subclass `holoscan.Operator` to define Python operators with typed `Input` and
+`Output` ports, `setup()`, `contract()`, and `compute(ctx)` callbacks. Use
+`with ctx.stream():` for CuPy conversions and computation on the SDK's CUDA
+stream. The
+[`CuPy pipeline` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cupy_pipeline)
+shows a Python source, transform, and sink using CuPy-owned Tensor storage.
+Operators implemented in C++ can also be registered for discovery and composition
+from Python.
+
+## An SDK example application shape
+
+This example uses an illustrative independently installed operator provider.
+Applications import the package that ships their operators at the same point.
+
+```python
+import holoscan as hs
+from custom_holoscan.operators import BoundedSink, CameraSource, WindowFusion
+
+graph = hs.Graph("sensor-pipeline")
+camera = CameraSource(graph, "camera")
+fusion = WindowFusion(graph, "fusion")
+sink = BoundedSink(graph, "sink")
+
+graph.add_flow(camera.frame, fusion.camera, queue_depth=4)
+graph.add_flow(fusion.control, sink.input, queue_depth=4)
+graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "clock"))
+
+plan = hs.compile(graph)
+if not plan:
+    raise SystemExit(plan.summary())
+
+with hs.run_async(plan) as session:
+    if not session.wait(timeout=0.25):
+        session.request_stop()
+        if not session.wait(timeout=5.0):
+            raise TimeoutError("pipeline did not stop")
+```
+
+Class-attribute ports register automatically when `setup()` is absent; define
+`setup()` when adding queue, Tensor, or other declarations. A graph handle
+resolves port names, including `in_` for a port named `"in"`, with indexing as an
+unambiguous fallback.
+
+The `Graph` is mutable authoring state. `hs.compile()` returns an immutable
+`Plan`, including rejected plans with diagnostics. A `RunSession` is the sole
+owner of one run attempt; using it as a context manager guarantees cooperative
+stop and join on scope exit.
+
+## Language-specific guide
+
+- [Installation](/holoscan/sdk-user-guide/python/installation) covers packaged
+  and build-tree imports.
+- [Registered operators](/holoscan/sdk-user-guide/python/registered-operators)
+  covers registry proxies, reflection, and typing information.
+- [Graph configuration](/holoscan/sdk-user-guide/python/graph-configuration)
+  covers YAML/JSON attachment and immutable provenance.
+- [Errors and diagnostics](/holoscan/sdk-user-guide/python/errors-and-diagnostics)
+  separates authoring exceptions from rejected plans and terminal failures.
+- [Running and signals](/holoscan/sdk-user-guide/python/running-and-signals)
+  defines Python's caller-managed signal policy.
+
+## Recap
+
+- Python and C++ author the same graph model and compile to the same plan.
+- Python defines operator callbacks, composes registered C++ operators, and
+  embeds registered C++ reusable graphs.
+- Python-specific behavior is concentrated in this section while shared
+  concepts stay in the main guide.

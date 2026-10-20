@@ -1,0 +1,29 @@
+From 76b567e55335884d3fb778ddb014b720f1e07f7b Mon Sep 17 00:00:00 2001
+From: JC Fillion-Robin <jcfr@nvidia.com>
+Date: Mon, 31 Aug 2026 16:52:46 -0400
+Subject: [PATCH] Acknowledge intentional Cargo source builds
+
+Treat the Cargo fallback as an expected configuration when building this HoloMQ-patched dependency from source. Replace the generic production warning with a status message that identifies the selected build path.
+
+This changes diagnostics only; Cargo target selection and Rust artifact generation remain unchanged.
+
+Upstream-Status: Inappropriate [holoscan specific]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cdb80336..0d882a52 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -153,11 +153,8 @@ endif()
+ if(RUST_BUILD_ARTIFACT_PATH AND NOT "${RUST_BUILD_ARTIFACT_PATH}" STREQUAL "" )
+     add_subdirectory(iceoryx2-c)
+ else()
+-    message(WARNING
+-        "Using cargo to build the Rust part of iceoryx2. "
+-        "This is fine for development but for production, it is "
+-        "recommended to use an existing installation with\n"
+-        "'-DRUST_BUILD_ARTIFACT_PATH=/full/path/to/iceoryx2/target/release'!"
++    message(STATUS
++        "Building the Rust part of the HoloMQ-patched iceoryx2 dependency with cargo"
+     )
+ 
+     set(RUST_BUILD_TYPE "release")

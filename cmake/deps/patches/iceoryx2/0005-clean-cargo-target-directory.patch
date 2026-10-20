@@ -1,0 +1,24 @@
+From b59a7a223649ad44000b36d4b534a11c01e5d038 Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Thu, 27 Aug 2026 11:32:48 -0400
+Subject: [PATCH] Clean Cargo target directory with CMake clean
+
+The iceoryx2 CMake wrapper declares the cbindgen header as a byproduct, but Cargo maintains separate fingerprints outside CMake normal outputs. Register the configured Rust target directory as an additional clean file of the source-build target so a standard CMake clean clears Cargo state and the next build regenerates the Rust FFI library and header.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 759af0d3..cdb80336 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -200,6 +200,10 @@ else()
+         USES_TERMINAL
+     )
+ 
++    set_property(TARGET iceoryx2-ffi-c-build-step APPEND PROPERTY
++        ADDITIONAL_CLEAN_FILES "${RUST_TARGET_DIR}"
++    )
++
+     add_subdirectory(iceoryx2-c)
+ 
+     add_dependencies(includes-only iceoryx2-ffi-c-build-step)

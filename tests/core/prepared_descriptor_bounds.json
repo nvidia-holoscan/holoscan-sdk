@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "schemas": {
+    "prepared_schema_test.Packet": {
+      "max_prepared_bytes": 8192,
+      "fields": {
+        "label": {
+          "max_bytes": 128
+        },
+        "readings": {
+          "max_elements": 8
+        },
+        "tags": {
+          "max_elements": 4
+        },
+        "tags[]": {
+          "max_bytes": 128
+        },
+        "metadata.label": {
+          "max_bytes": 128
+        },
+        "metadata.tags": {
+          "max_elements": 3
+        },
+        "metadata.tags[]": {
+          "max_bytes": 128
+        },
+        "metadata.child.label": {
+          "max_bytes": 128
+        }
+      }
+    }
+  }
+}

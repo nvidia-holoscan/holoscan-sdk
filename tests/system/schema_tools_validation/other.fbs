@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace schema_tools;
+
+table Other {
+  value: uint (id: 0);
+}
+
+root_type Other;
+file_identifier "OTHR";

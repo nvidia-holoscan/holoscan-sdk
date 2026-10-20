@@ -1,0 +1,98 @@
+<Anchor id="pytorch-installation" />
+
+Holoscan does not ship PyTorch. Applications that use PyTorch next to Holoscan, for example
+to exchange tensors through DLPack, should install it into their own environment or container
+image. We recommend two approaches.
+
+The simplest is to install with pip. This brings in the full PyTorch stack, including pip
+copies of CUDA libraries that duplicate the system CUDA libraries Holoscan uses:
+
+```bash
+pip install torch
+```
+
+Alternatively, the SDK provides `install-pytorch.py` for an optimized installation without
+that duplication. It is installed as `holoscan-install-pytorch` in the SDK build container.
+
+```bash
+python3 scripts/install-pytorch.py install
+```
+
+The helper is an optimization, not a requirement for using PyTorch with Holoscan.
+
+## How it works
+
+PyTorch wheels declare their CUDA runtime as pip packages (`cuda-toolkit[...]` and
+`nvidia-*-cu13`). Installed next to a system CUDA stack, those packages take precedence
+through the wheel's library search path. One process then loads two builds of libraries such
+as cuBLAS: PyTorch uses the pip copies while Holoscan uses the system copies. The pip
+packages also add several gigabytes to a container image.
+
+The helper installs `torch` without its dependencies and installs only the pure-Python
+dependencies with pip. Every CUDA dependency must already be installed on the system, at
+least at the version the wheel pins; otherwise the helper stops before installing anything
+and lists the APT packages to install. Libraries bundled in the wheel that the system
+provides are removed.
+
+## Supported systems
+
+| Platform | Supported |
+|---|---|
+| x86_64 with CUDA 13.x | Yes |
+| SBSA (aarch64) with CUDA 13.x | Yes |
+| NVIDIA Jetson or IGX integrated GPU devices | Yes (JetPack 7 and later) |
+| CUDA 12, JetPack 6 and earlier | No |
+
+The default version is PyTorch 2.13.0, which PyTorch publishes for CUDA 13.0 (`+cu130`) and
+CUDA 13.2 (`+cu132`); there is no `+cu131` build. The helper selects the newest wheel that is
+not newer than the system CUDA: `+cu130` on CUDA 13.0 and 13.1, and `+cu132` on CUDA 13.2 and
+later.
+
+## Getting the helper
+
+| Artifact | Location |
+|---|---|
+| SDK source tree | [`scripts/install-pytorch.py`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/scripts/install-pytorch.py) |
+| SDK build container | `/usr/local/bin/holoscan-install-pytorch` (PyTorch is already installed) |
+
+The helper is a single Python file with no dependencies beyond pip, so a container image can
+copy it from the source tree.
+
+## Installing and checking PyTorch
+
+Run the helper with the Python interpreter where PyTorch should be installed:
+
+```bash
+python3 install-pytorch.py install
+```
+
+`install` runs `check` when it finishes. Run `check` again after installing other packages,
+because a package that depends on `nvidia-*` or `cuda-toolkit` wheels brings the duplicate
+CUDA libraries back:
+
+```bash
+python3 install-pytorch.py check --cmake
+```
+
+`check` fails if pip CUDA packages are installed or if PyTorch loads a CUDA library from a
+pip location. With a GPU it also runs a matrix multiplication and a cuDNN convolution;
+`--require-gpu` fails when no GPU is present. `--cmake` builds and runs a small C++ program
+with `find_package(Torch)`.
+
+In a Dockerfile:
+
+```dockerfile
+COPY scripts/install-pytorch.py /usr/local/bin/holoscan-install-pytorch
+RUN holoscan-install-pytorch install --cmake
+RUN pip install --no-deps torchvision==0.28.0 \
+    && holoscan-install-pytorch check
+```
+
+## Additional packages
+
+The helper installs only `torch`. Install `torchvision`, `torchaudio`, and model packages
+with `pip install --no-deps` at versions that match the installed PyTorch, and install
+`triton` separately if you use `torch.compile`.
+
+A container image that redistributes PyTorch is responsible for its open-source
+obligations, such as shipping the matching PyTorch source archive.

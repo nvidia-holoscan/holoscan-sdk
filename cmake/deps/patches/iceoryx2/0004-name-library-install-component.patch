@@ -1,0 +1,70 @@
+From 223483d336ea608d668b22cd5fedbf36e43a4c24 Mon Sep 17 00:00:00 2001
+From: Ilies CHERGUI <ichergui@nvidia.com>
+Date: Tue, 25 Aug 2026 14:04:12 -0700
+Subject: [PATCH] Name the iceoryx2 library install component
+
+Assign the iceoryx2 C, C++, and building-block library artifacts to the
+iceoryx2-lib CMake install component. This lets Holoscan package the
+libraries through a dependency-specific component without renaming
+upstream targets or artifacts.
+
+The change affects install metadata only and preserves the upstream
+library names and target exports.
+
+Upstream-Status: Inappropriate [holoscan specific]
+Co-authored-by: Tom Birdsong <tbirdsong@nvidia.com>
+
+diff --git a/iceoryx2-bb/cxx/cmake/install.cmake b/iceoryx2-bb/cxx/cmake/install.cmake
+index 8f603a5d..f6449236 100644
+--- a/iceoryx2-bb/cxx/cmake/install.cmake
++++ b/iceoryx2-bb/cxx/cmake/install.cmake
+@@ -60,8 +60,8 @@ install(
+     TARGETS iceoryx2-bb-cxx
+     EXPORT ${TARGETS_EXPORT_NAME}
+     RUNTIME DESTINATION ${DESTINATION_BINDIR} COMPONENT bin
+-    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
+-    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
++    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
++    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
+ )
+ 
+ # header
+diff --git a/iceoryx2-c/cmake/install.cmake b/iceoryx2-c/cmake/install.cmake
+index 20284b81..ea8ab7c9 100644
+--- a/iceoryx2-c/cmake/install.cmake
++++ b/iceoryx2-c/cmake/install.cmake
+@@ -60,8 +60,8 @@ install(
+     TARGETS includes-only static-lib shared-lib
+     EXPORT ${TARGETS_EXPORT_NAME}
+     RUNTIME DESTINATION ${DESTINATION_BINDIR} COMPONENT bin
+-    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
+-    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
++    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
++    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
+ )
+ 
+ # header
+@@ -76,7 +76,7 @@ install(
+ install(
+     FILES ${ICEORYX2_C_LIB_ARTIFACTS}
+     DESTINATION ${DESTINATION_LIBDIR}
+-    COMPONENT lib
++    COMPONENT iceoryx2-lib
+ )
+ 
+ # license
+diff --git a/iceoryx2-cxx/cmake/install.cmake b/iceoryx2-cxx/cmake/install.cmake
+index 37ecf269..19fc936a 100644
+--- a/iceoryx2-cxx/cmake/install.cmake
++++ b/iceoryx2-cxx/cmake/install.cmake
+@@ -60,8 +60,8 @@ install(
+     TARGETS includes-only-cxx static-lib-cxx shared-lib-cxx
+     EXPORT ${TARGETS_EXPORT_NAME}
+     RUNTIME DESTINATION ${DESTINATION_BINDIR} COMPONENT bin
+-    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
+-    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
++    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
++    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT iceoryx2-lib
+ )
+ 
+ # header

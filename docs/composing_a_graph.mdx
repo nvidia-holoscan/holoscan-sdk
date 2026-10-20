@@ -1,0 +1,357 @@
+Once you have operators — your own or reusable ones from a library — you
+assemble them into a pipeline by composing a **`Graph`**. The `Graph` is the
+single authoring root: you name it, add operators to it, wire their typed
+ports together, and attach graph-wide policy such as the clock. There is no
+separate `Application`, `Fragment`, or `Pipeline` class to learn.
+
+Composition is the first phase of the three-phase model — **compose →
+compile → run** — and it is deliberately *cold*: a `Graph` describes a
+pipeline but never executes one. Everything on this page happens before any
+scheduler exists. C++ catches payload and direction mismatches at compile
+time; both languages throw at the exact authoring call for invalid dynamic
+requests.
+
+**Complete C++ examples:** [`examples/first_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
+and [`examples/slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/slow_fast_fusion/cpp).
+The Python tabs below demonstrate the equivalent authoring surface with an
+installed Operator provider; standalone Python siblings are not yet shipped.
+
+<Note title="You will learn">
+  - How to construct a named `Graph` and add operators with `op<Op>()`
+  - How `add_flow()` wires typed ports and rejects mismatches at C++ compile time
+  - How to tune an edge with `ConnectionOptions` (`queue_depth`, `queue_policy`)
+  - Why every graph must declare and select a default clock before it can run
+  - Why `Graph` has no `run()` — and where compilation and execution happen instead
+</Note>
+
+## Construct a Graph and add operators
+
+A `Graph` takes a name at construction. Adding an operator registers it under
+a unique instance name and returns an operator handle:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/holoscan.hpp>
+
+    holoscan::Graph graph{"sensor-pipeline"};
+
+    auto camera = graph.op<CameraSource>("camera");
+    auto fusion = graph.op<WindowFusion>("fusion");
+    auto sink = graph.op<BoundedSink>("sink");
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python can define native operators or compose registered C++ operators.
+    These fragments assume your application defines `CameraSource`,
+    `WindowFusion`, and `BoundedSink`. For a complete program with no external
+    provider, use [Your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline).
+
+    ```python
+    import holoscan as hs
+    # CameraSource, WindowFusion, and BoundedSink are application-defined types.
+
+    graph = hs.Graph("sensor-pipeline")
+    camera = CameraSource(graph, "camera")
+    fusion = WindowFusion(graph, "fusion")
+    sink = BoundedSink(graph, "sink")
+    ```
+  </Tab>
+</Tabs>
+
+Two things are worth internalizing early:
+
+- **The C++ handle is typed.** `camera->frame` refers to the real
+  `Output<Frame>` member you declared in the operator's `setup()`
+  (see [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)).
+  There are no string-keyed port lookups, so a misspelled port name is a
+  C++ compile error, not a runtime surprise.
+- **The Python proxy is typed and reflected.** `camera.frame` and `fusion.camera`
+  resolve declared registry ports. Unknown ports and invalid parameter keywords
+  fail at authoring time and are reported by supported static type checkers.
+  Port names that are Python keywords gain a trailing underscore; indexing such
+  as `operator["non-identifier-name"]` remains available for dynamic code.
+- **Extra C++ arguments use ordinary copy semantics.** Anything you pass after the
+  name (`graph.op<BoundedSink>("sink", SinkConfig{...})`) is copied into a
+  replayable factory: the runtime constructs fresh operator instances from it
+  later. Values, strings, containers, copyable callables, and smart pointers
+  behave as they normally do in C++. In particular, `std::shared_ptr<T>` keeps
+  its process-local object alive in copies of the retained factory and in
+  operators reconstructed from it, including across sessions that reuse those
+  factories. `std::weak_ptr<T>` does not extend the object's lifetime.
+
+  Shared captures do not provide interprocess sharing. Independently composing
+  a graph in another process constructs that process's own captures. Partition
+  placement does not turn a C++ pointer into an interprocess connection or
+  guarantee a private pointee. Applications must synchronize shared mutation.
+
+  HSDK rejects obvious top-level borrows such as object pointers,
+  `std::reference_wrapper`, `std::span`, and range views. This is a guardrail,
+  not an ownership proof: C++ cannot inspect pointer elements inside a container,
+  fields inside your type, or a lambda's captures. Those lifetimes remain your
+  responsibility. Use a value for independent state and `std::shared_ptr` when
+  shared identity is intentional; no HSDK ownership wrapper is required.
+
+<Warning>
+  **Handles are weak.** An `OperatorHandle` does not keep the `Graph` alive,
+  and it goes invalid when the `Graph` is destroyed. Use handles during
+  composition; do not stash them for use after the graph is gone.
+</Warning>
+
+## Wire ports with add_flow
+
+`add_flow(source_port, destination_port)` declares one edge from an output to
+an input:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    graph.add_flow(camera->frame, fusion->camera);
+    graph.add_flow(fusion->control, sink->input);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.add_flow(camera.frame, fusion.camera, queue_depth=4)
+    graph.add_flow(fusion.control, sink.input, queue_depth=4)
+    ```
+  </Tab>
+</Tabs>
+
+Because both endpoints are typed, the wiring is **compile-checked**: the
+payload types must match, and the direction is fixed — the first argument
+must be an output, the second an input. Connecting an `Output<Frame>` to an
+`Input<ImuSample>`, or passing the arguments in the wrong order, does not
+build.
+
+What the C++ type system cannot see, authoring checks at the call site:
+fan-in to an already-connected input, duplicate edges, and cycles are all
+rejected the moment you try to author them, by throwing. You never carry a
+malformed topology forward into compilation.
+
+`add_flow` returns a `[[nodiscard]]` flow handle; if you do not need it
+(you usually don't at this stage), discard it explicitly:
+
+```cpp
+(void)graph.add_flow(camera->frame, fusion->camera);
+```
+
+## Tune an edge with ConnectionOptions
+
+Every edge is a **bounded queue** — part of the SDK's bounded-by-construction
+design. The third argument to `add_flow` is a `holoscan::ConnectionOptions`
+struct that sets the edge-local policy:
+
+```cpp
+graph.add_flow(camera->frame, fusion->camera,
+               holoscan::ConnectionOptions{.queue_depth = 4U});
+
+graph.add_flow(imu->sample, fusion->imu,
+               holoscan::ConnectionOptions{
+                   .queue_policy = holoscan::QueuePolicy::kDropOldest,
+                   .queue_depth  = 1U,
+               });
+
+graph.add_flow(preview->frame, display->frame,
+               holoscan::ConnectionOptions{
+                   .queue_policy = holoscan::QueuePolicy::kDropOldest,
+                   .queue_depth  = 4U,
+});
+```
+
+<Warning>
+  `kBlocking` preserves accepted samples; it does not guarantee publication will
+  wait until space is available. Pre-submit pressure can return `kBackpressured`,
+  and propagating that error from `compute()` normally fails the run. A same-lane
+  recipient cannot progress while its producer waits. Cross-lane credit waiting
+  requires owner-progress wake support and uses a finite retry budget; it can
+  also end early. A slower nominal source is not a guarantee against stalls.
+  See [Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+  for ownership, partial-publication, and explicit retry constraints.
+</Warning>
+
+Leaving `queue_depth` unset asks compilation to size the edge from admitted
+nominal-rate and temporal-contract evidence when that evidence is finite. An
+explicit value is different: it is an exact logical and storage-authority pin,
+not a lower bound that automatic sizing may silently increase.
+
+```cpp
+graph.add_flow(camera->frame, recorder->frame);  // automatic when evidence closes
+graph.add_flow(camera->frame, preview->frame,
+               holoscan::ConnectionOptions{.queue_depth = 4U});  // exactly four
+```
+
+The two options you will reach for first:
+
+| Option | Type | Meaning |
+|---|---|---|
+| `queue_depth` | `std::optional<std::uint32_t>` | Exact history depth at the destination input. It must be positive. When omitted, compilation uses finite rate-and-contract evidence when available and otherwise preserves the legacy bounded fallback. |
+| `queue_policy` | `holoscan::QueuePolicy` | What happens when the queue is full. `kBlocking` (the default) preserves every accepted sample and applies backpressure; `kDropOldest` retains an in-order backlog up to `queue_depth` and replaces its oldest unread sample when full. |
+
+The slow/fast pattern is a good intuition pump: a high-rate IMU feeding a
+fusion stage can use `kDropOldest` with depth one when fresh data beats
+complete data, while a frame pipeline that must not drop wants `kBlocking`
+with a depth sized for its worst-case burst. Increasing a `kDropOldest` depth
+above one intentionally changes the survivor set: the consumer receives the
+newest bounded backlog in order rather than only the freshest unread sample.
+The `slow_fast_fusion` example wires exactly this shape:
+
+```cpp
+graph.add_flow(slow->output, fuse->slow, holoscan::ConnectionOptions{.queue_depth = 8U});
+graph.add_flow(fast->output, fuse->fast, holoscan::ConnectionOptions{.queue_depth = 16U});
+graph.add_flow(fuse->fused,  sink->input, holoscan::ConnectionOptions{.queue_depth = 8U});
+```
+
+These options are cold authoring inputs: they request a shape for the queue
+that compilation will materialize. They never resize a live runtime queue.
+If an explicit depth is below a semantic hard floor, compilation rejects it;
+if it is merely below the nominal recommendation, compilation preserves the
+requested depth and reports the advisory evidence. See
+[Rate-aware queue and pool sizing](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates)
+for the sizing equations and lifecycle allocation boundary.
+
+## Select a clock for time- and input-driven pipelines
+
+Ordinary `OnClock`, `OnEach`, and `OnAnyInput` pipelines need a declared,
+selected default clock; aligned, windowed, and predicate timing also needs a
+resolved time base. A readiness-only source can be clock-free when its
+selection does not require time.
+
+The standard incantation is two calls, usually fused into one line:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "runtime-clock"))
+    ```
+  </Tab>
+</Tabs>
+
+`add_clock<RealtimeClock>("runtime-clock")` declares a named, graph-owned
+clock and returns a `ClockKey`; `set_default_clock(key)` selects it as the
+graph default. `RealtimeClock` is the wall-clock choice you want for
+essentially every real application — see
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)
+for the full clock model and the alternatives.
+
+<Warning>
+  **Forgetting the default clock fails compilation for a connected graph.**
+  Connected inputs synthesize an arrival-backed trigger when you do not author
+  one explicitly. `compile()` rejects that trigger with
+  `TEMPORAL_CLOCK_UNDECLARED` unless its owning graph selects a default clock.
+  Make `add_clock` + `set_default_clock` a reflex in every graph you author —
+  put it right next to the `Graph` construction so it is never missed.
+</Warning>
+
+Python also combines declaration and selection at construction:
+`hs.Graph("pipeline", default_clock=hs.RealtimeClock)`. The keyword defaults to
+`None`, so it does not supply an ambient clock when omitted.
+
+Both calls follow the authoring error style: `add_clock` throws on a
+duplicate or invalid name, and `set_default_clock` throws if the key does
+not name a clock declared on this graph.
+
+Reusable graphs do not inherit an ancestor's default clock. The child declares
+an import with `import_clock()`, selects it with `set_default_clock()`, and the
+immediate parent resolves that dependency with `bind_clock()`. See
+[Reusable graphs: clock imports](/holoscan/sdk-user-guide/composing-applications/reusable-graphs#clock-imports)
+for the complete pattern and the `CLOCK_IMPORT_UNBOUND` failure.
+
+## Composition is not execution
+
+`Graph` has **no `run()`** — and no `compile()`, `run_async()`, or
+`scheduler()` either. This is a deliberate wall, not a missing feature.
+Authoring a graph is cold, in-process bookkeeping; compiling it into an
+executable plan and running that plan are separate downstream phases with
+their own APIs and their own failure styles:
+
+- **Authoring throws.** `op`, `add_flow`, `add_clock`, and friends throw
+  a `RuntimeError` at the exact line that made an invalid request —
+  duplicate name, fan-in, cycle, unknown clock key. If you generate graphs
+  programmatically, wrap composition in a `try`/`catch`.
+- **Compilation returns rejected plans as values**, which you inspect —
+  see [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+- **The run fails closed** — see
+  [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+Keeping the phases separate means a fully composed `Graph` is just data: you
+can build it, inspect it, and hand it to the compiler in a test without any
+scheduler or device in sight.
+
+## Putting it together
+
+A complete composition, ready to hand to the compiler:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/holoscan.hpp>
+
+    holoscan::Graph graph{"camera-imu"};
+    graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+
+    auto camera = graph.op<CameraSource>("camera");
+    auto imu = graph.op<ImuSource>("imu");
+    auto fusion = graph.op<WindowFusion>("fusion");
+    auto sink = graph.op<BoundedSink>("sink");
+
+    (void)graph.add_flow(camera->frame, fusion->camera,
+                         holoscan::ConnectionOptions{.queue_depth = 4U});
+    (void)graph.add_flow(imu->sample, fusion->imu,
+                         holoscan::ConnectionOptions{
+                             .queue_policy = holoscan::QueuePolicy::kDropOldest,
+                             .queue_depth = 1U,
+                         });
+    (void)graph.add_flow(fusion->control, sink->input);
+
+    // Next: compile the graph into an executable plan.
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import holoscan as hs
+    # CameraSource, WindowFusion, and BoundedSink are application-defined types.
+
+    graph = hs.Graph("camera-imu")
+    camera = CameraSource(graph, "camera")
+    fusion = WindowFusion(graph, "fusion")
+    sink = BoundedSink(graph, "sink")
+    graph.add_flow(camera.frame, fusion.camera, queue_depth=4)
+    graph.add_flow(fusion.control, sink.input, queue_depth=4)
+    graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "runtime-clock"))
+
+    # Next: compile the graph into an executable plan.
+    ```
+  </Tab>
+</Tabs>
+
+This page covers direct, imperative composition — the everyday case. `Graph`
+can also be subclassed to package a subgraph as a reusable component with
+its own typed interface, and graphs can declare external topic boundaries
+for other processes. Those are covered in
+[Graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition)
+and [Reusable graphs](/holoscan/sdk-user-guide/composing-applications/reusable-graphs).
+
+## Recap
+
+- A named `holoscan::Graph` is the single authoring root; `op<Op>("name", args...)`
+  adds an operator and returns a typed `OperatorHandle`.
+- `add_flow(a->output, b->input)` wires typed ports; type or direction
+  mismatches fail at C++ compile time, and fan-in, cycles, and duplicates
+  throw at authoring time.
+- `ConnectionOptions` sets edge-local queue policy: `queue_depth` for
+  history depth, and `queue_policy` for `kBlocking` (backpressure),
+  or `kDropOldest` (keep the newest bounded in-order backlog). Use
+  `kDropOldest` with depth one for a freshest-only mailbox.
+- Every graph must call `add_clock<RealtimeClock>` + `set_default_clock` —
+  omitting it from a connected graph fails `compile()` with
+  `TEMPORAL_CLOCK_UNDECLARED`.
+- `Graph` has no `run()`: composition is cold and throws on invalid
+  authoring; compiling and running are separate phases.
+
+**Next:** [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)

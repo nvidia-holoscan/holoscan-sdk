@@ -1,0 +1,92 @@
+Holoscan uses independently versioned contracts for application schemas,
+serialized artifacts, Channel protocols, native descriptors, and internal
+compiler interfaces. A version identifies one of those contracts; it does
+not count SDK releases.
+
+This reference records the current values in the Holoscan SDK 5.0 source and
+links to their definitions. It covers the nine contracts above v1 examined
+during the GA versioning review, plus related contracts still at v1. Private
+implementation contracts are included to help interpret artifacts and
+diagnostics; their inclusion does not make them public extension interfaces.
+
+<Note>
+  Stable C++ and Python source APIs, native binary compatibility, serialized
+  formats, and cross-process interoperability have separate boundaries. Use
+  [API stability](/holoscan/sdk-user-guide/introduction/api-stability) for the
+  source compatibility policy and the individual guides for supported
+  deployment combinations.
+</Note>
+
+## Application schemas have their own identities
+
+Application-owned schemas are separate from the SDK-owned versions listed
+below:
+
+| Family | Identity and version boundary | Where to define it |
+| --- | --- | --- |
+| Parameter schemas | An authored schema ID and numeric version, field identities, and derived structural/contract hashes. Nested schemas contribute their own identities. | [Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas#schema-identity-and-versioning) |
+| Generated FlatBuffer payloads | Fully qualified root name, compatibility epoch, derived family ID, and four-byte file identifier. Compatible edits preserve existing field IDs and wire types. | [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas#evolve-a-schema-deliberately) |
+| Raw POD payloads | Authored canonical type name and numeric version, plus the exact declared field layout. Applications coordinate producer/consumer deployment. | [Raw POD payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads) |
+
+For example, an application's parameter schema version can be 1 while its
+snapshot is stored in archive format v1 and its generated plan uses private
+plan schema v9. Those three numbers describe different contracts. Likewise,
+the schema-family derivation domain `/v2` below is independent of a
+FlatBuffer family's authored compatibility epoch.
+
+## Current SDK contracts above v1
+
+Values below describe this SDK source revision. The linked definitions and
+consumers are authoritative when auditing another revision.
+
+| Contract | Current value | Boundary and reader implications | Source definition |
+| --- | --- | --- | --- |
+| Private execution-plan JSON | `holoscan.execution_plan.private.v9` | Identifies the canonical plan artifact and contributes to the plan digest. Runtime-package matching checks whether the required plan schema is supported. | [`kPlanSchema`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/compiler/plan_artifact_serialization.cpp) |
+| Temporal records | `holoscan.temporal-records`, version **2** | Identifies serialized temporal-contract records. Record validation accepts the current record version. | [`kTemporalRecordSchema` / `kTemporalRecordVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/core/temporal_contract_records.hpp) |
+| Endpoint catalog JSON | `holoscan.channel-endpoints`, version **2** | Identifies the serialized catalog consumed by standalone clients. Parsing requires the current format and version; attaching also validates the endpoint contract. | [`kCatalogFormat` / `kCatalogVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/channel/endpoint_catalog.cpp) |
+| Channel sample descriptor | ABI version **2** | Versions `ChannelSampleDescriptor`, a native descriptor boundary. This number is independent of the catalog JSON version and other Tensor or schema envelope ABIs. | [`kChannelSampleDescriptorAbiVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/channel/types.hpp) |
+| Catalog data-attribution frame | Wire version **3** | Carries data/EOS attribution and producer generation. The decoder rejects superseded v2 frames with `kProtocolError`; it has no version-negotiation fallback. | [`kDataAttributionVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/channel/channel_catalog_binding.cpp) |
+| Catalog health-control frame | Wire version **2** | Uses the publisher's producer generation in the epoch field. The decoder rejects superseded v1 frames with `kProtocolError`. | [`kHealthControlVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/channel/channel_catalog_binding.cpp) |
+| Partition planner interface | Interface version **3** | Private registration/invocation contract checked by the planner catalog. The selected partition algorithm has a separate ID and version. | [`kPartitionPlannerInterfaceVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/compiler/partitioning/partition_types.hpp) |
+| Schema-family ID derivation | Hash domain `holoscan.schema-family/v2` | Derives a family ID from the domain, exact fully qualified root name, and compatibility epoch. Changing the domain changes the derived IDs even when the root name and epoch stay the same. | [`derive_schema_family_id()`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/core/schema_identity.hpp) |
+| Observed operator replay fingerprint | Hash domain `holoscan.runtime.operator-replay.observed/v2` | Diagnostic identity over pointer-free declarations and normalized contracts. Exact replay comparisons remain authoritative; the fingerprint is not an interchange format or an alternative acceptance predicate. | [`observed_replay_fingerprint()`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/runtime/runtime_operator_replay_validation.cpp) |
+
+A shared numeric value does not establish compatibility between these rows.
+The Channel sample descriptor ABI, catalog JSON, and health-control frame are
+all at version 2, but each reader checks a different contract.
+
+## Related contracts already at v1
+
+These contracts evolve independently of the higher versions above. This is
+a selected inventory, rather than a list of every versioned SDK field or
+third-party protocol.
+
+| Contract | Current value | Independent boundary and definition |
+| --- | --- | --- |
+| Parameter snapshot archive | Format `holoscan.param-snapshot`, version **1**; digest domain `holoscan.param-snapshot/v1` | The archive reader requires its supported format/version. Application parameter-schema versions remain separate. See [`persistence_v1.cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/params/persistence_v1.cpp). |
+| Ordinary schema envelope | ABI version **1** | `kSchemaEnvelopeABIVersion` versions the schema-bearing wrapper, independently of the payload family's identity. See [`schema_package.hpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/schema/schema_package.hpp). |
+| Descriptor-Tensor schema envelope | ABI version **1** | `kDescriptorTensorSchemaEnvelopeABIVersion` versions the descriptor-array envelope. It has its own constant even though its current number matches the ordinary envelope. See [`schema_package.hpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/schema/schema_package.hpp). |
+| Runtime-package capability manifest | `holoscan.runtime_package_capabilities.canonical_json.v1`, schema version **1** | Describes a package's supported plan schemas and other capabilities; the manifest format can remain v1 while advertising plan schema v9. See [`runtime_package_capabilities.hpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/compiler/runtime_package_capabilities.hpp). |
+| Deployment artifact commit manifest | `holoscan.artifact_manifest.v1` | Completeness marker for manifest-last artifact publication, separate from both the endpoint catalog and runtime-package capability manifest. See [`artifact_emitter.cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/compiler/artifact_emitter.cpp). |
+| HoloMQ file-descriptor pass protocol | Protocol version **1** | Same-host, native-endian `AF_UNIX` request/response protocol. Request versions must match; the server can return `bad_version`. See [`fd_pass/protocol.hpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/holomq/fd_pass/protocol.hpp). |
+| Partition algorithms | Algorithm version **1** for the declared serial-baseline and source-chain algorithm IDs | Algorithm identity is distinct from private planner interface v3. See [`kPartitionAlgorithmVersion`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/compiler/partitioning/partition_types.hpp). |
+
+## Read and upgrade artifacts deliberately
+
+1. Identify the family first: a parameter schema, plan JSON, catalog, native
+   descriptor, wire frame, or hash domain. Use that family's version field or
+   identifier when selecting a reader; the enclosing SDK version alone is
+   insufficient.
+2. Check the reader or package's supported contract. For example,
+   [runtime-package matching](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/runtime/runtime_package_capability.cpp)
+   checks required plan schemas explicitly, and Channel frame decoders reject
+   unsupported versions. A version field does not add negotiation or migration.
+3. Follow the release's rebuild and matching-deployment requirements. Regenerate
+   deployment artifacts with the intended SDK and review schema versions when
+   comparing plan JSON or digests across SDK upgrades. Use the documented
+   [plan accessors and artifact APIs](/holoscan/sdk-user-guide/advanced/plan-tooling)
+   to inspect and publish them.
+
+Source API stability alone does not establish cross-version readers, writers,
+or runtime-peer interoperability. A compatible application-owned schema edit
+also needs to fit its declared bounds and the supported deployment contract.

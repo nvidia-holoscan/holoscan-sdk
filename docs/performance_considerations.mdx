@@ -1,88 +1,66 @@
 <Anchor id="performance_considerations" />
 
-This section discusses key performance considerations when designing and optimizing Holoscan applications.
+Holoscan 5 compiles graphs into execution partitions, activation rules, and
+bounded channels. Tune those resources after verifying the pipeline's delivery
+and termination behavior on the target machine.
 
-## Operator Granularity and Scheduling Overhead
-
-When designing Holoscan applications, it's important to understand the relationship between operator granularity and scheduling overhead. The current GXF-based scheduler/executor incurs overhead for:
-
-- Selecting which operator to schedule next
-- Invoking the operator's `compute()` method
-- Passing messages (data/entities) between operators
-
-For operators with trivial computations (e.g., basic arithmetic operations like addition, multiplication), this overhead can outweigh the actual computation time.
-
-### Measured Overhead
-
-The following measurements were obtained using the `scheduler_overhead_benchmark.py` script (installed to `/opt/nvidia/holoscan/bin/` or available at `scripts/` in the source tree). These values are illustrative and will vary depending on your hardware, OS, and Python environment—run the benchmark on your target system to obtain accurate figures:
-
-#### Operator execution only (no messaging, two operators)
-
-- Greedy Scheduler: ~10 µs/iteration
-- Event-Based Scheduler: ~11–15 µs/iteration
-
-#### With message passing (Tx → Rx)
-
-- Greedy Scheduler: ~17 µs/iteration
-- Event-Based Scheduler: ~25–62 µs/iteration
-
-#### Test Configuration
-
-The measurements above were obtained using the following configuration:
-
-- **Script:** `scripts/scheduler_overhead_benchmark.py` (installed to `/opt/nvidia/holoscan/bin/scheduler_overhead_benchmark.py`)
-- **Command-line flags:**
-
-  ```bash
-  --iterations 100000 --warmup-iterations 100 --workers 1
-  ```
-
-**Timing methodology:** The benchmark wraps `time.perf_counter()` around the entire `run_app()` call, which includes application initialization (constructor, `compose()`) and teardown—not just `compute()` execution. At high iteration counts (e.g., 100,000), this overhead is amortized, but for lower iteration counts the per-iteration time will appear inflated.
-
-**Warmup behavior:** The warmup phase always runs with `num_workers=2` for the event-based scheduler, regardless of the `--workers` argument. This ensures consistent JIT/cache warm-up but means warmup conditions may differ from the actual benchmark when testing with `--workers 1` or `--workers 4`.
-
-<Note>
-
-**Python-specific:** The event-based scheduler shows increased overhead with multiple worker threads in Python applications due to the Global Interpreter Lock (GIL) and thread synchronization. C++ pipelines do not incur GIL contention. We will update this guidance as more measurements become available.
-
+<Note title="You will learn">
+  - How operator boundaries and partition placement affect overhead
+  - Why queue depth and loss policy are separate from producer pacing
+  - Where to find reproducible SDK benchmarks and profiling guidance
 </Note>
 
+## Operator granularity and execution placement
 
-### Practical Guidance
+A small `compute()` can cost less than its dispatch and data movement. Compare
+one combined operator with reusable operators placed in a suitable partition;
+measure both under the same workload. The compiler can optimize eligible linear
+chains, but eligibility depends on the contracts, payloads, and placement.
+Contract omission is supported; synthesized `OnAnyInput` has different
+fast-path and rate-sizing eligibility from explicit `OnEach`.
 
-- **Rule of thumb**: If your operator's computation takes less than ~20 µs, the scheduling and message-passing overhead may dominate the total execution time. Consider combining such operations into a single operator.
-- **Event-based scheduler latency tuning**: For latency-sensitive Linux workloads using `EventBasedScheduler`, you can isolate the scheduler's dispatcher thread with `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>`. This is separate from the scheduler `pin_cores` parameter, which only affects worker threads, and can reduce jitter when the dispatcher competes with time-critical work.
-- **GPU-resident pipelines**: When using [GPU-resident operators](/holoscan/sdk-user-guide/using-the-sdk/gpu-resident-execution) within a CUDA Graph, kernel transition latency is significantly lower (~0.5–2 µs), allowing for finer-grained operator decomposition.
-- **Profiling is essential**: Use [NSight Systems traces](/holoscan/sdk-user-guide/performance/nsight-profiling) and [data flow tracking](/holoscan/sdk-user-guide/performance/flow-tracking)
- to measure actual overhead in your specific application.
-  Note: OS scheduling, CPU affinity (thread pinning), and Python version can materially impact these thresholds; validate on your target system.
+Use [Graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition)
+for automatic partitioning, explicit partitions, and deployment thread placement.
+Measure dispatch and placement costs with the shipped benchmarks under the
+workload and deployment configuration you intend to use.
 
-### When to Split vs. Combine Operators
+## Bounded queues and overload
 
-| Consider Splitting When... | Consider Combining When... |
-|---------------------------|---------------------------|
-| Each operator does substantial work (>100 µs) | Individual operations are trivial (&lt;20 µs) |
-| Operators can run in parallel | Operations must run sequentially |
-| You need to reuse operators in different pipelines | Operations are always used together |
-| You want clear separation of concerns | Messaging overhead is significant |
+Increasing a queue can absorb a finite burst, but does not make sustained
+producer/consumer imbalance disappear. `kBlocking` preserves accepted samples;
+it does not guarantee that an emit waits until it succeeds. A refusal can return
+`kBackpressured`, and propagating it from `compute()` normally fails the run.
+`kDropOldest` changes which samples survive and must be an intentional choice.
+A slower nominal source is not a guarantee against scheduling stalls.
 
-To reproduce the measurements on your system, run the benchmark script:
+See [Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+for publication ownership and retry constraints, and
+[Performance model](/holoscan/sdk-user-guide/performance/performance-model)
+for the costs of dispatch, channels, and retention.
 
-```bash
-# From SDK installation
-HOLOSCAN_LOG_LEVEL=ERROR python3 /opt/nvidia/holoscan/bin/scheduler_overhead_benchmark.py
+## Measure comparable workloads
 
-# Or from source tree
-HOLOSCAN_LOG_LEVEL=ERROR python3 scripts/scheduler_overhead_benchmark.py
-```
+Start with the [Core Runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks)
+and [Channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks).
+Keep payload, offered rate, work, backend, queue geometry, partition cover,
+stream policy, affinity, and termination criteria fixed when comparing authoring
+choices. Report warmup, hardware, build revision, and measurement scope. A
+change in fast-path eligibility is not a measured speedup by itself.
 
-Use `--help` for options such as iteration count and worker thread settings.
+Use [Nsight profiling](/holoscan/sdk-user-guide/performance/nsight-profiling)
+to distinguish CPU scheduling, channel pressure, GPU work, and synchronization.
+A [CUDA Graph region](/holoscan/sdk-user-guide/composing-applications/cuda-graph-regions)
+can reduce launch overhead for eligible GPU chains; compare ordinary and captured
+execution with the same downstream Tensor lifetime obligations.
 
 <Anchor id="host-cpu-isolation" />
 
 ## Host CPU Isolation for Real-Time Schedulers
 
-Pinning Holoscan worker threads to specific cores via `pin_cores` (or the dispatcher via `GXF_EBS_DISPATCHER_CPU_CORE`) only controls *where* those threads run. The kernel is still free to schedule unrelated user and kernel work onto the same cores, which reintroduces jitter that real-time configuration is meant to eliminate. Removing the chosen cores from the kernel's general scheduling pool at boot closes that gap.
+Deployment thread placement controls where execution partitions and configured
+support threads run. It does not stop unrelated work from using those CPUs.
+Consider isolation only after traces show that host contention causes material
+jitter; reserve housekeeping CPUs for the OS and unpinned helpers.
 
 <Note>
 
@@ -90,13 +68,12 @@ For an end-to-end worked example of CPU core isolation on a real platform, see t
 
 </Note>
 
-
 The following kernel command-line parameters work together:
 
 - **`isolcpus=<list>`**
-  - *What it does:* Removes the listed cores from the kernel scheduler's general load-balancing domain so threads land on them only when explicitly pinned (via `pin_cores`, `taskset`, or `sched_setaffinity`).
+  - *What it does:* Removes the listed cores from the kernel scheduler's general load-balancing domain so threads land on them only when explicitly pinned (via deployment affinity, `taskset`, or `sched_setaffinity`).
   - *Cost / tradeoff:* Those cores no longer participate in general workload balancing — your housekeeping cores absorb everything that is not explicitly pinned, so size the unisolated pool for the rest of the system's load.
-  - *How to tune:* Apply to exactly the cores your Holoscan dispatcher and pinned workers use. Skip it if your pipeline already runs comfortably on a shared core pool; isolation only helps when measurable jitter from co-scheduled work is the bottleneck.
+  - *How to tune:* Apply to exactly the cores your pinned execution partitions and configured support threads use. Skip it if your pipeline already runs comfortably on a shared core pool; isolation only helps when measurable jitter from co-scheduled work is the bottleneck.
 - **`nohz_full=<list>`**
   - *What it does:* Disables the periodic scheduler tick on the listed cores while only one task is runnable on the core, typically reducing timer-interrupt jitter for long-running RT workers.
   - *Cost / tradeoff:* Tick offload work shifts to the timekeeping (housekeeping) core, and on most kernels the tick is only suppressed when a single task is runnable on the core — additional pinned threads on the same core re-enable it.
@@ -112,7 +89,7 @@ These three parameters are typically used with the same core list.
 
 - *What it does:* The `performance` governor pins each selected core to its maximum operating frequency, eliminating frequency-scaling and wake-from-idle latency that the default `ondemand` / `schedutil` governors introduce.
 - *Cost / tradeoff:* Idle power draw and thermal output rise on the affected cores; on battery- or thermally-constrained systems this is a real cost.
-- *How to tune:* Apply only to the cores hosting your RT dispatcher and pinned workers. Skip it if you have not seen frequency-scaling-induced jitter in your traces — on many server-class systems the default governor is fast enough that pinning to `performance` is unnecessary.
+- *How to tune:* Apply only to the cores hosting your real-time execution partitions. Skip it if you have not seen frequency-scaling-induced jitter in your traces — on many server-class systems the default governor is fast enough that pinning to `performance` is unnecessary.
 
 ```bash
 sudo cpupower frequency-set -g performance
@@ -126,7 +103,8 @@ sudo cpupower -c 1-6 frequency-set -g performance
 
 ### Worked Example
 
-The [Scheduler Recipe Multi Branch Low Latency](/holoscan/sdk-user-guide/components/schedulers#scheduler-recipe-multi-branch-low-latency) recipe pins the dispatcher to core `1`, the priority branch worker to core `2`, the other branch workers to cores `3` and `4`, and the default pool to cores `5` and `6`. Isolate the full set of cores the recipe uses by adding the following to the kernel command line:
+For an application that explicitly places its execution partitions on CPUs 1–6,
+a matching isolation configuration could be:
 
 ```text
 isolcpus=1-6 nohz_full=1-6 rcu_nocbs=1-6
@@ -134,13 +112,11 @@ isolcpus=1-6 nohz_full=1-6 rcu_nocbs=1-6
 
 On x86 hosts, this is set in `/etc/default/grub` (the `GRUB_CMDLINE_LINUX` line) followed by `update-grub`. On IGX and Jetson, it is set in `/boot/extlinux/extlinux.conf` under the `APPEND` line of the active boot entry. Refer to your platform's documentation for the exact procedure and reboot requirements.
 
-After rebooting, set the governor and launch the application with the dispatcher pinned to core `1`:
+After rebooting, set the governor for the selected cores, then run the
+application with its graph/deployment affinity configuration:
 
 ```bash
 sudo cpupower -c 1-6 frequency-set -g performance
-export GXF_EBS_DISPATCHER_CPU_CORE=1
-export GXF_EBS_DISPATCHER_SCHED_POLICY=SCHED_FIFO
-export GXF_EBS_DISPATCHER_SCHED_PRIORITY=99
 ./my_holoscan_app
 ```
 
@@ -166,6 +142,15 @@ taskset -c -p <pid>
 
 </Warning>
 
+Holoscan keeps its own unpinned helper threads off the isolated set. The HoloMQ and Python Tensor
+release workers run on the process's CPUs minus the isolated ones. Before it pins any thread, the
+Runtime creates the CUDA context of each device a Graph uses, and launches one host function on it,
+from a thread on those CPUs. CUDA's own threads take the CPU set of the thread whose call starts
+them: context creation starts its event-handler threads, and the first host-function launch starts
+the thread that runs host functions. If your application initializes CUDA or launches host
+functions itself before running the Graph, do it from an unpinned thread. A CUDA thread started on
+an isolated, pinned thread stays there, which can delay CUDA host functions, and the HoloMQ buffer
+releases that depend on them, by milliseconds.
 
 <Tip>
 
@@ -173,10 +158,9 @@ taskset -c -p <pid>
 
 </Tip>
 
+## Recap
 
-## See Also
-
-- [holoscan-flow-tracking](/holoscan/sdk-user-guide/performance/flow-tracking)
-- [gxf-job-statistics](/holoscan/sdk-user-guide/performance/gxf-job-statistics)
-- [nsight-profiling](/holoscan/sdk-user-guide/performance/nsight-profiling)
-- [Rt Scheduling Prerequisites](/holoscan/sdk-user-guide/components/schedulers#rt-scheduling-prerequisites)
+- Measure operator boundaries and partitions on the target workload.
+- Queue size, loss policy, and producer pacing are separate decisions.
+- Keep experimental controls fixed and record provenance for performance claims.
+- Use the SDK's current benchmarks and deployment placement APIs.

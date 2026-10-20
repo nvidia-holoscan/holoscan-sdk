@@ -1,0 +1,253 @@
+Holoscan SDK 5.0 provides a Stable source API for basic in-process graph and
+operator authoring, scalar-port communication, and structured error handling.
+Other capabilities remain Beta or Prototype; Raw POD is an Experimental
+expert-level path, and HoloMQ's direct backend API and ABI are described as
+Evolving. These labels describe the compatibility commitment for each public surface; a feature's presence in
+the GA release does not promote every related API to Stable.
+
+<Note title="You will learn">
+  - What Stable, Beta, Prototype, Experimental, and Evolving mean for upgrade compatibility
+  - How stability is signaled on individual documentation pages
+  - Which APIs form the Stable production core and where its boundary ends
+  - How source compatibility differs from binary and protocol compatibility
+</Note>
+
+<Note title="Choosing APIs for production">
+  Build on the Stable core below when you need source compatibility across
+  5.x updates. Evaluate each Beta or Prototype dependency separately: the
+  Stable status of a graph or port does not extend to every payload, option,
+  or runtime feature used through it. Pin your SDK version and validate your
+  application when upgrading.
+</Note>
+
+## Stability and compatibility labels
+
+These labels describe compatibility across upgrades. Testing, functional
+correctness, and release qualification are separate considerations.
+
+### Stable
+
+Stable APIs are intended for production development. Their documented public
+source contracts remain compatible across the 5.x release line: existing
+supported C++ source and Python call patterns continue to work when rebuilt
+or run with a matching SDK installation. Compatible additions may extend the
+API, including new error codes while preserving existing codes and meanings.
+Correctness fixes follow the documented contract rather than preserving a bug.
+
+A breaking change to a Stable source contract requires a new major release.
+Deprecation is announced at least one release before removal, with a documented
+migration path. This policy covers the specific surfaces listed below; it does
+not assign stability to every member of a class or every feature accessible
+through it.
+
+### Beta
+
+Beta APIs support their documented use cases, but their signatures, defaults,
+and policy semantics may change between 5.x releases. Changes are recorded in
+release notes and do not carry a guaranteed deprecation cycle. Evaluate the
+upgrade work for each dependency and validate its behavior when upgrading.
+Beta is the default for public surfaces outside the explicitly enumerated
+Stable subset and separately classified interfaces below.
+
+### Prototype
+
+Prototype APIs may change significantly or be removed without a deprecation
+cycle. This includes native authoring registries and plan inspection beyond
+`plan.ok()`. Keep direct dependencies identifiable and plan for source updates
+when upgrading. Public installation, tutorial use, and an example's directory
+location do not establish a Stable contract.
+
+These labels describe upgrade compatibility separately from testing,
+functional correctness, and release qualification.
+
+### Experimental
+
+Experimental identifies the expert-level Raw POD path. Its declarations and
+exact-layout contracts may change between 5.x releases without a guaranteed
+deprecation cycle. Applications own the payload identity, layout, compatibility
+policy, and coordinated deployment of matching producers and consumers. Like
+Prototype, this label provides no Stable source-compatibility commitment; the
+Raw POD label also calls out those application-owned interoperability duties.
+It describes compatibility and deployment responsibilities separately from
+testing and release qualification. See
+[Raw POD payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads)
+for the constraints of this path.
+
+### Evolving
+
+HoloMQ uses **Evolving** for its direct backend API and shared-library ABI:
+interfaces may change between SDK releases without a guaranteed deprecation
+cycle, and upgrading direct consumers may require source changes and a rebuild.
+The label communicates that compatibility boundary without assigning a testing
+or release-qualification level.
+
+## The Stable production core
+
+The boundary below applies to the documented public C++ APIs and their Python
+counterparts. It covers source-level signatures and documented behavior for
+basic in-process pipelines using built-in Boolean, fixed-width integer, and
+floating-point scalar payloads. The exact supported types are listed in
+[Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+
+| Surface | Stable scope | Separately classified capabilities |
+| --- | --- | --- |
+| Graph and operator authoring | Construct a `Graph`; author an `Operator` through ordinary `setup()` and `compute()` callbacks; add an operator (`add_operator()` in C++, `Graph.op()` in Python); connect its ports with `add_flow()`; use the documented `compile()`, `plan.ok()`, and `run()` call contracts. | Omitted-contract trigger resolution, clock selection/admission, automatic queue/resource derivation, temporal customization, parameter APIs, advanced lifecycle/restart controls, placement, external topics, and plan inspection retain their own stages. Run/session, binding-aware, asynchronous, and continuation APIs gain no Stable scope through these entry points. |
+| Scalar-port communication | Declare supported scalar ports and use checked synchronous scalar receive/emit during permitted callbacks, including `Input<T>::receive_data()` and `Output<T>::emit(value)` in C++ and `OperatorPort.receive_data()` and `emit(value)` in Python. | Tensor, schema, and raw POD payloads retain their own stages. Broader Sample/metadata contracts, specialized borrowing/loan APIs, and non-default buffering/backpressure are outside this Stable subset. |
+| Explicit Python port names | Use existing supported, explicitly named, unambiguous Python port declarations and lookup rules. | Implicit declaration/type inference, ambiguous names, and new declaration or lookup forms are outside this Stable subset. Native registry rows, thunks, macros, and constructor-handle exchange remain Prototype. |
+| Structured error handling | C++ `holoscan::expected`, `Error`, existing `ErrorCode` values and meanings, and `HOLOSCAN_TRY`; Python's public `HoloscanError` interface and its structured error-code access. | Human-readable message text, newly added error codes, and the schemas of serialized diagnostic or plan artifacts require release-specific handling. |
+
+Python operators use the Python callback and exception conventions documented
+for that language; Stable does not make those conventions identical to C++.
+Likewise, using the same port API with a Tensor falls outside the Stable scalar
+subset and depends on the Beta Tensor contract. Choose the stage for every
+capability your application uses.
+
+### Stable call contracts and evolving defaults
+
+The Stable `compile()`/`plan.ok()`/`run()` promise covers the documented way to
+call these entry points and inspect admission. It does not freeze the policies
+used to resolve omitted or inferred declarations. Omitted-contract trigger
+resolution, temporal contracts, clock selection and admission, and automatic
+queue/resource derivation remain **Beta**, including when reached through a
+Stable entry point. Their documented defaults and resolution behavior may change between
+5.x releases as these Beta policies evolve.
+
+An application that relies on those inferred decisions therefore has a Beta
+dependency. Declare timing, clock, queue, and resource requirements explicitly
+where the SDK supports doing so, and inspect and test the resulting behavior
+when upgrading. Explicit authoring makes the dependency visible; it does not
+promote a Beta policy to Stable.
+
+Tensor declarations, ownership, output specifications, and pools remain Beta.
+So do parameter schemas/updates, lifecycle customization/restart, non-default
+buffering/backpressure, and broader Sample/metadata contracts. All plan
+inspection beyond `plan.ok()`, including resolved-defaults reports, typed
+records, and serialized plan/report formats, remains Prototype.
+
+Native authoring registry rows, thunks, registration/materialization adapters,
+macros, and constructor-handle helpers remain Prototype. This includes helpers
+installed in public headers and used by Python bindings. Stable Python
+`Graph.op()` use does not promote the native registry or establish a plugin ABI.
+
+The scope above applies to the current release. Additional entry points or
+capabilities receive their own classifications when delivered; their mention
+in another discussion grants no additional 5.0 Stable scope.
+
+## Source, binary, and protocol compatibility
+
+| Boundary | What the stability stage promises |
+| --- | --- |
+| C++ and Python source APIs | Stable covers the documented source contracts above. Beta and Prototype surfaces can change according to their stage. |
+| C++ shared-library ABI | Holoscan SDK makes no ABI compatibility guarantees across releases today. Source stability does not promise that an application or plugin binary built against one SDK package can load unchanged with another. Use matching headers and libraries and follow release-specific rebuild requirements. |
+| Python native extensions | Use extensions and native libraries built for the matching SDK. A wheel's CPython stable-ABI tag describes its Python interpreter ABI, not compatibility between Holoscan SDK versions. |
+| Cross-process protocols and persisted artifacts | Channel endpoints, payload schemas, serialized plans, and catalogs follow their own documented compatibility rules. A Stable `Graph` or `add_flow()` API does not freeze those formats or promise cross-version peer interoperability. |
+
+An exported symbol or unchanged library SONAME is not an API maturity label.
+HoloMQ's symbol inventory checks only exported names; see its
+[ABI and export policy](/holoscan/sdk-user-guide/introduction/holomq-abi-and-exports)
+for the boundaries of that check.
+
+## Schema and artifact versioning
+
+Schema versions describe their own formats and compatibility boundaries;
+they are independent of the SDK release number and API stability label. Keep
+existing version counters and compatibility epochs when moving to GA. Advance
+them when the corresponding schema or compatibility contract changes; GA alone
+is not a reason to reset them or restart their history.
+
+| Schema or artifact family | Version or identity boundary | Documentation |
+| --- | --- | --- |
+| Parameter schemas | Authored schema ID and numeric version, field IDs, and nested schema identities. | [Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas) |
+| Generated FlatBuffer payloads | Fully qualified family name, compatibility epoch, derived family ID, and four-byte file identifier; compatible evolution also preserves field IDs. | [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
+| Raw POD payloads | Authored type identity/version and exact declared layout; this experimental path has its own coordinated-deployment requirements. | [Raw POD payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads) |
+| Endpoint catalogs | Catalog format/version plus the endpoint, payload, capacity, and transport contracts validated when attaching. | [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients) |
+| Execution plans and reports | Plan schema identifiers, typed record formats, and report versions; the Stable entry-point contract does not freeze their representation. | [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling) |
+
+For current SDK-owned format, ABI, wire, private-interface, and hash-domain
+values, see [Schema and artifact versions](/holoscan/sdk-user-guide/introduction/schema-and-artifact-versions).
+
+These pages already document the individual schema families. A version field
+provides a boundary for validation and evolution; its presence alone does not
+promise cross-version readers, writers, or runtime peers are interoperable.
+
+## Stable identity naming
+
+SDK-owned parameter schemas, validators, tensor capacity projectors, POD payloads,
+and operator registrations use `holoscan.*`, such as
+`holoscan.vision.ResizeOpParams`. Downstream declarations should use
+`holoscan.<provider>.*`. Parameter schemas and POD payloads have separate
+numeric versions; validators and projectors name their semantic version with a
+`.vN` suffix.
+
+These strings participate in identity and compatibility checks. Producers,
+consumers, catalogs, serialized plans, and persisted parameter artifacts must
+agree on the identities they use. Generated FlatBuffer schemas retain their
+authored fully qualified names, including independent third-party namespaces,
+and have separate compatibility epochs. Generic runtime registration APIs
+accept names allowed by their contracts.
+
+## How stability is signaled
+
+- The Stable core is explicitly enumerated above. A page about `Graph` or
+  `Operator` can also describe Beta or Prototype options; use the scope of
+  the operation, not the class name alone, to determine its stage.
+- Beta and Prototype pages identify their limitations and the possibility
+  of API changes. The area table below summarizes those classifications.
+- Consult release notes for compatibility changes and deprecations. An
+  absent banner grants no additional Stable scope.
+
+## Current stages by area
+
+The table below summarizes the major areas. The Stable rows use the exact
+boundary above; broader capabilities retain the stage shown in their own row.
+
+| Area | Current stage |
+|---|---|
+| Basic in-process graph/operator authoring and compile/run call contracts | Stable (scope above) |
+| Ordinary built-in scalar ports and `add_flow()` composition | Stable (scope above) |
+| Existing explicitly named, unambiguous Python port declarations and lookup | Stable (scope above) |
+| Structured error handling in C++ and Python | Stable (scope above) |
+| Temporal contracts (`contract()`: triggers, input selection, missing-data policy) | Beta |
+| Omitted-contract triggers, clock selection/admission, and automatic queue/resource derivation | Beta |
+| Per-input buffer policies and explicit backpressure | Beta |
+| Reusable subgraphs | Beta |
+| Lifecycle callbacks (`start()`/`stop()` overrides and staged callbacks) | Beta |
+| Lifecycle restart control | Beta |
+| Parameter schemas, runtime updates, snapshots, and persistence | Beta |
+| Startup parameter decoding and graph-owned parameter transactions | Beta |
+| Maximum start delay | Beta |
+| Host/device memory-kind awareness (declared Tensor memory kinds, bounded staging) | Beta |
+| Deterministic execution controls and simulated-time testing | Beta |
+| Tensors and preallocated memory pools | Beta |
+| Broader Sample/metadata contracts and specialized borrowing/loan APIs | Beta |
+| Interprocess channels and standalone channel clients | Prototype |
+| HoloMQ direct backend API and shared-library ABI | Evolving |
+| Payload schemas (schema-described payloads) | Prototype |
+| Raw POD declarations and exact-layout contracts | Experimental; see the documented expert-level path |
+| Scheduling policies (thread placement, priorities) | Prototype |
+| Plan inspection, resolved-defaults reports, typed plan records, and report formats | Prototype |
+| Native authoring registry interfaces, provider adapters, and constructor-handle helpers | Prototype |
+| Operator unit-testing harness | Prototype |
+
+## Recap
+
+- Source API stages: **Stable** (maintained, breaking changes announced ahead),
+  **Beta** (may change on feedback, changes noted in release notes), and
+  **Prototype** (may change or be removed). **Experimental** identifies the
+  Raw POD expert path, with evolving declarations and application-owned
+  compatibility and coordinated deployment. HoloMQ's direct API and ABI use
+  **Evolving** to describe upgrade compatibility separately from testing and
+  release qualification.
+- Basic in-process graph/operator authoring, ordinary scalar ports, and
+  existing explicitly named Python ports and structured errors form the Stable
+  source API core. Inferred defaults, temporal policies, Tensor APIs, and plan
+  inspection retain their own evolving classifications.
+- Source compatibility, shared-library ABI, Python extension ABI, and
+  cross-process protocols are separate contracts; follow the matching
+  release's build and interoperability requirements.
+- Preserve schema version history across GA; use each schema family's own
+  evolution rules rather than resetting counters to match a release label.
+- Pin your SDK version, scan release notes per stage, and keep Prototype
+  usage behind your own interfaces.
+
+Next: [Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x)

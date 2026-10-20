@@ -1,0 +1,253 @@
+Every typed port in a Holoscan graph — `Output<T>` on the producer, `Input<T>` on the
+consumer — carries exactly one payload type `T`, and only a closed set of type families is
+admitted. This page is the single canonical reference for what `T` may be. The rules are
+checked at compile time wherever possible: a port declared with an inadmissible type fails
+to compile at the declaration site, not at runtime in the field.
+
+The same rules apply whether the connection stays inside one process or crosses a process
+boundary over an interprocess topic. If a type is admitted here, the runtime picks the
+right carriage for it automatically when you `compile()` the graph — you never write
+serialization or "channel" code on the pipeline path.
+
+**Complete C++ examples:** `public/examples/flatbuffer_schemas/custom_schema/cpp`,
+`public/examples/schema_payloads/cpp`, and `public/examples/tensors_101/cpp`
+
+<Note title="You will learn">
+  - The primary payload families: fixed-width scalars, generated schema types, and `Tensor`
+  - Why `std::int32_t` is allowed but `int` and `long` are not
+  - Where the experimental raw-POD escape hatch fits
+  - How each payload family is admitted between producer and consumer, and what happens on a
+    mismatch
+  - How Python ports name these families, and when to use the Python-only `hs.pyobject`
+</Note>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+## The payload families at a glance
+
+| Family | Example `T` | Declaration required | Details |
+|---|---|---|---|
+| Fixed-width scalar | `std::int32_t`, `float`, `bool` | None | This page, below |
+| Generated schema type | your generated `CustomControlT`, or SDK `schema::TimeT` | `.fbs` generation for application-owned types; none for SDK types | [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
+| Tensor | `holoscan::Tensor` | None | [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) |
+| Experimental raw POD | your `ControlPod` | Manual identity and exact layout traits | [Experimental Raw POD Payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads) |
+
+Everything outside these families is rejected at the port declaration: references,
+cv-qualified types, pointers, arbitrary classes, `std::string` and string views, backend
+handles, and raw memory buffers do not satisfy the port's payload concept.
+
+## Fixed-width scalars
+
+The scalar catalog is closed and exact:
+
+| Category | Admitted types |
+|---|---|
+| Boolean | `bool` |
+| Signed integers | `std::int8_t`, `std::int16_t`, `std::int32_t`, `std::int64_t` |
+| Unsigned integers | `std::uint8_t`, `std::uint16_t`, `std::uint32_t`, `std::uint64_t` |
+| Floating point | `float` (IEEE 754 binary32), `double` (IEEE 754 binary64) |
+
+<Warning>
+  **Never declare a port with `int`, `long`, `size_t`, or any other platform-dependent
+  alias.** Their width varies by platform and ABI, so the samples they describe are not
+  portable — the payload catalog admits only the fixed-width spellings. Write
+  `holoscan::Output<std::int32_t>`, not `holoscan::Output<int>`, even on platforms where
+  the two happen to be the same type.
+</Warning>
+
+Scalars need no declaration of any kind — declare the port and emit:
+
+```cpp
+holoscan::Output<std::int32_t> output;   // fixed-width: portable
+holoscan::Input<std::int32_t> input;
+```
+
+A scoped enum may cross a typed Graph edge when both operators execute in the
+same process. The Graph records its native width and preserves its exact C++
+type during Runtime replay. This identity is intentionally local: for an
+external topic or a cross-process edge, give the port the enum's fixed-width
+underlying type and convert at the edge of `compute()`.
+
+## Generated schema types
+
+FlatBuffers-backed owning types are the recommended path for structured messages.
+Application-owned `.fbs` files generate the port traits and codecs at build time; the SDK
+also ships several ready-to-use types with no generation step:
+
+| Type | Carries |
+|---|---|
+| `holoscan::schema::TimeT` | A timestamp pair (`time_ns`, `acqtime_ns`) |
+| `holoscan::schema::StringT` | A variable-length string (`data`) |
+| `holoscan::schema::ImageT` | One image frame: the frame metadata plus its pixels in a Core `Tensor` |
+| `holoscan::schema::ImuT` | One IMU sample: three measurements, their three covariances, and a flag word, under a shared `Header` |
+
+`ImageT` and `ImuT` are the sensor payloads, and the two that share a `Header`. They are
+owned by the `holoscan::sensor_io` library rather than by Core, so carrying either one
+means linking that library, which is installed by the `holoscan-sensor-io` component (required alongside `holoscan-core`); their type
+names stay `holoscan::schema::*` because a FlatBuffers namespace is part of the wire
+identity. `ImageT` is descriptor-backed — its pixels live in a Core `Tensor` rather than
+inside the FlatBuffer — so a port emitting one declares Tensor layout and allocation
+bounds like any other Tensor-carrying port.
+
+```cpp
+holoscan::Output<holoscan::schema::TimeT> out;
+// ...
+return out.emit(holoscan::schema::TimeT{.time_ns = t, .acqtime_ns = a});
+```
+
+A received schema value arrives as an owning native value with its fields populated; the
+runtime verifies the encoded payload before your `compute()` ever sees it. Schema payloads
+have a bounded serialized size — an oversized value (for example, a very long
+`schema::StringT`) fails with `kResourceExhausted` rather than allocating without bound.
+See [Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) for
+the built-in types, their complete field sets, and capacity sizing;
+[Sensor payloads](/holoscan/sdk-user-guide/data-and-payloads/sensor-payloads) for what the
+shared `Header` promises and what a schema change costs a running deployment; or
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+to define your own message.
+
+## Experimental raw POD escape hatch
+
+Raw POD remains available for expert applications that explicitly need no schema compiler,
+no generated code, and a small fixed-layout scalar aggregate. It is not the default
+application-defined message path. The type must be padding-free, standard-layout,
+trivially copyable, copy constructible, and manually described by exact identity and field
+traits. It cannot contain pointers, strings, nested objects, Tensors, or other ownership.
+For a small process-local control message, its inline typed carriage avoids schema serialization;
+measure the complete graph before choosing raw POD for latency alone, because cross-process raw
+POD still uses canonical field-wise encoding.
+
+For POD fields, choose `std::byte` arrays for opaque binary storage and `std::uint8_t` arrays
+for numeric values. Python receives the former as `bytes` and the latter as tuples of integers.
+See [opaque bytes and numeric values](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads#choose-opaque-bytes-or-numeric-values)
+for examples and the version change required when converting an existing layout.
+
+The SDK provides focused compile-time diagnostics for invalid declarations, but binary
+compatibility, semantic versioning, and coordinated producer/consumer rollout remain the
+application's responsibility. See
+[Experimental Raw POD Payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads)
+for the constraints and example.
+
+## Tensor
+
+`holoscan::Tensor` is the payload for bulk, device-backed data: images, point clouds,
+feature maps. A `Tensor` port needs no declaration, but tensors follow a distinct
+lifecycle — `allocate_tensor()` borrows a slot from a preallocated pool, and a received
+`Tensor` is already ordered on your compute stream. Start with
+[Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) and see
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) for the
+pool and stream-ordering rules.
+
+## Payload types in Python
+
+Python Operators name a payload token on each port, `hs.Input(name, token)` and
+`hs.Output(name, token)`, and the families above keep their rules:
+
+| Family | Python token |
+|---|---|
+| Fixed-width scalar | `hs.payload.boolean`, `hs.payload.int8` through `hs.payload.int64`, `hs.payload.uint8` through `hs.payload.uint64`, `hs.payload.float32`, `hs.payload.float64` |
+| Generated schema type | `hs.payload.schema.Header`, `String`, `TensorPacket`, and `Time`; an application schema generated with the `PYTHON` option of `holoscan_add_flatbuffer_schema()` provides its own token and value class |
+| Tensor | `hs.payload.Tensor` |
+| Experimental raw POD | The registered name of a C++ raw-POD type, through `hs.payload.resolve(name)`; see [Experimental Raw POD Payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads#from-python) |
+| Python object | `hs.pyobject`, Python only |
+
+Generated FlatBuffers plain `[ubyte]` vectors arrive as Python `bytes`, with `b""` as their
+default, and accept `bytes`, `bytearray`, lists, or tuples on emit. Indexing a received byte
+vector still yields an integer in `[0, 255]`; use `list(value)` or `bytearray(value)` when
+you need mutable elements. Other numeric vectors remain lists, enum vectors retain their
+generated enum values, and FlatBuffers fixed arrays remain tuples.
+
+### Python objects: `hs.pyobject`
+
+`hs.pyobject` carries any Python value between Python Operators in one process,
+without conversion or copying: each consumer receives the producer's object
+itself.
+
+```python
+class Detector(hs.Operator):
+    out = hs.Output("detections", hs.pyobject)
+
+    def compute(self, context):
+        self.out.emit({"boxes": boxes, "labels": labels})
+```
+
+- **One process only.** The object has no wire format. An `hs.pyobject` edge to
+  another process or an external topic fails compilation with
+  `PROCESS_LOCAL_CHANNEL_PLAN_INVALID`, and the diagnostic's `provided` summary
+  names what kept the edge from direct delivery. Use a generated schema type
+  for those boundaries and for C++ consumers.
+- **Blocking or drop-oldest queues** both work.
+- **Fan-out shares the object.** One output can connect to several consumers,
+  and every consumer receives the same object. Treat a received object as
+  shared and copy it before mutating it; after emitting an object, the producer
+  must not mutate it either.
+- **`None` is data.** Use `receive().is_missing` to tell a missing sample from a
+  `None` value.
+- **Policy.** `hs.CompileOptions(opaque_object_payloads=...)` admits these edges
+  by default (`ALLOW`); `WARN` reports each edge and `REJECT` rejects them, for
+  applications that want typed boundaries only.
+
+## Payload admission is family-specific
+
+<Warning>
+  **Developer preview: no runtime type negotiation.** Producers and consumers must arrive with
+  compatible contracts; the Runtime does not discover or negotiate them. Application-owned schema
+  evolution is checked against a maintained source baseline at build/release time, but cross-release
+  N/N+1 endpoint compatibility is not yet a supported deployment contract. These APIs may evolve in
+  upcoming releases.
+</Warning>
+
+Every payload family has an admission contract:
+
+| Family | Admission contract |
+|---|---|
+| Fixed-width scalar | The exact scalar type |
+| Experimental raw POD | Manually authored canonical name + version, plus the field layout |
+| Schema type | Stable root-family name + compatibility epoch + derived 128-bit family id + four-byte file identifier; descriptor-Tensor schemas also require the exact carriage profile |
+| Tensor | The `Tensor` type itself; element type and geometry are carried per sample |
+
+Inside one process this is largely enforced by the C++ type system: `add_flow()` connects
+an `Output<T>` to an `Input<T>` of the same `T`. The admission rules matter most at process
+boundaries, where the type system cannot reach, and there the agreement is checked twice. Attaching
+an endpoint compares the complete contract and refuses a mismatch with a typed `kIncompatible`
+error, so a wrong peer never reaches steady state. Every received frame then revalidates the schema
+identity and endpoint generation carried by its envelope and fails with a typed `kProtocolError`;
+neither failure lets a payload byte reach `compute()`.
+
+Schema identity deliberately does not include a compiled-schema digest, generated C++ spelling,
+schema revision counter, or `flatc` patch version. A compatible source edit retains its family
+identity; an intentional incompatible edit moves the compatibility epoch or defines a new root
+family. Experimental raw-POD users must instead bump the manually authored version whenever layout
+or semantics change and roll out producer and consumer together.
+
+Malformed external frames are handled the same way: verification happens before delivery,
+so your operator only ever receives payloads that match its declared type exactly. See
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels) for the
+transport side and
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+for feeding a graph from an external process.
+
+## Recap
+
+- Use a generated schema type for ordinary application-defined messages; SDK schema types
+  (`schema::TimeT`/`StringT`/`ImageT`/`ImuT`) need no generation step. The sensor payloads
+  among them, `schema::ImageT` and `schema::ImuT`, are owned by the `holoscan::sensor_io`
+  library rather than by Core, but keep their `holoscan::schema::` type names.
+- Always spell scalars fixed-width: `std::int32_t`, never `int` or `long`.
+- Raw POD is an experimental expert escape hatch with manual identity, layout,
+  compatibility, and rollout responsibilities.
+- Python ports name the same families with `hs.payload` tokens. `hs.pyobject` passes any
+  Python object between Python Operators in one process, shared by every consumer.
+- Payload admission is family-specific and never negotiated at runtime. Schema families can retain
+  identity across build-time-validated compatible edits; incompatible changes require a new epoch
+  or root family.
+
+Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+walks through defining and generating an application-owned message.

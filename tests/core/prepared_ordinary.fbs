@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace prepared_schema_test;
+
+enum Mode:byte { None, Active }
+struct Fixed { values:[int:3]; }
+table Scalars {
+  counter:long = null (id: 0);
+  mode:Mode = Active (id: 1);
+  minimum:long = -9223372036854775808 (id: 2);
+  maximum:ulong = 18446744073709551615 (id: 3);
+  weight:float = 1.25 (id: 4);
+  fixed:Fixed (id: 5, native_inline);
+  modes:[Mode] (id: 6);
+  child:ScalarsChild (id: 7);
+}
+table ScalarsChild { counter:int = null (id: 0); mode:Mode = Active (id: 1); }
+root_type Scalars;
+file_identifier "PRSC";

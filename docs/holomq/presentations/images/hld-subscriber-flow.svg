@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="675" height="480" viewBox="0 0 675 480" role="img" aria-labelledby="title desc">
+  <title id="title">holomq subscriber per-frame flow (public API)</title>
+  <desc id="desc">Subscriber API: wait_and_take, import_buffer, ConstBuffer.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#5a8f00"/>
+    </marker>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="110%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.1"/>
+    </filter>
+    <style>
+      .title { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 700; fill: #1a1a1a; }
+      .subtitle { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; fill: #666; }
+      .step-num { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 700; fill: #fff; }
+      .code { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 11.5px; fill: #1a1a1a; }
+      .code-dim { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 10px; fill: #555; }
+      .code-type { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 10px; fill: #0b5394; }
+      .code-r { text-anchor: end; }
+      .wire-label { font-family: Consolas, Menlo, monospace; font-size: 10px; fill: #2d5016; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect x="210" y="12" width="300" height="52" rx="6" fill="#fff" stroke="#76b900" stroke-width="1.2"/>
+  <text x="360" y="32" text-anchor="middle" class="wire-label">InboundMessage&lt;Payload&gt;</text>
+  <text x="360" y="50" text-anchor="middle" class="code-dim">Payload.buffer_handle from Publisher</text>
+  <line x1="360" y1="64" x2="360" y2="80" stroke="#76b900" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+  <rect x="20" y="80" width="635" height="388" rx="10" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="337.5" y="106" text-anchor="middle" class="title">Subscriber process</text>
+  <text x="337.5" y="122" text-anchor="middle" class="subtitle">expected APIs — check has_value(); unwrap with .value()</text>
+  <line x1="45" y1="132" x2="630" y2="132" stroke="#e2e8ef"/>
+
+  <g id="step-1">
+    <circle cx="60" cy="156" r="11" fill="#5a8f00"/><text x="60" y="160" text-anchor="middle" class="step-num">1</text>
+    <rect x="85" y="140" width="550" height="32" rx="5" fill="#eef7e8" stroke="#76b900"/>
+    <text x="100" y="160" class="code">auto sample_or = subscriber.wait_and_take();</text>
+    <text x="622" y="160" class="code-type code-r">expected&lt;InboundMessage, Error&gt;</text>
+  </g>
+  <line x1="360" y1="172" x2="360" y2="184" stroke="#888" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <g id="step-2">
+    <circle cx="60" cy="200" r="11" fill="#5a8f00"/><text x="60" y="204" text-anchor="middle" class="step-num">2</text>
+    <rect x="85" y="184" width="550" height="32" rx="5" fill="#fff" stroke="#c8d1dc"/>
+    <text x="100" y="204" class="code">const auto&amp; p = sample_or-&gt;payload();</text>
+  </g>
+  <line x1="360" y1="216" x2="360" y2="228" stroke="#888" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <g id="step-3">
+    <circle cx="60" cy="264" r="11" fill="#5a8f00"/><text x="60" y="268" text-anchor="middle" class="step-num">3</text>
+    <rect x="85" y="228" width="550" height="72" rx="5" fill="#fff8e6" stroke="#d4a017"/>
+    <text x="100" y="248" class="code">auto buf_or = context.import_buffer(</text>
+    <text x="125" y="264" class="code">    p.buffer_handle, stream);</text>
+    <text x="100" y="282" class="code-dim">// map + WaitValue(ready_generation) on stream</text>
+    <text x="622" y="296" class="code-type code-r">expected&lt;ConstBuffer, Error&gt;</text>
+  </g>
+  <line x1="360" y1="300" x2="360" y2="312" stroke="#888" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <g id="step-4">
+    <circle cx="60" cy="328" r="11" fill="#5a8f00"/><text x="60" y="332" text-anchor="middle" class="step-num">4</text>
+    <rect x="85" y="312" width="550" height="32" rx="5" fill="#eef6fc" stroke="#7eb8e0"/>
+    <text x="100" y="332" class="code">/* app reads buf_or.value().ptr() on stream */</text>
+  </g>
+
+  <rect x="85" y="356" width="550" height="28" rx="4" fill="#f0f4f8" stroke="#b8c4d0" stroke-dasharray="4 3"/>
+  <text x="360" y="374" text-anchor="middle" class="code-dim">drop ConstBuffer after stream work completes</text>
+
+  <rect x="45" y="412" width="585" height="48" rx="8" fill="#fffdf5" stroke="#e6b84d"/>
+  <text x="65" y="432" class="code-dim">GPU-ready:</text>
+  <text x="160" y="432" class="code">import_buffer</text>
+  <text x="350" y="432" class="code-dim">WaitValue(G) after</text>
+  <text x="525" y="432" class="code">wait_and_take</text>
+  <text x="65" y="450" class="code-dim">Pinned ready_generation in handle, safe when slot is reused</text>
+</svg>

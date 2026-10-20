@@ -1,0 +1,338 @@
+Python processes that do not host a Holoscan graph can publish and consume the
+same `holomq://` topics as C++ processes. The `holoscan.channel` module wraps
+the public C++ `ChannelRuntime` endpoint families while inferring payload types
+from the graph's endpoint catalog.
+
+This page follows the same lifecycle as the
+[C++ standalone client guide](/holoscan/sdk-user-guide/advanced/standalone-channel-clients),
+then covers Python-specific cancellation, `asyncio`, generated dataclasses,
+and Tensor array protocols.
+
+<Warning>
+  **Developer preview.** Standalone Python channel clients are a developer
+  preview and may change in upcoming releases. Descriptor-backed schemas and
+  Tensor catalogs are SDK-build-specific; run graph and client processes from
+  matching SDK builds.
+</Warning>
+
+<Note title="You will learn">
+  - How to load a graph-produced endpoint catalog and create a client runtime
+  - How payload inference, publication, receive, EOS, and local close work
+  - Which publication failures are safe to retry
+  - How blocking cancellation and descriptor-based `asyncio` waits differ
+  - How to publish Tensor-like objects or fill a bounded zero-copy loan
+  - How generated dataclasses carry multiple read-only Tensor fields
+</Note>
+
+## When to use a standalone client
+
+Use `hs.channel.Runtime` in a process outside a graph: a sensor daemon feeding
+an imported topic, a recorder consuming an exported topic, or a middleware
+bridge. Inside an `Operator`, continue to use typed ports and `add_flow()`.
+Creating a standalone runtime inside an operator bypasses the admitted plan.
+
+The shipped Python sensor and recorder variants demonstrate this process
+boundary in [External clients](/holoscan/sdk-user-guide/examples/external-clients).
+
+## Creating the runtime
+
+A runtime owns the transport context and all endpoints created from it. A
+context manager gives the required destruction order and publishes ordered EOS
+from live publishers when the block exits normally:
+
+```python
+import holoscan as hs
+
+with hs.channel.Runtime() as runtime:
+    # Create and use publishers and subscribers here.
+    pass
+```
+
+An exceptional context exit abandons live publishers without publishing EOS,
+as does object destruction. This avoids fabricating successful stream
+completion while unwinding an error. The runtime must also outlive received
+Tensors, derived views, and asynchronous GPU work that touches their storage.
+Creation failures and endpoint operations raise the matching `hs.errors`
+exception; the exception retains the C++ error `code` and stable `token`.
+
+## Obtaining an endpoint catalog
+
+The graph process saves its compiled boundary:
+
+```python
+plan = hs.compile(graph)
+plan.endpoint_catalog.save_json("/tmp/catalog.json")
+```
+
+The standalone process loads that exact file:
+
+```python
+catalog = hs.topics.EndpointCatalog.load("/tmp/catalog.json")
+endpoint = catalog.endpoint("frames-in")
+print(endpoint.name, endpoint.uri, catalog.digest)
+```
+
+`EndpointCatalog.parse(text)` accepts canonical JSON already held in memory,
+and `compatibility_with()` compares two catalogs. Do not reconstruct payload
+identity or capacity from selected JSON fields. The immutable `EndpointView`
+exposes the normalized scalar, schema, bounds, attach, clock, and Tensor facts
+used by endpoint inference.
+
+## Creating publishers and subscribers
+
+Catalog forms infer the registered payload from the endpoint:
+
+```python
+with hs.channel.Runtime() as runtime:
+    publisher = runtime.publisher(catalog, "frames-in")
+    subscriber = runtime.subscriber(catalog, "results-out")
+```
+
+An optional `payload_type=` checks the inferred type and raises
+`IncompatibleError` on a mismatch. It does not override the catalog.
+
+Catalog-less Python-to-Python channels require an explicit payload and bounded
+options:
+
+```python
+options = hs.channel.ChannelOptions(
+    subscriber_queue_depth=8,
+    enable_event_wake=True,
+)
+publisher = runtime.publisher("local-control", hs.payload.uint32, options=options)
+subscriber = runtime.subscriber("local-control", hs.payload.uint32, options=options)
+```
+
+Name-based endpoints are useful when no graph exists. Tensor publishers still
+require a catalog because their memory placement, shape, and pool capacity are
+part of the admitted boundary contract.
+
+## Emitting and receiving samples
+
+`emit()` returns the exact recipient count. `try_receive()` is nonblocking and
+returns `None` when no sample is available; `receive()` blocks up to one
+relative timeout and returns a `Sample`:
+
+```python
+import time
+
+publisher.wait_for_subscribers(5.0)
+capture_time = publisher.make_capture_time(time.time_ns())
+delivered = publisher.emit(42, capture_time=capture_time, frame_id=7, timeout=5.0)
+
+sample = subscriber.receive(10.0)
+print(sample.data, sample.metadata.sequence, sample.metadata.capture_time)
+```
+
+Timeouts accept float seconds, `datetime.timedelta`, or `hs.time.Duration`.
+Each call computes one absolute steady-clock deadline; readiness wakes never
+restart its budget. With `timeout=None`, `Publisher.emit()` makes one C++
+attempt and exposes `NotReadyError` or `BackpressuredError` directly.
+
+## Producer EOS and local subscriber shutdown
+
+The two close operations have different authority:
+
+```text
+publisher.close()  = ordered producer EOS
+subscriber.close() = local consumer endpoint retirement
+```
+
+Call `publisher.close()` after the final accepted publication, or leave its
+owning `Runtime` context normally; both request ordered producer EOS.
+Exceptional context exit, object destruction, process exit, silence, and
+subscriber close do not imply EOS. A finite input-driven graph drains accepted
+work and propagates EOS to its exports, where the subscriber observes
+`ClosedError` after the final sample:
+
+```python
+try:
+    while True:
+        consume(subscriber.receive(10.0))
+except hs.errors.ClosedError:
+    pass
+finally:
+    subscriber.close()
+```
+
+Calls on one endpoint are externally serialized. Cancel and join a thread that
+is waiting on a subscriber before closing that subscriber or its runtime.
+
+## Reporting capture-clock health
+
+If the graph's import advertises clock-health reports, the standalone
+publisher submits them in the same order as data and EOS:
+
+```python
+publisher.report_clock_health(hs.channel.ClockHealthReport.healthy())
+
+publisher.report_clock_health(
+    hs.channel.ClockHealthReport.unhealthy(
+        hs.channel.ClockHealthReason.SYNCHRONIZATION_LOCK_LOST
+    )
+)
+```
+
+Refresh a required healthy report within the catalog's maximum age. A client
+whose catalog does not advertise the capability gets a checked contract error
+instead of silently publishing unused evidence.
+
+## Attach and retry discipline
+
+Cross-process attachment is asynchronous. `wait_for_subscribers(timeout)` is
+5 ms polling sugar over `update_connections()` and the latest
+`has_subscribers` snapshot. It is useful before the first publication but is
+not proof that a later publication was delivered.
+
+Passing `timeout=` to `emit()` applies the standard bounded retry loop. It
+retries only `NotReadyError` and `BackpressuredError`, which prove that
+submission did not begin. `PublicationPartialError` and
+`PublicationIndeterminateError` may represent accepted delivery; retrying can
+duplicate a sample. Leave the loop on those and every other error.
+
+## Waiting for samples
+
+Use `receive(timeout, cancel=...)` to wait and consume, or
+`wait(timeout, cancel=...)` to wait without consuming. Both release the GIL for
+the complete blocking interval:
+
+```python
+cancel = hs.channel.CancelToken()
+
+# Another ordinary Python thread may call cancel.cancel().
+sample = subscriber.receive(hs.time.ms(500), cancel=cancel)
+```
+
+Cancellation raises `HoloscanInterruptedError` and leaves the subscriber
+usable. A timeout raises `HoloscanTimeoutError`. Only one blocking wait or
+readiness owner may claim a subscriber at a time; another attempt raises
+`InvalidArgumentError`.
+
+For a custom event loop, `subscriber.readiness()` returns a context-managed
+`ReadinessHandle`. `fileno()` is suitable for `select`/`poll`; readable means a
+sample or terminal condition *may* be available. Acknowledge first, then drain
+with `try_receive()` until it returns `None` so a wake racing the drain remains
+pending. Detaching releases the subscriber's wait-owner slot.
+
+## Using asyncio
+
+`hs.channel.aio.Subscriber` registers the readiness descriptor with
+`loop.add_reader()`. The normal catalog path creates no helper thread:
+
+```python
+import asyncio
+import holoscan as hs
+
+
+async def record(subscriber):
+    async_subscriber = hs.channel.aio.Subscriber(subscriber)
+    try:
+        while True:
+            sample = await async_subscriber.receive(timeout=10.0)
+            consume(sample)
+    except hs.errors.ClosedError:
+        pass
+    finally:
+        async_subscriber.detach()
+
+
+asyncio.run(record(subscriber))
+```
+
+The shipped recorder exposes this exact path as `recorder.py --async`; its
+CTest runs the async Python subscriber in a separate process against the C++
+relay graph and rejects any Python helper thread.
+
+Task cancellation removes the reader and detaches the handle. A name-based
+subscriber created without event wake raises `NotSupportedError` when asked
+for readiness; only then does the adapter fall back to an executor-backed
+blocking wait. `hs.channel.aio.Publisher.emit()` uses `asyncio.sleep()` for the
+same pre-submit-only retry discipline without blocking the event loop.
+
+## Publishing and receiving Tensors
+
+The copy path accepts NumPy, CuPy, PyTorch, and other Tensor-like values through
+DLPack, `__cuda_array_interface__`, or `__array_interface__` according to the
+catalog's foreign-emit policy:
+
+```python
+import numpy as np
+
+publisher.emit(np.arange(8, dtype=np.uint8).reshape(2, 4), timeout=5.0)
+sample = subscriber.receive(5.0)
+assert sample.data.is_read_only
+np.testing.assert_array_equal(np.asarray(sample.data), np.arange(8).reshape(2, 4))
+```
+
+For a bounded endpoint-owned allocation, fill a `TensorLoan` and then consume
+it with `emit()`:
+
+```python
+loan = publisher.loan((2, 4), "uint8")
+with loan.write() as writable:
+    np.asarray(writable)[...] = np.arange(8, dtype=np.uint8).reshape(2, 4)
+publisher.emit(loan)
+```
+
+For CUDA-device memory, pass a CuPy stream to `write(stream=stream)` and create
+the writable device view through DLPack inside that phase. Pool exhaustion
+raises `ResourceExhaustedError`; it never allocates a fallback buffer. A loan
+is single-use and can be abandoned explicitly with `cancel()`. Every emit
+attempt consumes the loan, including an attempt that returns an error, so do
+not retry the same loan. A synchronous or asynchronous loan emit with a
+non-`None` retry timeout is rejected before the loan is consumed.
+
+Generated descriptor-backed schemas use their Python dataclasses directly.
+Tensor fields accept Tensor-like objects on emit and return read-only
+`hs.Tensor` objects on receive:
+
+```python
+value = external_frame.ExternalFrame(
+    sequence=1,
+    source="standalone-client",
+    pixels=np.zeros((2, 4), dtype=np.uint8),
+    calibration=np.zeros((3,), dtype=np.float32),
+)
+publisher.emit(value, timeout=5.0)
+received = subscriber.receive(5.0).data
+print(received.source, received.tensors)
+```
+
+The generated module loads its compiled payload registration adapter. Graph
+and client processes must use matching SDK builds because Tensor descriptors
+are SDK-private wire records. A CUDA device must be available for catalog
+Tensor endpoints even when their backing memory is host-resident.
+
+## Error and retry reference
+
+| Python exception | Meaning | Client action |
+| --- | --- | --- |
+| `NotReadyError` | Peer or precondition not ready before submit | Retry only within one explicit deadline. |
+| `BackpressuredError` | Capacity rejected the operation before submit | Retry only within one explicit deadline. |
+| `HoloscanTimeoutError` | The one call deadline expired | Retry as a new caller decision. |
+| `HoloscanInterruptedError` | This wait's cancel token fired | Caller-local; the subscriber remains usable. |
+| `ClosedError` | Producer EOS is latched, or this local facade is closed | Terminal for this facade or stream. |
+| `StaleEndpointError` | A replacement producer incarnation invalidated the subscriber | Close and rebuild the subscriber from the current catalog. |
+| `PublicationPartialError` | A known strict subset received the publication | Do not retry; reconcile using the exact delivery evidence. |
+| `PublicationIndeterminateError` | Submission began but delivery is unknown | Do not retry; duplicating delivery is possible. |
+| `NotSupportedError` | The requested capability, such as event wake, is absent | Choose the documented fallback or rebuild with supported options. |
+| `InvalidArgumentError` | Contract misuse, including a second wait owner | Fix ownership or arguments; do not retry unchanged. |
+| `ResourceExhaustedError` | A finite pool or bounded resource is exhausted | Release held resources before retrying. |
+| `IncompatibleError` | Payload, schema, Tensor, or catalog identity does not match | Rebuild from matching artifacts; retry cannot repair it. |
+
+## Recap
+
+- Create `hs.channel.Runtime` only in a process outside a graph and keep it
+  alive longer than every endpoint and received Tensor.
+- Share the graph's exact endpoint catalog. Catalog endpoint forms infer the
+  payload; name-based forms require an explicit payload.
+- `emit(timeout=...)` retries only proven pre-submit outcomes against one
+  deadline. Publisher close and normal Runtime-context exit request ordered
+  EOS; subscriber close is local cleanup.
+- Blocking waits release the GIL and support `CancelToken`; `asyncio` uses the
+  readiness descriptor without threads when event wake is available.
+- Tensor-like emit is the policy-controlled copy path. `TensorLoan` is the
+  bounded endpoint-owned path, and every received Tensor is read-only.
+
+See the generated Python API reference under `holoscan.channel` for the exact
+facade signatures.

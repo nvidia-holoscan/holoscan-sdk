@@ -1,0 +1,459 @@
+Every value your pipeline needs, such as a threshold, gain, or deadline, is declared as
+typed operator parameters and resolved before the run starts. Holoscan SDK 5 does not make the
+runtime read configuration files. Your application loads YAML or JSON, sets typed parameters on operators,
+and lets `compile()` validate the final graph and freeze the effective values into the plan.
+
+This page covers loading documents, setting typed parameters, choosing a profile, and declaring
+deployment bindings.
+
+**Complete C++ example:** [`examples/essential/config_file/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/essential/config_file/cpp)
+
+<Note>
+  `config_io`, `params`, and `params_io` are always built; `params` and `params_io`
+  ship with `holoscan-core`. A `COMPONENTS params_io` request remains accepted for
+  compatibility but is unnecessary. Installed consumers use
+  `find_package(holoscan REQUIRED)` and link `holoscan::params_io`.
+</Note>
+
+The [operator testing fixture](/holoscan/sdk-user-guide/debugging-and-testing/testing#graph-configuration-and-deployment)
+uses the same native parameter, Graph and deployment configuration for isolated tests.
+
+## Where configuration fits
+
+With exceptions enabled, the concise startup path is:
+
+```text
+load YAML or JSON -> config::Document -> decode<T>() -> operator.set_params() -> compile -> run
+```
+
+The prepared typed value owns its available source evidence. Assigning it to an operator stores the
+value and evidence on the graph. `set_params()` does not snapshot the graph, compute a graph hash, or
+assume that graph construction is finished. `compile()` is the first operation that reads the final
+graph, profile, placement, schemas, and authored parameters together.
+
+This has three useful effects:
+
+- Validation happens before the run.
+- Graph construction can continue after configuration is attached.
+- The plan records the effective parameter values and their source evidence.
+
+## Loading a configuration file
+
+`holoscan::config_io::load()` reads a file into an immutable `config::Document`. The format is
+explicit:
+
+```cpp
+#include <holoscan/config/io.hpp>
+
+auto config = holoscan::config_io::load(
+    "app_config.yaml", holoscan::config_io::Format::kYaml);
+```
+
+`load()` returns the document directly and throws `ConfigException` on failure. `try_load()` returns
+a `ConfigResult<Document>` instead. Both forms retain a stable `CONFIG_*` token and structured
+context. The parser rejects duplicate keys, unsupported YAML features, invalid numbers, and inputs
+above its size or nesting limits.
+
+A `Document` is an immutable typed representation of configuration data. It may come from one
+file, parsed bytes, or a composition of several loaded values. Application code should not assume
+that one document means one file.
+
+Paths are RFC 6901 JSON Pointers. For example, `/camera/gain` addresses `gain` inside
+`camera`. Dots are ordinary key characters, not separators.
+
+## Choosing how configuration failures are reported
+
+Configuration operations follow one naming rule:
+
+- The short name returns the value and throws `ConfigException` on failure.
+- The `try_*` name returns `ConfigResult<T>` for explicit error handling.
+
+`ConfigException::error()` exposes the original structured `ConfigError`, including its stable
+token, path, stage, destination state, and nested causes. Code built without exception support must
+use the `try_*` forms. The throwing declarations remain available so headers have the same API in
+every build, but an exception escaping in a no-exception program terminates the process.
+
+The previous result-returning names changed as follows:
+
+| Previous result-returning names | New structured-result names |
+|---|---|
+| `config_io::parse`, `load`, `serialize`, `save` | `try_parse`, `try_load`, `try_serialize`, `try_save` |
+| `Path::parse` | `Path::try_parse` |
+| `ConfigValue::boolean`, `signed_integer`, `unsigned_integer`, `floating`, `string`, `array`, `object` | matching `ConfigValue::try_*` names |
+| `ConfigView::as_bool`, `as_signed_integer`, `as_unsigned_integer`, `as_floating`, `as_string`, `element`, `key`, `member`, `find_member` | matching `ConfigView::try_*` names |
+| `Document::from_value`, `at`, `find`, `get`, `patch`, `replace`, `patched` | matching `Document::try_*` names |
+| `encode_config`, `decode_config`, `encode_semantic_value_v1`, `merge_config_values` | matching `try_*` names |
+
+This is a source and ABI change from earlier 5.0 previews. Most result-handling call sites fail to compile until renamed.
+Truth tests need extra attention because some old source can still compile with a different meaning.
+For example, `if (view.as_bool())` now tests the decoded Boolean, not whether decoding succeeded.
+Likewise, `find()` and `find_member()` now return `std::optional`: an absent value is an empty
+optional, while malformed input or a traversal error throws. Use `try_find()` or
+`try_find_member()` when both absence and errors must be handled without exceptions.
+
+Custom `ConfigCodec<T>` implementations remain result-based extension points. They should use
+`try_*` configuration operations so failures return through the codec and retain its field-path
+context.
+
+String paths can be passed directly to edits. Value-taking edits also accept a `ConfigView`, so
+configuration composition does not need an explicit path parse or `to_value()` conversion:
+
+```cpp
+auto model_config =
+    holoscan::config_io::load("model.yaml", holoscan::config_io::Format::kYaml);
+auto inference_config = model_config.at("/gr00t_n1_7");
+auto composed_config = application_config.patched(
+    holoscan::config::Edit::add("/gr00t_n1_7/inference", inference_config));
+```
+
+The view conversion preserves the immutable subtree value, not the identity of the source document.
+The composed document's `base_source` and `SaveOptions::expected_source_digest` guard only the base
+file, not documents that supplied added views.
+Use an explicit `ConfigValue` or `ConfigView` for an empty edit value because
+`Edit::add("/path", {})` is ambiguous between those two overloads.
+
+## Decode and set typed parameters
+
+Suppose an operator declares:
+
+```cpp
+struct DetectorParams {
+  std::uint32_t threshold{4};
+  float gain{1.0F};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    DetectorParams, holoscan::param_schema("com.example.DetectorParams", 1),
+    holoscan::field<&DetectorParams::threshold>("threshold").range(1U, 8U),
+    holoscan::field<&DetectorParams::gain>("gain").range(0.0F, 10.0F));
+```
+
+A configuration object can provide those values:
+
+```yaml
+detector:
+  threshold: 6
+  gain: 2.5
+```
+
+Decode the object into the operator's parameter type, then set it on the operator:
+
+```cpp
+#include <holoscan/params/config.hpp>
+
+holoscan::Graph graph{"pipeline"};
+auto detector = graph.op<Detector>("detector");
+
+auto params = holoscan::params::decode<DetectorParams>(config, "/detector");
+detector.set_params(std::move(params));
+
+// Graph construction may continue here.
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) {
+  log_error(plan.json());
+  return 1;
+}
+```
+
+`try_decode<T>()` returns a `ParamResult` for explicit error handling and works in no-exception
+builds. `decode<T>()` returns the prepared value directly and throws a formatted
+`holoscan::params::ParamException` that retains the structured `ParamToolError` if decoding fails.
+`decode<T>()` uses the type's C++ defaults; use
+`try_decode<T>()` when an explicit baseline is required.
+
+`PreparedParams<DetectorParams>` owns the decoded value and immutable source evidence. Fields absent
+from the configuration use the type's C++ defaults, or the explicit baseline passed to
+`try_decode<T>()`. Assigning a plain `DetectorParams` value intentionally records programmatic
+authoring without configuration evidence.
+
+Container fields use field-local codecs. Standard containers have built-in support. A container of a
+custom type needs the custom element codec visible where decoding occurs. Schema-derived codecs can
+cover nested parameter objects without repeating their fields.
+
+Two common decode errors are:
+
+- `PARAM_CONFIG_BINDING_EMPTY`: the selected object contains no contributed fields. An empty object
+  is an error, not a request to use every default.
+- `PARAM_CONFIG_FIELD_DUPLICATE`: two input paths, such as a canonical name and its alias, select
+  the same parameter field.
+
+## Advanced atomic configuration transactions
+
+Use configuration bindings only when one configuration must sparsely update several operators as one
+all-or-nothing transaction over their final authored baselines:
+
+```cpp
+auto backup_detector = graph.op<Detector>("backup_detector");
+auto configured = holoscan::params::set_params(
+    graph,
+    *config,
+    {
+        holoscan::params::bind(detector, "/detector"),
+        holoscan::params::bind(backup_detector, "/detector"),
+    });
+if (!configured) {
+  log_error(holoscan::params::format_error(configured.error()));
+  return 1;
+}
+```
+
+`bind()` is a typed mapping from one operator handle to one path inside the configuration. It does not
+set parameters or infer the graph. The source graph must remain the same live graph through the
+`set_params()` call, and every binding must belong to the explicit destination graph. The handle
+itself does not need to outlive `bind()`.
+
+Fields present in a bound object replace the final authored baseline; absent fields keep that final
+baseline or C++ default. Pass every operator binding in the same `set_params()` call. One invalid
+field, target, or codec rejects the whole attachment. A graph accepts one pending advanced
+transaction, preventing independent sources from silently overwriting each other. Configuration and
+snapshot attachment share that slot. The rule is transitive through embedding, so two configured
+child graphs cannot both be embedded into one parent. A conflict reports `PARAM_CONFIG_ATTACH_FAILED`
+or `PARAM_REBIND_ATTACH_FAILED` with the underlying graph transaction error.
+
+## Snapshot restore
+
+Saved runtime parameters use the same graph-owned model:
+
+```cpp
+auto restored = holoscan::params::load_and_set_params(
+    graph, archive_path, holoscan::params::ParamRebindTargetScope::operator_(operator_path));
+if (!restored) {
+  log_error(holoscan::params::format_error(restored.error().detail()));
+  return 1;
+}
+```
+
+Snapshots remain reusable data. Target paths, aliases, migrations, and source provenance travel with
+the pending transaction, while final graph, schema, profile, and baseline checks happen only in
+`compile()`. Restore attachment mutates graph authoring state and must not run concurrently with
+other graph mutation. It shares the graph's one pending transaction slot with advanced configuration,
+including across embedded graphs. It is not a non-mutating compatibility check; use and compile a
+disposable graph when validation must not change the intended destination.
+
+## Profiles: naming your deployment posture
+
+`CompileOptions::profile` requests one of five closed profiles. A profile is a
+capability and diagnostics policy the compiler applies when admitting your
+graph — stricter profiles turn advisory warnings into rejections and demand
+more explicit evidence in the plan.
+
+| Profile | Intent |
+|---|---|
+| `Profile::kStandard` | General-purpose default. |
+| `Profile::kRobotics` | Robotics-oriented capability and diagnostic policy. |
+| `Profile::kRealTime` | Bounded real-time capability policy. |
+| `Profile::kRegulated` | Regulated-domain capability and evidence policy. |
+| `Profile::kResearch` | Research-oriented capability policy. |
+
+`kStandard` is the default and the right choice while you are developing.
+Constrained profiles change what the compiler will accept — for example, a
+compiler-generated endpoint name that is merely a warning under `kStandard`
+becomes a hard rejection under a constrained profile. Treat a profile switch
+like a compiler warning-level bump: run it early so admission surprises show
+up in CI, not at deployment. Profile admission results are recorded in the
+plan, so you can inspect exactly what policy was applied.
+
+```cpp
+options.profile = holoscan::Profile::kRegulated;
+```
+
+Profiles are compile-time admission policy, not runtime switches. This guide
+documents generated-endpoint behavior only; inspect `profile_manifest()` for
+the resolved plan and consult the release notes for additional
+profile-specific policy.
+
+{/* TODO(verify): Owner: profile-policy owner. Durable target: the published
+    profile policy matrix. Unblock condition: document additional per-profile
+    admission differences only after that matrix is published and reconciled
+    with profile_manifest(). */}
+
+## Deployment bindings: requesting placement at compile time
+
+`CompileOptions::deployment` carries a `DeploymentBinding` — a fluent, owned
+value that records *where* authored execution partitions and Runtime support
+threads should run:
+
+- **Partition placement** maps the exact name passed to `Graph::partition()`
+  to a `ThreadPlacement`: an optional CPU affinity set, a scheduling request
+  (`SchedulingPolicy::kOther`, `kFIFO`, `kRoundRobin`, or `kDeadline` with its
+  nanosecond parameters), a wake mode, and IRQ-isolation evidence
+  requirements.
+
+```cpp
+options.deployment
+    .bind_thread_placement("fusion",
+                           holoscan::ThreadPlacement{
+                               .affinity = holoscan::CPUAffinity{{2, 3}},
+                               .scheduling = {.policy = holoscan::SchedulingPolicy::kFIFO,
+                                              .priority = 40}});
+```
+
+- **Support-thread affinity** assigns an allowed CPU set to the run-session controller or the
+  optional process-local Channel pump. It deliberately exposes affinity only:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    options.deployment
+        .bind_support_thread_affinity(holoscan::SupportThreadRole::kController,
+                                      holoscan::CPUAffinity{{4}})
+        .bind_support_thread_affinity(holoscan::SupportThreadRole::kChannelPump,
+                                      holoscan::CPUAffinity{{6}});
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import holoscan as hs
+
+    options.deployment.bind_support_thread_affinity(
+        hs.execution.SupportThreadRole.CONTROLLER,
+        hs.execution.CPUAffinity([4]),
+    ).bind_support_thread_affinity(
+        hs.execution.SupportThreadRole.CHANNEL_PUMP,
+        hs.execution.CPUAffinity([6]),
+    )
+    ```
+  </Tab>
+</Tabs>
+
+Each binding applies the complete allowed set to every Runtime-created thread with that role; the
+CPU list is not indexed by a hidden thread count. The controller always runs on a fresh Runtime
+thread, so its binding never changes the caller's affinity. When the compiler selects inline
+partition execution, Operator callbacks also run on that controller thread and therefore inherit
+its allowed set. If that process has only one partition runner, an explicit partition affinity must
+match the controller affinity exactly because both authorities would otherwise target that same
+thread; compilation rejects mismatched sets. A pump binding is valid even when the selected Channel
+modes need no pump; in that case Runtime creates no pump thread and performs no affinity operation.
+
+Worker-backed execution lanes remain independent of controller placement. Without an explicit
+partition affinity, each worker restores the controller thread's allowed CPU set from before the
+controller binding was applied. An explicit partition affinity overrides that baseline. This means
+that binding only `kController` does not implicitly pin separately worker-backed Operator callbacks.
+
+The essential thing to understand at this stage: **bindings are requests, not
+actions.** Compilation validates exact partition names, placement shape, and
+duplicates, runs read-only host capability probes, and freezes both the
+request and the probe evidence into the plan. It never changes your calling
+thread's affinity or scheduling policy. The runtime applies the accepted
+placement when it executes the plan. If a probe cannot prove a request, the
+default policy records an explicit fallback in the plan; set
+`ProbeFailurePolicy::kFailAdmission` to reject instead.
+
+Support-thread affinity always uses fail-admission policy and exact Runtime read-back. On Linux,
+compilation distinguishes the **current thread affinity** from the **effective permitted CPU set**.
+A CPU outside the compiling thread's current mask can still be admitted when read-only cgroup and
+online-CPU discovery proves it is permitted. This supports a controller pinned to housekeeping CPUs
+while workers use other permitted CPUs. Compilation never widens the caller or tries placement on a
+probe thread. Requests already contained in the current mask, and default placement without an
+affinity request, need no additional cgroup discovery.
+
+Discovery resolves the calling thread's cgroup and mounted hierarchy. It supports effective cpusets
+on cgroup v2 and v1, including v2 controller settings inherited through visible ancestors. It requires
+`cpuset.cpus.effective` on v2 or `cpuset.effective_cpus` on v1. The v1 `noprefix` layout, which uses
+`effective_cpus`, is unsupported and fails closed for requests outside the current mask. Procfs
+cgroup membership and mount roots are both relative to the reader's cgroup namespace; inherited
+ancestor mount roots with leading `..` components are valid but cannot prove permission from the
+visible namespace. Discovery skips those mounts and checks other visible candidates, always
+requiring verification of the calling thread's membership. It never resolves hidden ancestors or
+turns an external root into the namespace root.
+If the required procfs, cgroupfs or sysfs evidence is unavailable, malformed, or unsupported,
+compilation rejects the request with `THREAD_PLACEMENT_REJECTED`; online CPUs alone do not prove
+permission. A partly permitted request is rejected in full. Permission may change after compilation,
+so Runtime still applies and verifies the exact requested mask before ordinary dispatch.
+
+For deployments where the required cgroup evidence is unavailable, keep the initial mask broad
+enough for the union of requested CPUs through application validation and compilation, then apply
+the intended controller placement. Any temporary widening must use a deployment-known permitted
+mask and restore it reliably. Verify helper threads that inherit the broader mask; this workaround
+cannot bypass a cgroup restriction.
+
+The public Core contract compiles one plan for one process, so each separately compiled process may
+request a different target-local CPU set. Controller placement failure precedes graph
+reconstruction. An optional Channel pump is created after Operator lifecycle startup, so its
+placement failure prevents ordinary compute dispatch and pump work but does not promise that no
+`start()` callback has run. Review the requested and accepted records through the language-specific
+plan surface:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    const auto support_threads = plan.support_thread_affinities();
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import json
+
+    support_threads = json.loads(plan.json())["support_thread_affinities"]
+    ```
+  </Tab>
+</Tabs>
+
+<Note title="Multi-process applications">
+  Public Core currently represents each process with a separately authored and compiled Graph.
+  Give each process its own `CompileOptions` to place its controller and pump on that process's
+  CPUs, and connect the Graphs through matching `Graph::export_topic()` and
+  `Graph::import_topic()` boundaries. Public Core does not split an ordinary internal Graph edge
+  across processes or launch/select several process groups from one `ExecutionPlan`; process
+  launch and aggregate lifecycle coordination remain application or orchestrator responsibilities.
+  This multi-process model predates support-thread affinity and is not a limitation introduced by
+  this feature. See [External topics](/holoscan/sdk-user-guide/composing-applications/external-topics)
+  and [Interprocess Channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).
+</Note>
+
+## Compiled configuration is immutable — on purpose
+
+Once `compile()` returns an accepted plan, the configuration inside it does
+not change. There is no runtime configuration file reloading, no file watcher,
+no "SIGHUP to reload" convention. This is a deliberate design position, not a
+missing feature:
+
+- **What you validated is what runs.** The plan's canonical JSON and 256-bit
+  semantic digest cover the resolved parameter values. If the digest matches
+  the one you qualified, the configuration matches — there is no window where
+  a file edit silently changes behavior after validation.
+- **Regulated deployments get evidence for free.** In medical and other
+  regulated domains, the deployed configuration must be exactly the reviewed
+  configuration. A plan digest recorded at qualification time plus
+  `emit_artifacts()` publishing an atomic, manifest-committed bundle gives you
+  a verifiable chain from review to runtime with no "someone edited the YAML
+  on the device" failure mode.
+- **Failure surfaces move to the cold path.** Every class of configuration
+  error — parse, type, range, unknown key, invalid placement — is impossible
+  at runtime because it was rejected at compile time. The hot path never pays
+  for validation and never encounters a half-applied configuration.
+
+Different configurations are therefore different plans: load a different
+document, compile again, and you get a new plan with a new digest you can
+diff, review, and deploy through
+[plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+<Note>
+  **Immutable files, not frozen values.** Fields whose schema declares
+  `.runtime_mutable()` can still be updated during a run — through the typed,
+  generation-tracked runtime update API, never by re-reading a file. Each
+  update is validated against the same schema constraints and becomes a new
+  observable parameter generation. See
+  [runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+</Note>
+
+## Recap
+
+- `config_io::load()` parses YAML/JSON fail-closed into an immutable `config::Document` and throws
+  on failure; `config_io::try_load()` returns a structured result instead.
+- `params::decode<T>()` plus operator `set_params()` are the concise typed startup path when
+  exceptions are enabled; `params::try_decode<T>()` returns the same prepared value as an explicit
+  result and also works in no-exception builds.
+- `params::bind()` plus graph `set_params()` are reserved for an all-or-nothing sparse transaction
+  spanning one or more operators.
+- A `Profile` and `DeploymentBinding` enter through `CompileOptions`;
+  `compile()` validates them with the graph-owned parameter input.
+- Deployment bindings are recorded requests with probe evidence; the runtime,
+  not the compiler, applies placement.
+- Configuration is resolved before the run and immutable after `compile()` —
+  the plan digest is your proof of what runs, which is exactly what regulated
+  deployments need.
+- Live tuning of `.runtime_mutable()` fields goes through the runtime update
+  API, not file reloading.
+
+Next: [Yocto on Jetson](/holoscan/sdk-user-guide/yocto).

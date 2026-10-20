@@ -1,0 +1,13 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace holoscan.benchmark;
+
+table VectorRecord {
+  sequence: ulong (id: 0);
+  data: [ubyte] (id: 1);
+  readings: [double] (id: 2);
+}
+
+root_type VectorRecord;
+file_identifier "PVEC";

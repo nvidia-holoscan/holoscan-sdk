@@ -20,7 +20,7 @@ if(TARGET magic_enum::magic_enum)
   return()
 endif()
 
-set_and_check(MAGIC_ENUM_INCLUDE_DIR "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@/3rdparty/magic_enum")
+set_and_check(MAGIC_ENUM_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
 
 set(magic_enum_FOUND TRUE)
 add_library(magic_enum::magic_enum INTERFACE IMPORTED)

@@ -6,4 +6,4 @@
 
 [tool.codespell]
 skip = "_deps,build*,.cache,html,_build,_static,generated,latex,install*,.git,xml,vale,swipat*,docs/fern/dist"
-ignore-words-list = "bu,dne,nd,thirdparty,unexpect,notin,activ,synopsys"
+ignore-words-list = "bu,dne,nd,thirdparty,unexpect,notin,activ,ot,synopsys,renderd"

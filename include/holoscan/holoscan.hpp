@@ -1,98 +1,72 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOLOSCAN_HOLOSCAN_HPP
-#define HOLOSCAN_HOLOSCAN_HPP
+#pragma once
 
-#include "./core/common.hpp"
+#include <holoscan/holoscan_core_export.h>
+#include <holoscan/authoring/parameter_materializer.hpp>
+#include <holoscan/authoring/registry.hpp>
+#include <holoscan/channel/clock_health.hpp>
+#include <holoscan/channel/pod_type.hpp>
+#include <holoscan/core/activation.hpp>
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/connection_options.hpp>
+#include <holoscan/core/diagnostic.hpp>
+#include <holoscan/core/error_helpers.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/execution_plan.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/expected_macros.hpp>
+#include <holoscan/core/external_topic.hpp>
+#include <holoscan/core/foreign_operator.hpp>
+#include <holoscan/core/graph.hpp>
+#include <holoscan/core/lifecycle.hpp>
+#include <holoscan/core/lifecycle_control.hpp>
+#include <holoscan/core/managed_shutdown_signals.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_ref.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/parameter_compute_control.hpp>
+#include <holoscan/core/parameter_control.hpp>
+#include <holoscan/core/parameter_provenance.hpp>
+#include <holoscan/core/parameter_schema.hpp>
+#include <holoscan/core/parameter_snapshot.hpp>
+#include <holoscan/core/parameter_update.hpp>
+#include <holoscan/core/payload_identity.hpp>
+#include <holoscan/core/payload_kind.hpp>
+#include <holoscan/core/payload_options.hpp>
+#include <holoscan/core/port.hpp>
+#include <holoscan/core/predicate.hpp>
+#include <holoscan/core/predicate_input_view.hpp>
+#include <holoscan/core/rate.hpp>
+#include <holoscan/core/rate_generation.hpp>
+#include <holoscan/core/readiness_source.hpp>
+#include <holoscan/core/run.hpp>
+#include <holoscan/core/run_session.hpp>
+#include <holoscan/core/sample.hpp>
+#include <holoscan/core/schema_identity.hpp>
+#include <holoscan/core/source_id.hpp>
+#include <holoscan/core/tag.hpp>
+#include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/core/temporal_contract_records.hpp>
+#include <holoscan/core/tensor_contract.hpp>
+#include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/core/value_lifecycle.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/memory/tensor_storage.hpp>
+#include <holoscan/time/clock.hpp>
+#include <holoscan/time/clock_registry.hpp>
+#include <holoscan/time/manual_clock.hpp>
+#include <holoscan/time/realtime_clock.hpp>
+#include <holoscan/time/synthetic_clock.hpp>
+#include <holoscan/time/time_point.hpp>
 
-#include "./core/application.hpp"
-#include "./core/arg.hpp"
-#include "./core/condition.hpp"
-#include "./core/config.hpp"
-#include "./core/data_logger.hpp"
-#include "./core/dataflow_tracker.hpp"
-#include "./core/execution_context.hpp"
-#include "./core/executor.hpp"
-#include "./core/flow_graphs/flow_graph.hpp"
-#include "./core/fragment.hpp"
-#include "./core/gpu_resident_operator.hpp"
-#include "./core/io_context.hpp"
-#include "./core/message.hpp"
-#include "./core/metadata.hpp"
-#include "./core/network_context.hpp"
-#include "./core/operator.hpp"
-#include "./core/resource.hpp"
-#include "./core/scheduler.hpp"
-#include "./core/subgraph.hpp"
+namespace holoscan {
 
-// Domain objects
-#include "./core/gxf/entity.hpp"
-#include "./core/gxf/entity_group.hpp"
+HOLOSCAN_CORE_EXPORT void hello();
 
-// Conditions
-#include "./core/conditions/gxf/asynchronous.hpp"
-#include "./core/conditions/gxf/boolean.hpp"
-#include "./core/conditions/gxf/count.hpp"
-#include "./core/conditions/gxf/cuda_buffer_available.hpp"
-#include "./core/conditions/gxf/cuda_event.hpp"
-#include "./core/conditions/gxf/cuda_stream.hpp"
-#include "./core/conditions/gxf/downstream_affordable.hpp"
-#include "./core/conditions/gxf/expiring_message.hpp"
-#include "./core/conditions/gxf/memory_available.hpp"
-#include "./core/conditions/gxf/message_available.hpp"
-#include "./core/conditions/gxf/multi_message_available.hpp"
-#include "./core/conditions/gxf/multi_message_available_timeout.hpp"
-#include "./core/conditions/gxf/periodic.hpp"
-#include "./pubsub/runtime/conditions/publisher_available.hpp"
-#include "./pubsub/runtime/conditions/subscriber_available.hpp"
-
-// NetworkContexts
-#include "./core/network_contexts/gxf/pubsub_context.hpp"
-#include "./core/network_contexts/gxf/ucx_context.hpp"
-
-// Resources
-#include "./core/clock.hpp"
-#include "./core/resources/async_data_logger.hpp"
-#include "./core/resources/data_logger.hpp"
-#include "./core/resources/gxf/async_buffer_receiver.hpp"
-#include "./core/resources/gxf/async_buffer_transmitter.hpp"
-#include "./core/resources/gxf/block_memory_pool.hpp"
-#include "./core/resources/gxf/clock.hpp"
-#include "./core/resources/gxf/condition_combiner.hpp"
-#include "./core/resources/gxf/cuda_green_context.hpp"
-#include "./core/resources/gxf/cuda_green_context_pool.hpp"
-#include "./core/resources/gxf/cuda_stream_pool.hpp"
-#include "./core/resources/gxf/double_buffer_receiver.hpp"
-#include "./core/resources/gxf/double_buffer_transmitter.hpp"
-#include "./core/resources/gxf/gxf_component_resource.hpp"
-#include "./core/resources/gxf/manual_clock.hpp"
-#include "./core/resources/gxf/pubsub_receiver.hpp"
-#include "./core/resources/gxf/pubsub_transmitter.hpp"
-#include "./core/resources/gxf/realtime_clock.hpp"
-#include "./core/resources/gxf/rmm_allocator.hpp"
-#include "./core/resources/gxf/serialization_buffer.hpp"
-#include "./core/resources/gxf/std_component_serializer.hpp"
-#include "./core/resources/gxf/std_entity_serializer.hpp"
-#include "./core/resources/gxf/stream_ordered_allocator.hpp"
-#include "./core/resources/gxf/synthetic_clock.hpp"
-#include "./core/resources/gxf/system_resources.hpp"
-#include "./core/resources/gxf/ucx_component_serializer.hpp"
-#include "./core/resources/gxf/ucx_entity_serializer.hpp"
-#include "./core/resources/gxf/ucx_holoscan_component_serializer.hpp"
-#include "./core/resources/gxf/ucx_receiver.hpp"
-#include "./core/resources/gxf/ucx_serialization_buffer.hpp"
-#include "./core/resources/gxf/ucx_transmitter.hpp"
-#include "./core/resources/gxf/unbounded_allocator.hpp"
-
-// Schedulers
-#include "./core/schedulers/gxf/event_based_scheduler.hpp"
-#include "./core/schedulers/gxf/greedy_scheduler.hpp"
-#include "./core/schedulers/gxf/multithread_scheduler.hpp"
-
-// Operators
-#include "./core/gxf/gxf_operator.hpp"
-
-#endif /* HOLOSCAN_HOLOSCAN_HPP */
+}  // namespace holoscan

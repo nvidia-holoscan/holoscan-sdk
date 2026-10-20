@@ -1,0 +1,187 @@
+<Note title="You will learn">
+  - What `InferenceOp` does and which inference backend it uses
+  - How to describe one or more models with `InferenceOpParams`, in C++ or YAML
+  - How the operator picks a dispatch path and when it falls back to a slower one
+  - How to build the module and link it from an installed SDK
+</Note>
+
+Holoscan Inference is the core module that provides `holoscan::ops::InferenceOp`,
+an inference operator backed with TensorRT for Holoscan pipelines. Give it one or more
+model files and the input and output tensor names each model consumes and
+produces; the operator builds (or loads a cached) TensorRT engine per model,
+declares one Holoscan port per configured tensor, and runs inference on the
+fastest dispatch strategy that is safe for your configuration. The backend
+library is **HoloInfer**, which owns the per-model TensorRT contexts and the
+multi-model dispatch manager.
+
+<Warning>
+  `InferenceOp` and `InferenceOpParams`, declared in
+  `<holoscan/operators/inference/inference.hpp>`, are the public, supported API
+  of this module in Holoscan SDK 5.0. The HoloInfer library beneath the operator
+  is internal: the `holoinfer` libraries and utility headers that install with
+  the module carry no source or ABI compatibility promise, and they may change
+  in any release. Write applications against the operator.
+</Warning>
+
+## The operator
+
+`InferenceOp` is constructed from an `InferenceOpParams` aggregate declared in
+`<holoscan/operators/inference/inference.hpp>`. Three fields are required:
+
+| Field | Type | What it does |
+|---|---|---|
+| `model_path_map` | `map<string, string>` | Model name → path to an `.onnx` model or a pre-built `.trt` engine |
+| `input_map` | `map<string, vector<string>>` | Model name → ordered input tensor names |
+| `output_map` | `map<string, vector<string>>` | Model name → ordered output tensor names |
+
+Every tensor named in `input_map` becomes an input port and every tensor in
+`output_map` becomes an output port, so upstream and downstream operators
+connect to inference by tensor name. The remaining fields tune the backend and
+the dispatch path:
+
+| Group | Fields | Notes |
+|---|---|---|
+| Backend and engine | `backend`, `backend_map`, `is_engine_path`, `enable_fp16`, `dla_core`, `dla_gpu_fallback` | Only the `"trt"` backend is supported in this build. `enable_fp16` builds FP16 engines with TensorRT before 11; TensorRT 11 ignores it, since precision follows the model's tensor types, so export an FP16 model instead. `dla_core` selects a DLA core on Jetson-class devices. |
+| Data residency | `input_on_cuda`, `output_on_cuda`, `transmit_on_cuda` | All default to `true`. Host inputs force the general dispatch path and add a host-to-device copy. |
+| Dispatch and performance | `parallel_inference`, `dynamic_input_dims`, `enable_cuda_graphs` | Enable multi-model concurrency, dynamic input shapes, and CUDA Graph capture (all on by default except `dynamic_input_dims`). |
+| Resources | `allocator`, `cuda_stream_pool`, `cuda_green_context_pool` | Output allocator, a dedicated stream pool for concurrent models, and an optional [green context](/holoscan/sdk-user-guide/advanced/cuda-green-contexts) pool for SM partitioning. |
+
+The first time HoloInfer sees an `.onnx` source it builds a TensorRT engine and
+caches it next to the model. The cache filename encodes the GPU, compute
+capability, TensorRT version, precision, DLA core, and a hash of every other
+build-affecting option, so a stale engine is never reused after a
+configuration change.
+
+### Configure from YAML
+
+`InferenceOpParams` has two loaders that share one schema, keyed 1:1 on the
+field names above:
+
+- `InferenceOpParams::from_yaml(path)` reads the file's root as one operator's
+  parameters — the convention used by every example config.
+- `InferenceOpParams::from_yaml_node(node, config_dir)` reads an already parsed
+  node, so one YAML file can configure several operators under distinct keys.
+  Relative model paths resolve against `config_dir`.
+
+```yaml
+# one InferenceOp: the file root is the parameter block
+model_path_map:
+  detector: models/detector.onnx
+input_map:
+  detector: [preprocessed]
+output_map:
+  detector: [boxes, scores]
+enable_fp16: true  # TensorRT before 11; ignored by TensorRT 11
+enable_cuda_graphs: true
+```
+
+```cpp
+#include <holoscan/operators/inference/inference.hpp>
+
+auto params = holoscan::ops::InferenceOpParams::from_yaml(config_path);
+auto infer = graph.op<holoscan::ops::InferenceOp>("inference", std::move(params));
+```
+
+The `allocator` field cannot be populated from YAML; assign it in code after
+loading when a non-default allocator is required. Both loaders report a
+missing required key with `std::runtime_error`.
+
+## Dispatch selection
+
+At `start()` the operator inspects its configuration and selects one of seven
+dispatch kinds. There is no user-facing opt-in; the fast paths apply
+automatically when every model uses the `trt` backend, inputs are
+device-resident, and no model's output feeds another model's input:
+
+| Kind | Models | Shapes | Concurrency |
+|---|---|---|---|
+| `kFast` | 1 | static | — |
+| `kSeqFast` | N | static | sequential on the caller's stream |
+| `kParFast` | N | static | one CUDA stream per model |
+| `kDynFast` | 1 | dynamic | — |
+| `kDynSeqFast` | N | dynamic | sequential |
+| `kDynParFast` | N | dynamic | parallel |
+| `kStandard` | N | any | work queue; always available |
+
+When a configuration is unsafe for the requested path, the operator degrades
+one rung at a time and logs a `fallback triggered — <REASON>` warning that
+names the requested and selected paths and suggests a fix. Configuration-time
+rungs include a stream pool smaller than the model count (demote to
+sequential), chained models or host inputs (use `kStandard`), and
+dynamic-shape parallel dispatch with CUDA Graphs but no green-context pool
+(serialize). One runtime rung swaps a blocking-mode pool stream for a
+non-blocking one when CUDA Graphs require it.
+
+<Tip>
+  For the best concurrent throughput with several static-shape models, supply a
+  `cuda_stream_pool` with at least one stream per model and a
+  `cuda_green_context_pool` with one partition per model. Without a green-context
+  pool the operator still runs models in parallel but serializes CUDA Graph
+  capture behind a process-wide mutex during the first few ticks.
+</Tip>
+
+## Example
+
+The module ships `modules/inference/examples` with eight YAML configurations that
+progress from a single model to concurrent dynamic-shape models with CUDA
+Graphs and context isolation:
+
+```bash
+./run build
+./run launch --run-cmd './build-x86_64/modules/inference/examples/holoinfer_example --config modules/inference/examples/configs/01_single_model.yaml'
+```
+
+See [`modules/inference/examples`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/modules/inference/examples)
+for the per-scenario walkthrough.
+
+## Build, test, and consume
+
+`HOLOSCAN_BUILD_INFERENCE` defaults to `ON`. `InferenceOp` requires CUDA and
+TensorRT 10.3 or newer at runtime; see the
+[installation footnotes](/holoscan/sdk-user-guide/setup/sdk-installation) for
+platform coverage. To run PyTorch models next to the pipeline, install
+PyTorch as described in
+[Installing PyTorch](/holoscan/sdk-user-guide/setup/additional-setup/pytorch). Build and test through the SDK-level runner:
+
+```bash
+./run build --config "-DHOLOSCAN_BUILD_INFERENCE=ON -DHOLOSCAN_BUILD_TESTS=ON"
+./run test --options "-L inference"
+```
+
+For installed consumers, use the main Holoscan package to load Inference as a
+component and link the operator and backend targets:
+
+```cmake
+find_package(holoscan COMPONENTS inference REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::core holoscan::op_inference holoscan::infer)
+```
+
+Alternatively, load the dedicated Inference package and link its aggregate
+target:
+
+```cmake
+find_package(holoscan-inference
+    HINTS "/path/to/holoscan/lib/cmake/holoscan"
+    REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::inference)
+```
+
+Replace the example path with the SDK's shared package directory. The standalone
+package config is installed under `lib/cmake/holoscan`, so a bare
+`find_package(holoscan-inference)` may not find it through the usual
+package-name search. You can instead set `holoscan-inference_DIR` to
+`<prefix>/lib/cmake/holoscan` (for example, with
+`-Dholoscan-inference_DIR=<prefix>/lib/cmake/holoscan`).
+
+## Recap
+
+- `InferenceOp` is a TensorRT-only inference operator; models, ports, and
+  options are described by `InferenceOpParams`, in C++ or YAML.
+- TensorRT engines are built once from ONNX and cached with a
+  configuration-aware filename.
+- The operator picks the fastest safe dispatch kind at `start()` and logs a
+  named fallback whenever it must degrade.
+- Build with `HOLOSCAN_BUILD_INFERENCE`; consume with
+  `find_package(holoscan COMPONENTS inference)`, or use the dedicated
+  `find_package(holoscan-inference)` package with its package-directory hint.
+- Next: [Vision](/holoscan/sdk-user-guide/modules/vision).

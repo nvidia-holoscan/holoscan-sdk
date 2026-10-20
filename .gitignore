@@ -223,3 +223,6 @@ generated/
 
 # Build system output
 compile_commands.json
+
+# Isolated documentation assembly with external module pages
+.camera-docs-*/

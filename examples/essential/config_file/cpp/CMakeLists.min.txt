@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_config_file LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+# The holoscan-core install closure imports this exact dependency set. Fail closed if a package
+# omits a target.
+foreach(_required_target
+        holoscan::core
+        holoscan::config
+        holoscan::config_io
+        holoscan::params
+        holoscan::params_io)
+    if(NOT TARGET ${_required_target})
+        message(FATAL_ERROR
+            "holoscan-core install closure omitted required target ${_required_target}")
+    endif()
+endforeach()
+unset(_required_target)
+
+add_executable(config_file config_file.cpp)
+target_link_libraries(config_file
+    PRIVATE
+        holoscan::core
+        holoscan::config_io
+        holoscan::params
+        holoscan::params_io
+)
+
+if(BUILD_TESTING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../common/ctest_workspace.cmake")
+    holoscan_configure_example_test_workspace(config_file)
+    # REQ: SYSTEM-015
+    add_test(NAME EXAMPLE_CPP_CONFIG_FILE_TEST
+        COMMAND config_file --config-dir ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(EXAMPLE_CPP_CONFIG_FILE_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "config_file: digests=match effective=\\(threshold=9 gain=2\\.5 window=8\\) duplicate=PARAM_CONFIG_FIELD_DUPLICATE roundtrip=\\(saved=3 contributed=3 retained=0\\) detections=3/6 termination=stopped"
+            LABELS "examples;configuration;essential"
+            TIMEOUT 30)
+endif()

@@ -1,0 +1,69 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "time.fbs";
+
+namespace holoscan.schema;
+
+// Facts every sensor message carries regardless of payload: when the measurement happened, which
+// coordinate frame it is expressed in, and which sample it is.
+//
+// capture_timestamp_ns uses the same name as the runtime envelope (SampleMetadata) because it means
+// the same thing, and a reader who has to map acqtime_ns onto capture_timestamp_ns will eventually
+// map it the wrong way. It is carried inline rather than in a nested Time table so that an int64
+// costs an int64 instead of an offset plus a vtable; the Time table remains a payload type in its
+// own right for messages whose subject *is* a time.
+//
+// Publication time is deliberately absent because it belongs to the transport, not the payload: a
+// payload copy would be a second answer to one question that a producer could set inconsistently.
+// SampleMetadata owns that answer in publish_timestamp_ns and the publish_clock_id naming its
+// domain.
+//
+// The runtime stamps that pair from the Graph default clock at the instant it submits a sample, so a
+// consumer reads publication time from the envelope rather than from here. It is comparable only
+// within the clock generation that stamped it, which is another reason not to record it alongside
+// bytes that outlive the run.
+table Header {
+  // Deprecated in favour of the inline capture_timestamp_ns below. Retained so that existing
+  // producers keep deserializing while they migrate; new producers must not set it, and a consumer
+  // that reads it cannot tell which instant it holds.
+  stamp: Time (id: 0);
+
+  // Coordinate frame the payload is expressed in, as a name rather than an index. A name survives
+  // recording and crossing a process boundary, where a locally minted integer frame handle does
+  // not; consumers resolve it against the pose tree once and cache the handle.
+  frame_id: string (id: 1);
+
+  // Instant the measurement was taken, in nanoseconds, in the domain the producer states out of
+  // band. Absent as zero, and absent means absent: a consumer must not substitute arrival or
+  // publication time, because a plausible wrong capture time biases every downstream window,
+  // alignment, and latency measurement rather than failing visibly.
+  //
+  // For a sensor that integrates over an interval rather than sampling an instant -- an image
+  // sensor above all -- this is normatively the START of that interval, never its midpoint and
+  // never its end. This is not the producer's choice to make. A consumer fusing an image against an
+  // IMU has to know which instant it was handed, and two cameras that both consider themselves
+  // conformant while one reports start and the other the midpoint produce a silent misalignment of
+  // half an exposure rather than a visible error. A consumer that wants the midpoint derives it
+  // from this field and the payload's own integration time, which is what Image::exposure_time_ns
+  // is for. Should rolling-shutter work later need the readout span, that arrives as a field under
+  // its own name rather than by redefining this one.
+  capture_timestamp_ns: int64 (id: 2);
+
+  // Monotonic per-source sample number as the device reported it, or zero when it has none.
+  //
+  // Named for the device rather than called plain "sequence" because there are two counters in
+  // play and the runtime envelope already owns that word: SampleMetadata::sequence increments once
+  // per emit. The distinction is the whole point. A publication counter can never reveal that the
+  // sensor dropped a sample, because the runtime faithfully counts what it was handed; a gap in
+  // this one is exactly that evidence. Anyone reading a bare "sequence" would have no way to tell
+  // from the call site which of the two they had, and the two disagree precisely in the case
+  // someone is usually debugging when they go looking.
+  //
+  // It lives in the header because every sensor payload needs it, and because it is what still
+  // exists after the stream is recorded and the envelope is gone.
+  device_sequence: uint64 (id: 3);
+}
+
+root_type Header;
+file_identifier "HSHD";

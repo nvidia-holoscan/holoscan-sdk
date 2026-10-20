@@ -1,0 +1,14 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace projection_fixture;
+
+table LargeFrame {
+  data: holoscan.schema.Tensor (id: 0);
+  label: string (id: 1);
+}
+
+root_type LargeFrame;
+file_identifier "HSLF";

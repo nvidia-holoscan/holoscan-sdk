@@ -1,0 +1,24 @@
+From f8c87473bf986835877c7529fa108b9137166253 Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Tue, 14 Apr 2026 06:56:26 -0700
+Subject: [PATCH] build: generate MatX version header in its build tree
+
+Holoscan embeds MatX below the SDK build. Generate the configured
+version header in the dependency binary directory so nested builds do
+not write through the parent binary tree.
+
+Upstream-Status: Backport [https://github.com/NVIDIA/MatX/commit/e7993051db2bea4dc966c3df2660d1b525add649]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0e1011f4..dc8ef29f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -57,7 +57,7 @@ if (NOT CMAKE_CUDA_ARCHITECTURES)
+ endif()
+ message(STATUS "Using GPU architectures ${CMAKE_CUDA_ARCHITECTURES}")
+ 
+-rapids_cmake_write_version_file(include/matx/version_config.h)
++rapids_cmake_write_version_file(${MATX_BINARY_DIR}/include/matx/version_config.h)
+ 
+ # Command line options
+ option(MATX_BUILD_EXAMPLES "Build examples" OFF)

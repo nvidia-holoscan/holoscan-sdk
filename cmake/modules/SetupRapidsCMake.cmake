@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+include_guard(GLOBAL)
+
 set(rapids-cmake-version v26.02.00)
 
 # https://github.com/rapidsai/rapids-cmake#installation
@@ -16,3 +18,5 @@ include(rapids-cpm)
 include(rapids-cuda)
 include(rapids-export)
 include(rapids-find)
+
+rapids_cpm_init()

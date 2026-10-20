@@ -7,5 +7,23 @@
 export SCCACHE_DIR=${SCCACHE_DIR:-"@SCCACHE_DIR@"}
 export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-"@SCCACHE_CACHE_SIZE@"}
 
+# Prevent containers using host networking from sharing a sccache server.
+# Explicit endpoint configuration remains authoritative.
+if [ -z "${SCCACHE_SERVER_UDS:-}" ] && [ -z "${SCCACHE_SERVER_PORT:-}" ]; then
+    export SCCACHE_SERVER_UDS="/tmp/holoscan-sccache-${UID}.sock"
+fi
+
+# Compile precompiled headers directly. A .gch records the size and checksum of each #pragma once
+# header it read, and GCC includes such a header again when the file on disk no longer matches. A
+# cached .gch restored after a branch switch was observed to mismatch, failing the build with
+# redefinition errors. Each .gch is also tens of megabytes of cache.
+previous_argument=""
+for argument in "$@"; do
+    case "${previous_argument}:${argument}" in
+        -x:c-header | -x:c++-header | *:-xc-header | *:-xc++-header) exec "$@" ;;
+    esac
+    previous_argument="${argument}"
+done
+
 # Execute sccache
 @SCCACHE_BIN_PATH@ "$@"

@@ -1,7 +1,0 @@
-%YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
----
-extensions:
-  - libgxf_stream_playback.so
-  - /opt/nvidia/holoscan/lib/libgxf_stream_playback.so

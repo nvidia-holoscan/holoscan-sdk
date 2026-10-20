@@ -1,0 +1,251 @@
+Composing a graph describes *what* your pipeline is. Compiling it turns that
+description into something you can actually trust: an `ExecutionPlan` — an
+immutable, admitted snapshot that the runtime executes later. This page
+covers the middle step of the **compose → compile → run** model: calling
+`holoscan::compile()`, checking whether the plan was admitted, and reading the
+diagnostics when it was not.
+
+Compilation is the cold "build" step of a Holoscan application. It runs no
+operator code and touches nothing outside the plan it returns — which is
+exactly why you can call it early, call it often, and even run it in CI.
+
+**Complete C++ example:** [`examples/compile_and_check/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/compile_and_check/cpp).
+The Python tabs below show the equivalent plan-inspection API.
+
+<Note title="You will learn">
+  - How to compile a composed graph with one call: `holoscan::compile(graph)`
+  - Why a failed compile returns a **rejected plan** instead of throwing
+  - How to check `plan.ok()` and iterate `plan.diagnostics()` stable tokens
+  - When to use `plan.require_no_errors()` for throw-style call sites
+  - Why the plan is immutable, deep-owning, and safe to hold after the graph is gone
+</Note>
+
+## One call, one result
+
+`compile()` is a free function. There is no
+compiler object to construct, no context to tear down, and the options
+parameter defaults to sensible values — so the entry point is a single line:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/core/compile.hpp>
+    #include <holoscan/core/execution_plan.hpp>
+
+    // ... compose your graph (camera → fusion → control) ...
+
+    const auto plan = holoscan::compile(graph);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import holoscan as hs
+
+    # ... compose your graph (camera → fusion → control) ...
+
+    plan = hs.compile(graph)
+    ```
+  </Tab>
+</Tabs>
+
+The result is a `holoscan::ExecutionPlan`: everything the runtime will need
+to execute your pipeline — partitioning, scheduling, channel and pool layout,
+temporal records — frozen into one inspectable value. Admission failures return a plan; exceptions from earlier authoring, setup, or
+resource acquisition can propagate before a result exists.
+
+Admission checks the graph and the deployment choices you pass in. It does not
+open devices or acquire runtime resources, so an admitted plan can still fail
+when it runs — for example, when a camera is missing or a required runtime
+binding is unavailable. Those failures are reported by the run, as described in
+[understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+`compile()` is `[[nodiscard]]`, so the compiler itself reminds you to look at
+the result. Inspect its structured diagnostics before deciding how to present
+admission failures and warnings.
+
+## Inspect, don't catch
+
+The three phases of a Holoscan application fail in three different styles:
+authoring mistakes throw immediately at the line that made them, running fails
+closed, and **compilation returns a rejected plan**. When a graph fails
+admission, `compile()` does not throw — it hands you a fully queryable rejected
+plan, with every problem recorded as a diagnostic:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/core/diagnostic.hpp>
+
+    const auto plan = holoscan::compile(graph);
+    holoscan::log_diagnostics(plan);  // Report errors AND accepted-plan warnings.
+    if (!plan.ok()) {
+      return;  // Do not run a rejected plan.
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    A plan's truth value is its admission result. Named properties remain
+    available when explicit code reads more clearly.
+
+    ```python
+    plan = hs.compile(graph)
+
+    if not plan:
+        for diagnostic in plan.errors:
+            print(diagnostic.token)
+        raise SystemExit(plan.summary())
+    ```
+  </Tab>
+</Tabs>
+
+The admission predicate (`plan.ok()` in C++, `plan.ok` or `bool(plan)` in
+Python) is true only for an admitted plan with no error diagnostic. This
+includes a compiler-accepted empty `Graph`, which becomes a valid zero-work
+plan; it does not include a default-constructed/no-state plan wrapper.
+
+For C++ callers, keep the helper outside the failure branch: an admitted plan may contain
+warnings. Clean plans print nothing. `compile()` does not automatically dump
+its result diagnostics, even when automatic reporting is enabled (the default).
+The helper uses ordinary logger filtering and works even after
+`set_automatic_diagnostic_logging_enabled(false)`. Inspect tokens directly when
+implementing validation, fallback, or custom presentation; no helper is required.
+Exceptions raised before a result exists belong to the application's catch
+boundary. Do not expect a result helper to report a nonexistent plan.
+
+`diagnostics()` returns plan-owned `Diagnostic` records in a deterministic,
+canonical order. Each record carries:
+
+- a **`token`** — a stable registry spelling such as a fixed
+  `SCREAMING_SNAKE_CASE` identifier, *not* a free-form message. Tokens are
+  the machine-readable identity of a problem: match on them in tooling and
+  tests instead of parsing prose.
+- a **`severity`** — `DiagnosticSeverity::kWarning` (evidence preserved, plan
+  still admitted) or `DiagnosticSeverity::kError` (plan rejected).
+- an optional bounded **`source`** locating the problem in the plan by
+  canonical graph, vertex, and port IDs.
+
+Why this model instead of exceptions? Because a rejected plan is *evidence*,
+not a stack unwind. Tooling can report every problem at once rather than the
+first one hit, CI can diff results across commits, and your error-handling
+code stays on the same value-based path as the rest of the SDK (see
+[errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)).
+`compile()` itself throws only at genuine boundaries — when composition cannot
+produce a coherent snapshot at all, or a process-level resource failure
+prevents building any result.
+
+<Warning>
+  **A warning diagnostic does not reject the plan.** `plan.ok()` can be `true`
+  while `plan.diagnostics()` is non-empty. If your CI should treat warnings as
+  failures, iterate the diagnostics and check severities yourself — do not
+  assume `ok()` implies an empty diagnostics list.
+</Warning>
+
+## When you'd rather throw: `require_no_errors()`
+
+Sometimes the call site genuinely cannot proceed without an admitted plan, and
+branching on `ok()` just adds noise — a `main()` that immediately runs the
+plan, a test fixture, a setup helper. For those cases the plan offers one
+throw-style escape hatch:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    plan.require_no_errors();  // throws holoscan::CompileError
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    plan.require_no_errors()  # raises hs.errors.CompileError
+    ```
+  </Tab>
+</Tabs>
+
+In Python, catch this as `hs.errors.CompileError`. The C++ `CompileError`
+derives from `holoscan::RuntimeError`, so it carries an
+`ErrorCode` and converts cleanly back to the value channel if you catch it at
+a boundary. This — and any later attempt to execute a rejected plan — is the
+*only* place this surface throws. Everything else stays on the inspect path.
+
+<Warning>
+  Use `require_no_errors()` at the top of a cold setup path, not inside
+  tooling or diagnostics code. If you want to *report* why a plan was
+  rejected, you need the rejected plan in hand — throwing discards exactly
+  the object that holds the answers.
+</Warning>
+
+## The plan is a durable snapshot
+
+Two properties make an `ExecutionPlan` safe to hold, pass around, and compare:
+
+**It is immutable and deep-owning.** Copies of a plan share one immutable
+state that remains valid after the source graph is mutated or destroyed. You
+can compile, keep the plan, then continue editing the graph — the plan does
+not observe the change. Compile again to get a new snapshot; each plan is a
+frozen record of the graph as it was at that moment.
+
+**Compiling is pure.** `compile()` does not invoke any operator's `compute()`
+or lifecycle callbacks, does not create live endpoints or channels, and does
+not change your thread's affinity or scheduling policy. It is a cold transform
+from a graph description to a plan value, with no side effects on your
+process. Nothing starts until you hand the plan to the runtime — see
+[running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+Together these mean compilation is cheap to reach for: validate a pipeline in
+a unit test, compile speculatively to check a refactor, or compile in a build
+job that never runs anything.
+
+<Tip>
+  **Check plans in CI.** Because compilation is pure and its output is
+  deterministic, a plan makes an excellent CI artifact. `plan.json()` returns
+  a canonical, schema-versioned JSON serialization, and `plan.digest()`
+  returns a 256-bit semantic digest you can compare with `==` — commit a
+  baseline, and a digest mismatch tells you a code change altered the compiled
+  pipeline before it ever ships. The full workflow, including what the digest
+  covers, lives in [plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+</Tip>
+
+## Putting it together
+
+Here is the shape most applications use — compile, gate on admission, and only
+then move on:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    CameraImuGraph graph;
+
+    const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+    if (!plan.ok()) {
+      std::cerr << plan.json() << '\n';
+      return 3;
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    plan = hs.compile(build_graph())
+    if not plan:
+        raise SystemExit(plan.summary())
+    ```
+  </Tab>
+</Tabs>
+Printing `plan.json()` on rejection is a convenient default: the canonical
+serialization includes the diagnostic records, so a failed CI job's log
+carries the full machine-readable story.
+
+## Recap
+
+- `holoscan::compile(graph)` and `holoscan.compile(graph)` are single free
+  function calls with default options.
+- Admission failure returns a **rejected plan**, not an exception — check
+  `plan.ok()`, then iterate `plan.diagnostics()`.
+- Diagnostics carry **stable registry tokens** and severities; match on
+  tokens in tooling, never on message text.
+- `plan.require_no_errors()` is the one throw-style entry point, for call
+  sites that cannot proceed without an admitted plan.
+- The plan is **immutable and deep-owning** (outlives the graph), and
+  `compile()` is **pure** (no operator code runs, no side effects).
+- `plan.json()` and `plan.digest()` make plans diffable CI artifacts.
+
+Next: hand your admitted plan to the runtime in
+[Running and Stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).

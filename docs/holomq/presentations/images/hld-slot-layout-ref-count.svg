@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="180" viewBox="0 0 960 180" role="img" aria-labelledby="title desc">
+  <title id="title">holomq ref-count SHM segment layout</title>
+  <desc id="desc">Header and per-slot atomic ref_count in a POSIX SHM segment.</desc>
+  <style>
+    .h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #1a1a1a; }
+    .l { font-family: Consolas, Menlo, monospace; font-size: 15px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .u { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #444; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="24" y="32" class="h">Ref-count SHM segment (one per pool)</text>
+  <text x="24" y="52" class="u">Shared across processes; separate from payload and generation pool memory</text>
+
+  <rect x="24" y="68" width="520" height="52" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="284" y="100" text-anchor="middle" class="l">Header: owner_pid, shm_ref_count_id, buffer_count</text>
+
+  <rect x="556" y="68" width="88" height="52" fill="#fff" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="600" y="100" text-anchor="middle" class="l">Slot[0]</text>
+
+  <rect x="656" y="68" width="88" height="52" fill="#fff" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="700" y="100" text-anchor="middle" class="l">Slot[1]</text>
+
+  <text x="756" y="100" class="d">each: atomic ref_count</text>
+</svg>

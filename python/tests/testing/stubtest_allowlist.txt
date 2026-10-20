@@ -1,0 +1,14 @@
+# Nanobind metaclass/disjoint-base differences and implementation-only enum capsules.
+holoscan.testing.CaptureFailure
+holoscan.testing.CaptureFailure.__init__
+holoscan.testing.ClockTestOutcome.__nb_enum__
+holoscan.testing.ControlledClockRun
+holoscan.testing.FrameRelease.__nb_enum__
+holoscan.testing.Retain
+holoscan.testing.SchemaSnapshot
+holoscan.testing.SchemaSnapshot.__init__
+holoscan.testing.TensorSnapshot
+holoscan.testing.TensorSnapshot.__init__
+holoscan.testing.TestResult
+holoscan.testing.TestResult.__init__
+holoscan.testing.TestRunOptions

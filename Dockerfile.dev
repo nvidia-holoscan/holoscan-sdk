@@ -1,0 +1,481 @@
+# syntax=docker/dockerfile:1
+
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Paths and names
+ARG INSTALL_PATH=/usr
+ARG SAMPLE_DATA_PATH=/usr/share/holoscan/data
+ARG HOST_INSTALL_DIR=install
+ARG HOST_SDK_INSTALL_DIR=/workspace/holoscan-sdk
+ARG WORKSPACE_PATH=/workspace
+ARG SOURCES_PATH=/opt/sources
+
+# Target selection
+ARG GPU_TYPE=dgpu
+ARG CUDA_MAJOR=13
+
+############################################################
+# Base image
+############################################################
+# CUDA 13 release containers are consolidated; there is no separate iGPU image.
+FROM nvcr.io/nvidia/tensorrt:26.03-py3 AS dgpu_cu13_base
+
+# Keep the TensorRT base inventory available to SDK and downstream developers,
+# including DOCA packages used by some downstream applications.
+
+FROM ${GPU_TYPE}_cu${CUDA_MAJOR}_base AS base
+
+# Conditionally configure apt caching behavior
+ARG ENABLE_APT_CACHING=true
+RUN if [ "${ENABLE_APT_CACHING}" = "true" ]; then \
+        echo "APT Caching enabled: Disabling docker-clean and enabling Keep-Downloaded-Packages."; \
+        DOCKER_CLEAN_CONF="/etc/apt/apt.conf.d/docker-clean"; \
+        if [ -f "${DOCKER_CLEAN_CONF}" ]; then \
+            mv "${DOCKER_CLEAN_CONF}" "${DOCKER_CLEAN_CONF}.disabled"; \
+        fi; \
+        echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/99-keep-archives; \
+    else \
+        echo "APT Caching disabled: Adding extra Post-Invoke cleanup hook."; \
+        echo 'DPkg::Post-Invoke "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb /var/cache/apt/*.bin /var/lib/apt/lists/* || true";' > /etc/apt/apt.conf.d/99-custom-cleanup; \
+    fi
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+# Workaround for NVBUG 5928069: CuPy fails to auto-detect CUDA when CUDA_PATH is unset
+# in TensorRT-based containers. Set CUDA_PATH so CuPy can find headers for
+# RawKernel/JIT compilation. See https://github.com/NVIDIA/cuda-python/issues/1707
+ENV CUDA_PATH=/usr/local/cuda
+# Workaround for NVBUG 5946872: CuPy fails with non-root user due to kernel cache
+# permission errors. $HOME may not exist or be writable when using -u uid:gid.
+# Use /tmp which is world-writable so any user can write the CuPy kernel cache.
+ENV CUPY_CACHE_DIR=/tmp/.cupy/kernel_cache
+ARG TARGETARCH
+ARG GPU_TYPE
+ARG CUDA_MAJOR
+
+# Save installed package lists before adding packages for the source archive.
+# Open-source sources stage will diff against these to fetch only for new packages.
+ARG SOURCES_PATH
+COPY --chmod=755 public/dev-container/scripts/ ${SOURCES_PATH}/scripts/
+RUN mkdir -p ${SOURCES_PATH} \
+    && SOURCES_PATH=${SOURCES_PATH} ${SOURCES_PATH}/scripts/save-package-lists.sh
+
+############################################################
+# NGC CLI
+############################################################
+FROM base AS ngc-cli-downloader
+# Extract the cli zipfile, search for the ngc binary, mark it executable, and
+# then create a canonical binary path in /etc/ngc/ngc
+RUN mkdir /opt/ngc-cli && cd /opt/ngc-cli && \
+    if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=linux; fi \
+    && curl -S -# -o ngccli_linux.zip -L https://api.ngc.nvidia.com/v2/resources/nvidia/ngc-apps/ngc_cli/versions/4.5.2/files/ngccli_${ARCH}.zip \
+    && unzip -q ngccli_linux.zip \
+    && export ngc_exec=$(find . -type f -name "ngc" | head -n1) \
+    && chmod u+x $ngc_exec \
+    && ln -s $ngc_exec ngc
+
+# Workaround to fix encoding for ngc-cli download
+# https://jirasw.nvidia.com/browse/NGC-31306
+ENV PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8
+
+# Define the NGC_CLI environment variables
+ARG SAMPLE_DATA_PATH
+RUN mkdir -p "$SAMPLE_DATA_PATH"
+
+############################################################
+# Example RacerX video data
+############################################################
+FROM ngc-cli-downloader AS racerx-data-downloader
+ARG racerx_version=20231009
+
+RUN /opt/ngc-cli/ngc registry resource download-version "nvidia/clara-holoscan/holoscan_racerx_video:${racerx_version}" --dest "$SAMPLE_DATA_PATH" \
+    && mv "$SAMPLE_DATA_PATH/holoscan_racerx_video_v${racerx_version}" "$SAMPLE_DATA_PATH/racerx"
+
+############################################################
+# APT utils
+############################################################
+FROM base AS apt-utils
+
+# To inform users about deleted libraries
+COPY  --chmod=755 <<'EOF' /usr/local/bin/cleanup_unwanted_libs
+#!/bin/bash
+DELETED_LIBS_LOG="/var/log/holoscan-deleted-libs.log"
+DELETED_LIB_MSG="This file was deleted to optimize the size of the holoscan container (saved %s).
+If you need this library, re-install it with: 'apt-get install --reinstall %s'.
+The full list of deleted libraries is recorded in '${DELETED_LIBS_LOG}'."
+for pattern in "$@"; do
+    for file in $pattern; do
+        if [ -f "${file}" ] && [ ! -L "${file}" ]; then
+            lib_size=$(stat -c %s "${file}")
+            lib_size_human=$(numfmt --to=iec --suffix=B ${lib_size})
+            pkg=$(dpkg -S "${file}" 2>/dev/null | cut -d: -f1 || echo 'unknown')
+            echo "${pkg} ${file} ${lib_size} ${lib_size_human}" | tee -a "${DELETED_LIBS_LOG}"
+            rm -f "${file}"
+            printf "${DELETED_LIB_MSG}" "${lib_size_human}" "${pkg}" > "${file}.deleted.txt"
+        fi
+    done
+done
+EOF
+
+# Setup kitware APT repository
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    OS_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
+    && KW_KEYRING="/usr/share/keyrings/kitware-archive-keyring.gpg" \
+    && curl -fsSL "https://apt.kitware.com/keys/kitware-archive-latest.asc" \
+        | gpg --batch --no-tty --dearmor -o "$KW_KEYRING" \
+    && echo "deb [signed-by=$KW_KEYRING] https://apt.kitware.com/ubuntu/ $OS_CODENAME main" \
+        > /etc/apt/sources.list.d/kitware.list \
+    && apt-get update
+
+############################################################
+# Dependencies (dGPU)
+############################################################
+FROM apt-utils AS deps-dgpu
+
+# Set up CUDA APT repo on dGPU base if missing
+RUN if ! grep -q "developer.download.nvidia.com/compute/cuda/repos" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then \
+        OS_CODENAME=$(source /etc/os-release && echo "ubuntu${VERSION_ID//./}"); \
+        CUDA_PLATFORM=$(uname -m); \
+        if [ ${CUDA_PLATFORM} = "aarch64" ]; then \
+            CUDA_PLATFORM="sbsa"; \
+        fi; \
+        CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${OS_CODENAME}/${CUDA_PLATFORM}"; \
+        CUDA_KEYRING="/usr/share/keyrings/cuda-archive-keyring.gpg"; \
+        curl -fsSL "${CUDA_REPO_URL}/cuda-archive-keyring.gpg" -o "${CUDA_KEYRING}"; \
+        echo "deb [signed-by=${CUDA_KEYRING}] ${CUDA_REPO_URL} /" > /etc/apt/sources.list.d/cuda.list; \
+    fi;
+
+############################################################
+# Dependencies (common)
+############################################################
+FROM deps-dgpu AS deps-common
+
+# Install apt dependencies
+#  build-essential, ninja-build, pkg-config: C/C++ builds and dependency discovery
+#  cmake, cmake-data: CMake 4.x for SDK and downstream builds
+#  libexpected-dev: public tl-expected dependency for installed SDK consumers
+#  patchelf: set library RPATHs during SDK Python wheel packaging
+#  python3-dev, python3-venv: Python extension builds and isolated tests
+#  gdb, gdbserver, valgrind: native debugging and memory analysis
+#  ca-certificates, unzip, xz-utils: HTTPS downloads and archive extraction
+#  libstdc++6, libatomic1: Node runtime and pre-commit Node environment support
+#  libx11-dev, libxcursor-dev, libxi-dev, libxinerama-dev, libxrandr-dev: GLFW X11 builds
+#  libxcb-glx0: GLX runtime for X11 graphics
+#  libvulkan-dev, glslang-tools: Vulkan headers and shader tools for graphics apps
+#  libegl1: EGL runtime for headless Vulkan presentation
+#  libwayland-dev, libxkbcommon-dev: GLFW Wayland build dependencies
+#  libdecor-0-plugin-1-cairo: Wayland window decoration plugin for GLFW
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install --no-install-recommends --allow-downgrades -y \
+        build-essential \
+        libexpected-dev \
+        cmake="4.*" \
+        cmake-data="4.*" \
+        patchelf \
+        ninja-build \
+        pkg-config \
+        python3-dev \
+        python3-venv \
+        gdb \
+        gdbserver \
+        valgrind \
+        ca-certificates \
+        unzip \
+        xz-utils \
+        libstdc++6 \
+        libatomic1 \
+        libx11-dev \
+        libxcb-glx0 \
+        libxcursor-dev \
+        libxi-dev \
+        libxinerama-dev \
+        libxrandr-dev \
+        libvulkan-dev \
+        glslang-tools \
+        libegl1 \
+        libwayland-dev \
+        libxkbcommon-dev \
+        libdecor-0-plugin-1-cairo
+
+# Override CMake installation from the base image
+RUN for bin in cmake ctest cpack; do \
+        ln -sf "/usr/bin/${bin}" "/usr/local/bin/${bin}"; \
+    done \
+    && echo "Installed CMake: $(which cmake) $(cmake --version)  "
+
+# Remove unused HPC-X libraries and linker configuration inherited from the base image
+RUN rm -rf /opt/hpcx && \
+    if [ -f /etc/ld.so.conf.d/hpcx.conf ]; then \
+        rm /etc/ld.so.conf.d/hpcx.conf && \
+        ldconfig; \
+    fi
+
+# Install the pinned Node executable independently of Pyright's optional npm bundle.
+COPY public/dev-container/scripts/install-node-runtime.sh /tmp/install-node-runtime.sh
+RUN bash /tmp/install-node-runtime.sh "${TARGETARCH}" && rm /tmp/install-node-runtime.sh
+
+# Install pip run dependencies
+#  requirements
+#    cloudpickle - dependency for distributed apps
+#    cupy-cuda - dependency for holoscan python + examples
+#    numpy - dependency for holoscan python + examples
+#    pillow - image-processing helper used by SDK examples and validation
+#  development requirements: test dependencies and pinned Python type checkers
+#  build: standard Python package build frontend for downstream projects
+#    pip - 22.0.2+ needed for PEP 600 and a version that is greater than the Ubuntu 22.04's python3-pip package for python wheel symlinks resolution
+COPY public/python/requirements.txt /tmp/requirements.txt
+COPY public/python/requirements.dev.txt /tmp/requirements.dev.txt
+RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
+    python3 -m pip install --upgrade \
+        -r /tmp/requirements.txt \
+        -r /tmp/requirements.dev.txt \
+        "build>=1,<2" \
+    && pyright --version
+
+# Upgrade apt dependencies to address CVEs
+# curl - CVE-2023-38545
+# libc-dev-bin - CVE-2023-4911
+# openssh-client - CVE-2024-6387
+# rsync - CVE-2024-12084, CVE-2026-43618
+# git - CVE-2025-48384
+# gnupg - CVE-2025-68973
+# openssl, libssl3t64, libssl-dev - CVE-2026-45447, CVE-2026-84782
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install --no-install-recommends -y \
+        curl \
+        libcurl4 \
+        libcurl3-gnutls \
+        libc-dev-bin \
+        libc-bin \
+        openssh-client \
+        rsync \
+        git \
+        git-man \
+        gnupg \
+        openssl \
+        libssl3t64 \
+        libssl-dev
+
+ARG NSYS_VERSION=2026.4.1
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    UBUNTU_RELEASE=$(. /etc/lsb-release && echo "$DISTRIB_RELEASE" | tr -d .) \
+    && ARCH_STRING=$(dpkg --print-architecture) \
+    && DEVTOOLS_REPO_URL="https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_RELEASE}/${ARCH_STRING}" \
+    && echo "DEVTOOLS_REPO_URL=${DEVTOOLS_REPO_URL}" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gnupg \
+    && apt-get remove --purge -y "nsight-systems-cli*" "nsight-compute*" || true \
+    # Remove DLFW embedded installation
+    && (rm -r /usr/local/cuda/NsightSystems-cli-* || true) \
+    && curl -fsSL "${DEVTOOLS_REPO_URL}/nvidia.pub" | gpg --dearmor -o /usr/share/keyrings/nvidia-devtools.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nvidia-devtools.gpg] ${DEVTOOLS_REPO_URL} /" | tee /etc/apt/sources.list.d/nvidia-devtools.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nsight-systems-cli-${NSYS_VERSION}
+
+# The optional AWS EFA metrics plugin bundles nic_sampler built with Go 1.26.1
+# (CVE-2026-27143 and related Go CVEs). Keep the Nsight profiler and its other
+# plugins, while omitting this separate network-metrics collector.
+RUN rm -rf /opt/nvidia/nsight-systems-cli/${NSYS_VERSION}/target-linux-*/plugins/efa_metrics
+
+# Verify core development capabilities during construction. The same utility
+# provides a non-blocking inventory of the broader heavyweight tool layer.
+COPY --chmod=755 public/dev-container/scripts/development-tools.sh \
+    /usr/local/bin/holoscan-development-tools
+RUN holoscan-development-tools check
+
+############################################################
+# Vulkan validation layers (built from source)
+############################################################
+FROM deps-common AS vulkan-validation-layers-builder
+
+ARG VULKAN_VALIDATION_LAYERS_TAG=vulkan-sdk-1.4.321.0
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libxcb1-dev
+RUN git clone --depth 1 --branch ${VULKAN_VALIDATION_LAYERS_TAG} \
+        https://github.com/KhronosGroup/Vulkan-ValidationLayers.git /tmp/vvl \
+    && cmake -S /tmp/vvl -B /tmp/vvl/build -G Ninja \
+        -D CMAKE_BUILD_TYPE=Release \
+        -D UPDATE_DEPS=ON \
+        -D CMAKE_INSTALL_LIBDIR=lib \
+        -D CMAKE_INSTALL_PREFIX=/opt/vulkan-validation-layers \
+    && cmake --build /tmp/vvl/build \
+    && cmake --install /tmp/vvl/build \
+    && rm -rf /tmp/vvl
+RUN sed -i \
+        's|"library_path": "libVkLayer_khronos_validation.so"|"library_path": "../../../lib/libVkLayer_khronos_validation.so"|' \
+        /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json \
+    && grep -q '"library_path": "\.\./\.\./\.\./lib/libVkLayer_khronos_validation.so"' \
+        /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json
+
+############################################################
+# Copy Holoscan SDK binary installation
+# Note: avoid LD_LIBRARY_PATH - https://www.hpc.dtu.dk/?page_id=1180
+############################################################
+FROM deps-common AS release-with-holoscan-sdk
+
+# Copy data from previous stages
+ARG SAMPLE_DATA_PATH
+COPY --from=racerx-data-downloader $SAMPLE_DATA_PATH $SAMPLE_DATA_PATH
+ENV HOLOSCAN_INPUT_PATH=$SAMPLE_DATA_PATH
+
+# Copy the SDK binary installation
+ARG INSTALL_PATH
+ARG HOST_INSTALL_DIR
+COPY public/${HOST_INSTALL_DIR}/ ${INSTALL_PATH}/
+# Matches the python3.12 pinned via update-alternatives in public/Dockerfile (CUDA_MAJOR=13 stack).
+ENV PYTHONPATH=${INSTALL_PATH}/lib/python3.12/site-packages
+RUN ldconfig
+
+# Use the current validation layer rather than Ubuntu 24.04's older package.
+COPY --from=vulkan-validation-layers-builder \
+    /opt/vulkan-validation-layers/lib/libVkLayer_khronos_validation.so /usr/local/lib/
+COPY --from=vulkan-validation-layers-builder \
+    /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/ /usr/local/share/vulkan/explicit_layer.d/
+
+# Keep only sources needed for debugger source mapping and header inspection.
+# Build tooling and container-maintenance files belong to the host checkout, not
+# the released development image.
+ARG HOST_SDK_INSTALL_DIR
+COPY public/include ${HOST_SDK_INSTALL_DIR}/include
+COPY public/modules ${HOST_SDK_INSTALL_DIR}/modules
+COPY public/python ${HOST_SDK_INSTALL_DIR}/python
+COPY public/src ${HOST_SDK_INSTALL_DIR}/src
+# Preserve the source-tree version file for release introspection.
+COPY public/VERSION ${HOST_SDK_INSTALL_DIR}/VERSION
+
+# Copy SDK license and notice into the system documentation location.
+RUN mkdir -p /usr/share/doc/holoscan
+COPY public/LICENSE.txt /usr/share/doc/holoscan/LICENSE.txt
+COPY public/dev-container/NOTICE.txt /usr/share/doc/holoscan/NOTICE
+
+# Create Holoscan SDK entry point
+RUN rm -f \
+    # Remove unwanted TensorRT & CUDA entry point files
+    # if they exist (DLFW container images)
+    /opt/nvidia/entrypoint.d/40-tensorrt-samples-info.txt \
+    /opt/nvidia/entrypoint.d/29-tensorrt-url.txt \
+    /opt/nvidia/entrypoint.d/12-banner.sh || true
+
+# Maintain the TensorRT copyright and container license files
+# if they exist (DLFW container images)
+RUN mkdir /opt/nvidia/legal \
+    && mv \
+        /opt/nvidia/entrypoint.d/13-tensorrt-copyright.txt \
+        /opt/nvidia/entrypoint.d/30-container-license.txt \
+        /opt/nvidia/legal/ || true
+
+ARG HOLOSCAN_SDK_VERSION
+ENV HOLOSCAN_SDK_VERSION=${HOLOSCAN_SDK_VERSION}
+ENV NVIDIA_PRODUCT_NAME="NVIDIA Holoscan SDK"
+
+COPY --chmod=755 public/dev-container/entrypoint.d/ /opt/nvidia/entrypoint.d/
+
+# Use a neutral workspace rather than a system installation directory.
+ARG WORKSPACE_PATH
+RUN mkdir -p ${WORKSPACE_PATH} \
+    && test ! -e /opt/nvidia/holoscan
+WORKDIR ${WORKSPACE_PATH}
+
+# Disable the keep-archives setting at the end of the build stage
+# so it doesn't persist for users interacting directly with this image.
+RUN KEEP_APT_ARCHIVES_CONF="/etc/apt/apt.conf.d/99-keep-archives"; \
+    if [ -f "${KEEP_APT_ARCHIVES_CONF}" ]; then \
+        mv "${KEEP_APT_ARCHIVES_CONF}" "${KEEP_APT_ARCHIVES_CONF}.disabled"; \
+        echo "Disabled ${KEEP_APT_ARCHIVES_CONF} at the end of the build stage."; \
+    fi
+
+############################################################
+# Open Source Dependencies
+#
+# Fetch and preserve source archives for third-party open-source dependencies.
+# Package lists were saved at the start of the build; use them to identify the
+# packages added by this image and keep only compressed archives to save space.
+FROM deps-common AS source-archives
+
+ARG SOURCES_PATH
+
+# Enable APT source repositories (deb-src) and install dpkg-dev for apt-get source.
+# Use explicit Ubuntu archive deb-src (main, universe, updates, security) so source packages
+# are available; the base image's deb lines may be minimal or not publish source.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    . /etc/os-release \
+    && case "$(uname -m)" in aarch64) MIRROR="http://ports.ubuntu.com/ubuntu-ports";; *) MIRROR="http://archive.ubuntu.com/ubuntu";; esac \
+    && printf "deb-src %s %s main restricted universe multiverse\n" "$MIRROR" "$VERSION_CODENAME" > /etc/apt/sources.list.d/source-repos.list \
+    && printf "deb-src %s %s-updates main restricted universe multiverse\n" "$MIRROR" "$VERSION_CODENAME" >> /etc/apt/sources.list.d/source-repos.list \
+    && printf "deb-src http://security.ubuntu.com/ubuntu %s-security main restricted universe multiverse\n" "$VERSION_CODENAME" >> /etc/apt/sources.list.d/source-repos.list \
+    && for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f "$f" ] && grep -q '^deb ' "$f" && sed -n 's/^deb /deb-src /p' "$f" 2>/dev/null; done | grep -v '^deb-src http://archive.ubuntu.com\|^deb-src http://ports.ubuntu.com\|^deb-src http://security.ubuntu.com' | sort -u >> /etc/apt/sources.list.d/source-repos.list || true \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends dpkg-dev
+
+# Fetch APT source archives for packages installed in this image, minus:
+#   - packages already present in the base image (apt-before.txt)
+#   - packages with source archives available from another configured source
+#   - packages covered by committed policy exclusions, including proprietary packages
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && SOURCES_PATH=${SOURCES_PATH} \
+       EXCLUDE_LISTS="${SOURCES_PATH}/apt-before.txt ${SOURCES_PATH}/scripts/opensource-nvidia-apt-packages.txt ${SOURCES_PATH}/scripts/source-apt-exclusions.txt" \
+       /opt/sources/scripts/fetch-apt-sources.sh
+
+# Fetch pip package source (sdists) with analogous exclusions.
+COPY public/dev-container/scripts/fetch-pip-sources.py /tmp/fetch-pip-sources.py
+WORKDIR ${SOURCES_PATH}/pip
+RUN python3 /tmp/fetch-pip-sources.py \
+        --exclude-list ${SOURCES_PATH}/pip-before.txt \
+        --exclude-list ${SOURCES_PATH}/scripts/opensource-nvidia-pip-packages.txt \
+        --exclude-list ${SOURCES_PATH}/scripts/source-pip-exclusions.txt \
+    && echo "Pip package sources written to ${SOURCES_PATH}/pip"
+
+# Preserve matching Node runtime sources, excluding the undistributed package managers.
+RUN NODE_RELEASE=$(node --version) \
+    && NODE_SOURCE_DIR=$(mktemp -d) \
+    && curl -fsSL --retry 5 --retry-delay 3 \
+        "https://nodejs.org/dist/${NODE_RELEASE}/node-${NODE_RELEASE}.tar.xz" \
+        -o "${NODE_SOURCE_DIR}/node-${NODE_RELEASE}.tar.xz" \
+    && (cd "${NODE_SOURCE_DIR}" && sha256sum --check --status /usr/local/share/doc/nodejs/source.sha256) \
+    && tar -xJf "${NODE_SOURCE_DIR}/node-${NODE_RELEASE}.tar.xz" \
+        -C "${NODE_SOURCE_DIR}" \
+        --exclude="node-${NODE_RELEASE}/deps/npm" \
+        --exclude="node-${NODE_RELEASE}/deps/corepack" \
+    && mkdir -p "${SOURCES_PATH}/nodejs" \
+    && tar -cJf "${SOURCES_PATH}/nodejs/node-${NODE_RELEASE}-runtime-source.tar.xz" \
+        -C "${NODE_SOURCE_DIR}" "node-${NODE_RELEASE}" \
+    && cp /usr/local/share/doc/nodejs/source.sha256 "${SOURCES_PATH}/nodejs/upstream-source.sha256" \
+    && rm -rf "${NODE_SOURCE_DIR}"
+
+# Write a README so container users know where to find all OSS sources.
+RUN printf '%s\n' \
+    '# Open-source package sources' \
+    '' \
+    'This container distributes open-source software. Source code is available in' \
+    'two locations:' \
+    '' \
+    '1. **Embedded here in /opt/sources/** ' \
+    '2. **Hosted externally**' \
+    '   a. https://opensource.nvidia.com/oss/teams/nvidia/holoscan/' \
+    '   b. https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/' \
+    > ${SOURCES_PATH}/README.md
+
+############################################################
+# Release (final)
+############################################################
+FROM release-with-holoscan-sdk AS release
+
+ARG SOURCES_PATH
+COPY --from=source-archives ${SOURCES_PATH} ${SOURCES_PATH}
+
+# Preserve the neutral development workspace in the final image.
+ARG WORKSPACE_PATH
+WORKDIR ${WORKSPACE_PATH}

@@ -4,6 +4,11 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 """
 
+import datetime
+import subprocess
+import sys
+from pathlib import Path
+
 from check_copyright import (
     APACHE_BOILERPLATE_LINES,
     NVIDIA_PROPRIETARY_BOILERPLATE_LINES,
@@ -255,6 +260,61 @@ def test_accepts_nvidia_proprietary_spdx_outside_public_source(tmp_path):
     assert check_copyright(str(source), update_current_year=False) == []
 
 
+def test_updates_copyright_year_only_within_leading_header(tmp_path):
+    current_year = datetime.datetime.now().year
+    header_year = current_year - 1
+    body_year = current_year - 2
+    body_line = (
+        f'print("Copyright (c) {body_year} NVIDIA CORPORATION & AFFILIATES. '
+        'All rights reserved.")\n'
+    )
+    source = tmp_path / "example.py"
+    source.write_text(
+        f"# SPDX-FileCopyrightText: Copyright (c) {header_year} "
+        "NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
+        "# SPDX-License-Identifier: Apache-2.0\n" + body_line,
+        encoding="utf-8",
+    )
+
+    assert check_copyright(str(source), update_current_year=True) == []
+
+    updated_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    assert str(current_year) in updated_lines[0]
+    assert updated_lines[2] == body_line
+
+
+def test_cli_rejects_proprietary_spdx_for_repo_relative_public_path(tmp_path):
+    current_year = datetime.datetime.now().year
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    source = public_dir / "example.py"
+    source.write_text(
+        f"# SPDX-FileCopyrightText: Copyright (c) {current_year} "
+        "NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
+        "# SPDX-License-Identifier: LicenseRef-NvidiaProprietary\n",
+        encoding="utf-8",
+    )
+    checker = Path(__file__).with_name("check_copyright.py")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(checker),
+            "--full-scan",
+            "--reject-nvidia-proprietary-path",
+            r"^public/.*",
+            "public/example.py",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "NVIDIA proprietary SPDX license is not allowed" in result.stdout
+
+
 def test_spdx_metadata_in_body_does_not_satisfy_header(tmp_path):
     source = tmp_path / "example.py"
     source.write_text(
@@ -270,13 +330,6 @@ def test_spdx_metadata_in_body_does_not_satisfy_header(tmp_path):
     assert any("SPDX-License-Identifier missing" in err[2] for err in errors)
 
 
-def test_checks_idl_sources(tmp_path):
-    idl = tmp_path / "example.idl"
-    idl.write_text("interface Example {};\n", encoding="utf-8")
-
-    assert check_this_file(str(idl)) is True
-
-
 def test_checks_extensionless_shebang_scripts(tmp_path):
     script = tmp_path / "run_example"
     script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -285,3 +338,10 @@ def test_checks_extensionless_shebang_scripts(tmp_path):
 
     assert check_this_file(str(script)) is True
     assert check_this_file(str(data)) is False
+
+
+def test_checks_slang_sources(tmp_path):
+    shader = tmp_path / "example.slang"
+    shader.write_text("shader source\n", encoding="utf-8")
+
+    assert check_this_file(str(shader)) is True

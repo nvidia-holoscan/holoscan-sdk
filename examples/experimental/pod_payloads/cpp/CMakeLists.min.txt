@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_pod_payloads LANGUAGES CXX)
+
+include(CTest)
+
+find_package(Threads REQUIRED)
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+add_executable(pod_payloads pod_payloads.cpp)
+target_compile_features(pod_payloads PRIVATE cxx_std_20)
+target_link_libraries(pod_payloads PRIVATE holoscan::core Threads::Threads)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-014
+    add_test(NAME EXAMPLE_CPP_POD_PAYLOADS_TEST COMMAND pod_payloads)
+    set_tests_properties(EXAMPLE_CPP_POD_PAYLOADS_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "pod_payloads: decoded 6 FusionControl samples \\(last frame=6, size=32 bytes, zero padding\\) termination=stopped"
+            LABELS "examples;pod"
+            TIMEOUT 30
+    )
+endif()

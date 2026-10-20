@@ -1,0 +1,364 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanApplyPatches.cmake")
+
+# The lightweight configuration components deliberately bypass the full Core package. This branch
+# must remain before holoscan-full-config.cmake because the full package discovers CUDA, CCCL, and
+# Runtime dependencies that are outside the holoscan::config dependency contract.
+set(_holoscan_lightweight_components TRUE)
+if(NOT holoscan_FIND_COMPONENTS)
+  set(_holoscan_lightweight_components FALSE)
+else()
+  foreach(_holoscan_component IN LISTS holoscan_FIND_COMPONENTS)
+    if(NOT _holoscan_component STREQUAL "config" AND
+       NOT _holoscan_component STREQUAL "config_io")
+      set(_holoscan_lightweight_components FALSE)
+    endif()
+  endforeach()
+endif()
+
+macro(_holoscan_load_config_component)
+  include(CMakeFindDependencyMacro)
+  find_dependency(tl-expected)
+  if(TARGET holoscan::config)
+    set(holoscan_config_FOUND TRUE)
+  elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-config-targets.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-config-targets.cmake")
+    set(holoscan_config_FOUND TRUE)
+  else()
+    set(holoscan_config_FOUND FALSE)
+  endif()
+endmacro()
+
+macro(_holoscan_load_config_io_component)
+  _holoscan_load_config_component()
+  if(TARGET holoscan::config_io)
+    set(holoscan_config_io_FOUND TRUE)
+  elseif(holoscan_config_FOUND AND
+     EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-config-io-targets.cmake")
+    set(_holoscan_config_io_private_archive
+        "${_holoscan_frontdoor_install_prefix}/@HOLOSCAN_INSTALL_LIB_DIR@/@CMAKE_STATIC_LIBRARY_PREFIX@holoscan_config_yaml_private@CMAKE_STATIC_LIBRARY_SUFFIX@")
+    if(NOT @BUILD_SHARED_LIBS@ AND NOT EXISTS "${_holoscan_config_io_private_archive}")
+      set(holoscan_config_io_FOUND FALSE)
+    else()
+      if(NOT @BUILD_SHARED_LIBS@ AND NOT TARGET holoscan::_config_yaml_private)
+        add_library(holoscan::_config_yaml_private STATIC IMPORTED)
+        set_target_properties(holoscan::_config_yaml_private PROPERTIES
+            IMPORTED_LOCATION "${_holoscan_config_io_private_archive}"
+        )
+      endif()
+      include("${CMAKE_CURRENT_LIST_DIR}/holoscan-config-io-targets.cmake")
+      set(holoscan_config_io_FOUND TRUE)
+    endif()
+    unset(_holoscan_config_io_private_archive)
+  else()
+    set(holoscan_config_io_FOUND FALSE)
+  endif()
+endmacro()
+
+# holoscan::params ships in the holoscan-core export set, so the tuner only needs the Core graph.
+macro(_holoscan_load_experimental_params_web_tuner_component)
+  if(TARGET holoscan::experimental_params_web_tuner)
+    set(holoscan_experimental_params_web_tuner_FOUND TRUE)
+  elseif(TARGET holoscan::params AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-experimental-params-web-tuner-targets.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-experimental-params-web-tuner-targets.cmake")
+    set(holoscan_experimental_params_web_tuner_FOUND TRUE)
+  else()
+    set(holoscan_experimental_params_web_tuner_FOUND FALSE)
+  endif()
+endmacro()
+
+# Operator test support is opt-in and can be omitted from a production installation.
+macro(_holoscan_load_testing_component)
+  if(TARGET holoscan::testing)
+    set(holoscan_testing_FOUND TRUE)
+  elseif(TARGET holoscan::core AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-testing-targets.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-testing-targets.cmake")
+    set(holoscan_testing_FOUND TRUE)
+  else()
+    set(holoscan_testing_FOUND FALSE)
+  endif()
+endmacro()
+
+# ==================================================================================================
+# Module component loaders
+# ==================================================================================================
+# Module components are installed independently from Core but depend on Core targets already
+# loaded by the full package configuration. These loaders must remain macros rather than functions:
+# find_dependency() and the component _FOUND variables rely on the caller's scope to propagate
+# dependency tracking to the consuming project.
+
+# Load the Holoscan Inference package and its transitive dependencies.
+macro(_holoscan_load_inference_component)
+  if(TARGET holoscan::infer)
+    set(holoscan_inference_FOUND TRUE)
+  elseif(TARGET holoscan::core AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
+    set(_holoscan_inference_private_archive
+        "${_holoscan_frontdoor_install_prefix}/@HOLOSCAN_INSTALL_LIB_DIR@/@CMAKE_STATIC_LIBRARY_PREFIX@holoscan_inference_yaml_private@CMAKE_STATIC_LIBRARY_SUFFIX@")
+    if(NOT @BUILD_SHARED_LIBS@ AND NOT EXISTS "${_holoscan_inference_private_archive}")
+      set(holoscan_inference_FOUND FALSE)
+    else()
+      if(NOT @BUILD_SHARED_LIBS@ AND NOT TARGET holoscan::_inference_yaml_private)
+        add_library(holoscan::_inference_yaml_private STATIC IMPORTED)
+        set_target_properties(holoscan::_inference_yaml_private PROPERTIES
+            IMPORTED_LOCATION "${_holoscan_inference_private_archive}"
+        )
+      endif()
+      include("${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
+      if(TARGET holoscan::infer AND TARGET holoscan::op_inference)
+        set(holoscan_inference_FOUND TRUE)
+      else()
+        set(holoscan_inference_FOUND FALSE)
+      endif()
+    endif()
+    unset(_holoscan_inference_private_archive)
+  else()
+    set(holoscan_inference_FOUND FALSE)
+  endif()
+endmacro()
+
+# Load the Holoscan Vision package and its transitive dependencies.
+macro(_holoscan_load_vision_component)
+  if(TARGET holoscan::vision)
+    set(holoscan_vision_FOUND TRUE)
+  elseif(TARGET holoscan::core AND TARGET holoscan::sensor_io AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    if(NOT @BUILD_SHARED_LIBS@)
+      include(CMakeFindDependencyMacro)
+      # CV-CUDA's configuration consumes nvcv_types without discovering it.
+      find_dependency(nvcv_types
+        @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
+      find_dependency(cvcuda
+        @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
+    endif()
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    if(TARGET holoscan::vision)
+      set(holoscan_vision_FOUND TRUE)
+    else()
+      set(holoscan_vision_FOUND FALSE)
+    endif()
+  else()
+    set(holoscan_vision_FOUND FALSE)
+  endif()
+endmacro()
+
+# Load the Holoscan Visualization package and its transitive dependencies. op_holoviz's
+# image-kind layer ports are typed Input<schema::ImageT>, so its exported target links
+# holoscan::sensor_io PUBLIC; that target ships in the Core export set and must be present before
+# holoscan-visualization-targets.cmake is included.
+macro(_holoscan_load_visualization_component)
+  if(TARGET holoscan::visualization::op_holoviz)
+    set(holoscan_visualization_FOUND TRUE)
+  elseif(TARGET holoscan::core AND TARGET holoscan::sensor_io AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    if(TARGET holoscan::visualization::op_holoviz)
+      set(holoscan_visualization_FOUND TRUE)
+      # The component ships its build-time shader compilation helper beside this file, so a
+      # downstream project can generate the same embedded-SPIR-V headers the library uses.
+      include("${CMAKE_CURRENT_LIST_DIR}/HolovizShaderHeader.cmake")
+    else()
+      set(holoscan_visualization_FOUND FALSE)
+    endif()
+  else()
+    set(holoscan_visualization_FOUND FALSE)
+  endif()
+endmacro()
+
+# The generated full package uses and unsets its own _holoscan_install_prefix while it is included
+# below. Keep the front-door prefix distinct because optional static components are loaded after
+# that include and still need the installed archive location. PACKAGE_PREFIX_DIR is generated by
+# configure_package_config_file and remains correct for GNU multiarch libdirs such as
+# lib/x86_64-linux-gnu, which a fixed relative walk up from this file would not be.
+set(_holoscan_frontdoor_install_prefix "${PACKAGE_PREFIX_DIR}")
+set(holoscan_FLATBUFFERS_VERSION "@Flatbuffers_VERSION@")
+if(@HOLOSCAN_BUILD_PYTHON@)
+  set(holoscan_PYTHON_PACKAGE_DIR
+      "${_holoscan_frontdoor_install_prefix}/@CMAKE_INSTALL_LIBDIR@/python@Python3_VERSION_MAJOR@.@Python3_VERSION_MINOR@/site-packages")
+else()
+  set(holoscan_PYTHON_PACKAGE_DIR "")
+endif()
+if(_holoscan_lightweight_components)
+  if("config_io" IN_LIST holoscan_FIND_COMPONENTS)
+    _holoscan_load_config_io_component()
+  else()
+    _holoscan_load_config_component()
+  endif()
+
+  include("${CMAKE_CURRENT_LIST_DIR}/holoscan-config-version.cmake" OPTIONAL)
+  set(HOLOSCAN_VERSION "@PROJECT_VERSION@")
+  set(HOLOSCAN_VERSION_MAJOR "@PROJECT_VERSION_MAJOR@")
+  set(HOLOSCAN_VERSION_MINOR "@PROJECT_VERSION_MINOR@")
+  set(HOLOSCAN_VERSION_PATCH "@PROJECT_VERSION_PATCH@")
+  check_required_components(holoscan)
+  unset(_holoscan_component)
+  unset(_holoscan_frontdoor_install_prefix)
+  unset(_holoscan_lightweight_components)
+  unset(_holoscan_load_config_component)
+  unset(_holoscan_load_config_io_component)
+  return()
+endif()
+
+unset(_holoscan_component)
+unset(_holoscan_lightweight_components)
+
+# The Core export set contains holoscan::params and holoscan::params_io, which link the separately
+# exported holoscan::config and holoscan::config_io targets. Import those first so the generated
+# Core import file below resolves its link dependencies.
+_holoscan_load_config_io_component()
+if(NOT holoscan_config_io_FOUND)
+  set(holoscan_FOUND FALSE)
+  string(CONCAT holoscan_NOT_FOUND_MESSAGE
+    "Incomplete Holoscan installation: the holoscan-config and holoscan-config-io components are "
+    "required by holoscan-core but were not found in ${CMAKE_CURRENT_LIST_DIR}")
+  unset(_holoscan_frontdoor_install_prefix)
+  return()
+endif()
+
+# The RAPIDS-generated full package predates the independent optional-component export sets. Hide
+# the caller's component list while it imports the Core graph, then resolve the exact requested
+# optional dependency closure below and run the component check once, at this front door.
+# Resolve the imported transport target before the Core export set references it.
+include(CMakeFindDependencyMacro)
+# Package roots also apply to transitive find_dependency calls (unlike HINTS). Keep the
+# override local, including the early return taken by find_dependency on failure.
+function(_holoscan_find_transport_dependency)
+  set(iceoryx2-cxx_ROOT "${_holoscan_frontdoor_install_prefix}")
+  find_dependency(iceoryx2-cxx "@HOLOMQ_ICEORYX2_CXX_VERSION@" CONFIG)
+  set(_holoscan_transport_dependency_found TRUE PARENT_SCOPE)
+endfunction()
+set(_holoscan_transport_dependency_found FALSE)
+_holoscan_find_transport_dependency()
+if(NOT _holoscan_transport_dependency_found)
+  set(holoscan_FOUND FALSE)
+  set(holoscan_NOT_FOUND_MESSAGE
+    "Holoscan requires iceoryx2-cxx @HOLOMQ_ICEORYX2_CXX_VERSION@ from its matching installation")
+  unset(_holoscan_transport_dependency_found)
+  return()
+endif()
+unset(_holoscan_transport_dependency_found)
+set(_holoscan_requested_components "${holoscan_FIND_COMPONENTS}")
+set(holoscan_FIND_COMPONENTS)
+# Static RAPIDS exports can also set this root while loading their dependency file.
+# Preserve the caller's value across that include without hiding the package's output variables.
+if(DEFINED iceoryx2-cxx_ROOT)
+  set(_holoscan_caller_transport_root_defined TRUE)
+  set(_holoscan_caller_transport_root "${iceoryx2-cxx_ROOT}")
+else()
+  set(_holoscan_caller_transport_root_defined FALSE)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/holoscan-full-config.cmake")
+if(_holoscan_caller_transport_root_defined)
+  set(iceoryx2-cxx_ROOT "${_holoscan_caller_transport_root}")
+else()
+  unset(iceoryx2-cxx_ROOT)
+endif()
+unset(_holoscan_caller_transport_root)
+unset(_holoscan_caller_transport_root_defined)
+set(holoscan_FIND_COMPONENTS "${_holoscan_requested_components}")
+find_dependency(Flatbuffers "@Flatbuffers_VERSION@" EXACT CONFIG
+  HINTS "${_holoscan_frontdoor_install_prefix}/@HOLOSCAN_THIRD_PARTY_INSTALL_LIB_DIR@/cmake/flatbuffers")
+
+
+set(_holoscan_schema_dir
+    "${_holoscan_frontdoor_install_prefix}/@CMAKE_INSTALL_DATADIR@/holoscan/schemas")
+set(_holoscan_reflection_schema
+    "${_holoscan_schema_dir}/flatbuffers/reflection.fbs")
+if(NOT IS_DIRECTORY "${_holoscan_schema_dir}")
+  message(FATAL_ERROR
+    "Incomplete Holoscan schema tooling installation: ${_holoscan_schema_dir} is missing")
+endif()
+foreach(_holoscan_schema_tools_path IN ITEMS
+    "${CMAKE_CURRENT_LIST_DIR}/HoloscanSchemaTools.cmake"
+    "${_holoscan_reflection_schema}")
+  if(NOT EXISTS "${_holoscan_schema_tools_path}")
+    message(FATAL_ERROR
+      "Incomplete Holoscan schema tooling installation: ${_holoscan_schema_tools_path} is missing")
+  endif()
+endforeach()
+
+if(NOT TARGET holoscan::fbs_tools)
+  add_library(holoscan::fbs_tools INTERFACE IMPORTED)
+endif()
+set_target_properties(holoscan::fbs_tools PROPERTIES
+    HOLOSCAN_FLATC_VERSION "@Flatbuffers_VERSION@"
+    HOLOSCAN_SCHEMA_DIR "${_holoscan_schema_dir}"
+    HOLOSCAN_FLATBUFFERS_REFLECTION_SCHEMA "${_holoscan_reflection_schema}"
+)
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanSchemaTools.cmake")
+unset(_holoscan_reflection_schema)
+unset(_holoscan_schema_dir)
+unset(_holoscan_schema_tools_path)
+
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanGraphArtifacts.cmake")
+# Whether this SDK shipped typing stubs. A module that ships py.typed while Core does not
+# makes type checkers report unresolved Core symbols in the consumer's own run, so modules
+# should default to Core's posture. A module may still override it deliberately.
+set(HOLOSCAN_PYTHON_STUBS "@HOLOSCAN_BUILD_PYTHON_STUBS@")
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanStubGeneration.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanPythonWheel.cmake")
+if(TARGET holoscan::core)
+  set(holoscan_core_FOUND TRUE)
+endif()
+if(TARGET holoscan::holomq AND NOT TARGET holomq::holomq)
+  add_library(holomq::holomq ALIAS holoscan::holomq)
+endif()
+
+# An unqualified aggregate find exposes every optional target that was packaged. An explicit find
+# exposes only the requested target and its declared dependency closure.
+if(NOT _holoscan_requested_components)
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-experimental-params-web-tuner-targets.cmake")
+    _holoscan_load_experimental_params_web_tuner_component()
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-testing-targets.cmake")
+    _holoscan_load_testing_component()
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
+    _holoscan_load_inference_component()
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    _holoscan_load_vision_component()
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    _holoscan_load_visualization_component()
+  endif()
+else()
+  foreach(_holoscan_component IN LISTS _holoscan_requested_components)
+    if(_holoscan_component STREQUAL "config")
+      _holoscan_load_config_component()
+    elseif(_holoscan_component STREQUAL "config_io")
+      _holoscan_load_config_io_component()
+    elseif(_holoscan_component STREQUAL "experimental_params_web_tuner")
+      _holoscan_load_experimental_params_web_tuner_component()
+    elseif(_holoscan_component STREQUAL "testing")
+      _holoscan_load_testing_component()
+    elseif(_holoscan_component STREQUAL "inference")
+      _holoscan_load_inference_component()
+    elseif(_holoscan_component STREQUAL "vision")
+      _holoscan_load_vision_component()
+    elseif(_holoscan_component STREQUAL "visualization")
+      _holoscan_load_visualization_component()
+    elseif(TARGET "holoscan::${_holoscan_component}")
+      set("holoscan_${_holoscan_component}_FOUND" TRUE)
+    else()
+      set("holoscan_${_holoscan_component}_FOUND" FALSE)
+    endif()
+  endforeach()
+endif()
+check_required_components(holoscan)
+unset(_holoscan_requested_components)
+unset(_holoscan_frontdoor_install_prefix)
+unset(_holoscan_load_config_component)
+unset(_holoscan_load_config_io_component)
+unset(_holoscan_load_experimental_params_web_tuner_component)
+unset(_holoscan_load_inference_component)
+unset(_holoscan_load_vision_component)
+unset(_holoscan_load_visualization_component)
+
+unset(_holoscan_load_testing_component)

@@ -13,21 +13,21 @@
 #     PYTEST_ARGS -v --durations=0
 #     [TIMEOUT 1000]
 #     [ENVIRONMENT "VAR1=val1;VAR2=val2"]
-#     [RESOURCE_LOCK "lock1" "lock2"]  # CTest RESOURCE_LOCK applied to every
-#                                      # registered entry from this call
 #   )
 function(holoscan_add_pytest_tests)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   set(oneValueArgs TEST_DIRECTORY WORKING_DIRECTORY PREFIX TIMEOUT)
-  set(multiValueArgs FILES PYTEST_ARGS ENVIRONMENT RESOURCE_LOCK)
+  set(multiValueArgs FILES PYTEST_ARGS ENVIRONMENT)
   cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   foreach(_file IN LISTS ARG_FILES)
-    # e.g. test_conditions.py → test_conditions
+    # e.g. test_conditions.py -> test_conditions
     string(REGEX REPLACE "\\.py$" "" _basename "${_file}")
     set(_test_name "${ARG_PREFIX}.${_basename}")
 
     add_test(NAME ${_test_name}
-      COMMAND ${PYTHON_EXECUTABLE} -m pytest "${ARG_TEST_DIRECTORY}/${_file}"
+      COMMAND ${Python3_EXECUTABLE} -m pytest "${ARG_TEST_DIRECTORY}/${_file}"
               ${ARG_PYTEST_ARGS}
       WORKING_DIRECTORY ${ARG_WORKING_DIRECTORY}
     )
@@ -40,15 +40,12 @@ function(holoscan_add_pytest_tests)
 
     set_tests_properties(${_test_name} PROPERTIES
       ENVIRONMENT "${_env}"
-      FAIL_REGULAR_EXPRESSION "Fatal Python error"
+      FAIL_REGULAR_EXPRESSION "Fatal Python error;nanobind: leaked"
     )
 
     if(ARG_TIMEOUT)
       set_tests_properties(${_test_name} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
     endif()
-
-    if(ARG_RESOURCE_LOCK)
-      set_tests_properties(${_test_name} PROPERTIES RESOURCE_LOCK "${ARG_RESOURCE_LOCK}")
-    endif()
   endforeach()
+
 endfunction()

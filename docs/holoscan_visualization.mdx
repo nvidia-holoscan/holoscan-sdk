@@ -1,0 +1,222 @@
+<Note title="You will learn">
+  - What the Visualization module provides and which part of it is supported API
+  - How `HolovizOp` declares layers, binds them to input ports, and presents frames
+  - How the operator's temporal contract keeps the display running when inputs lag
+  - How to build the module and link it from an installed SDK
+</Note>
+
+Holoscan Visualization is the core module that provides
+`holoscan::visualization::HolovizOp`, a sink operator that composites image,
+geometry, text, and color-lookup-table layers and presents them as frames
+arrive or at a fixed display rate. The rendering backend is **HoloViz**, a CUDA/Vulkan renderer
+written for the Holoscan 5.x frame path: layer resources are allocated once
+from declared maxima, and the per-frame path performs no allocation.
+
+<Warning>
+  `HolovizOp` — its parameters, input ports, and the layer and sink descriptor
+  types it accepts — is the only public, supported API of this module in
+  Holoscan SDK 5.0. The HoloViz layer renderer and rendering hardware interface (RHI)
+  beneath the operator are internal: their headers install with the module but
+  carry no source or ABI compatibility promise, and they may change in any
+  release. Write applications against the operator.
+</Warning>
+
+## The operator
+
+`HolovizOp` is constructed with a fixed `LayerStack`, a `SinkDesc`, and an
+optional `FrameTrigger` and freshness bound (see
+[Temporal contract](#temporal-contract) below):
+
+```cpp
+#include <holoscan/visualization/holoviz_op.hpp>
+
+namespace viz = holoscan::visualization;
+
+viz::LayerStack layers;
+layers.add_image_layer("video", viz::ImageLayerDesc{
+    .format = viz::ImageFormat::kR8G8B8A8Unorm,
+    .max_width = 1920,
+    .max_height = 1080,
+});
+layers.add_geometry_layer("overlay", viz::GeometryLayerDesc{
+    .topologies = {viz::GeometryTopology::kRectangleList},
+    .max_primitives = 64,
+});
+
+auto holoviz = graph.op<holoscan::visualization::HolovizOp>(
+    "holoviz", std::move(layers),
+    viz::WindowSinkDesc{.title = "Demo", .width = 1920, .height = 1080});
+// decoder->output is an Output<holoscan::schema::ImageT>; detector->boxes an Output<Tensor>.
+graph.add_flow(decoder->output, holoviz->image_layer_input(0));
+graph.add_flow(detector->boxes, holoviz->tensor_layer_input(1));
+```
+
+Each call to `add_*_layer` declares one input port named by its first
+argument. Image layers are `Input<holoscan::schema::ImageT>` ports reached
+through `image_layer_input(i)`; geometry, text, and LUT layers are
+`Input<holoscan::Tensor>` ports reached through `tensor_layer_input(i)`. Both
+take the *i*-th declared layer's index, whatever mix of kinds surrounds it. Up
+to `kMaxLayerPorts` (8) layers of any kind mix may be declared per operator
+instance.
+
+An image producer publishes `schema::ImageT` with
+`Output<schema::ImageT>::emit_tensor(loan, descriptor, options)`: the loan
+carries the pixels and the descriptor the frame's `width`, `height`,
+`encoding`, `color_space`, and, for NV12, the two `plane_layouts` records that
+locate the Y and UV planes. `HolovizOp` checks these against the layer's
+`ImageLayerDesc` and drops a frame that disagrees rather than render it with
+the wrong format, matrix, or transfer function. A `color_space` of
+`UNSPECIFIED` makes no claim and is accepted into any layer.
+
+### Layers
+
+Layer descriptors are the declared maxima the renderer sizes its pools to.
+A frame may use any subregion or count up to that maximum without triggering a
+reallocation; exceeding it is rejected as a mis-declaration.
+
+| Layer | Descriptor | Input tensor | Declares | 5.0 status |
+|---|---|---|---|---|
+| Image | `ImageLayerDesc` | `schema::ImageT` (host or device pixels plus encoding, color space, plane layouts) | Pixel format, maximum width and height, color space, optional view transform | Implemented |
+| Geometry | `GeometryLayerDesc` | Host F32 rank-1 tensor of primitive coordinates | Allowed topologies (lines, crosses, rectangles, ovals), maximum primitive count, default line width | Implemented |
+| Text | `TextLayerDesc` | Host `uint8 {N, 16 + L}` tensor of fixed-width text records (`TextRunHeader` + NUL-padded UTF-8 per row) | Maximum glyph count (UTF-8 bytes per frame); position unit (`normalized_coordinates`: framebuffer pixels by default, fractions of the framebuffer when set) | Implemented |
+| LUT | `LUTLayerDesc` | Device index tensor (for example a segmentation mask) | LUT size, maximum width and height | Declaration only; frame path in a later release |
+
+Image layers accept the formats in the `ImageLayerDesc` header table: 8- and
+16-bit RGBA/BGRA and single-channel formats, RGB8, and the YUV formats `kNV12`
+and `kYUYV422`, which require `yuv_model` and `yuv_range` in the descriptor.
+sRGB decoding (`ColorSpace::kSRGBNonlinear`) is available for 8-bit RGBA/BGRA.
+
+### Sinks
+
+`SinkDesc` states where rendered frames go. All three kinds have a present
+path:
+
+- `WindowSinkDesc` presents into a compositor-managed window (decorated or
+  fullscreen).
+- `ExclusiveDisplaySinkDesc` scans out directly to a display no display server
+  owns (Linux DRM only). See
+  [Enable exclusive display](/holoscan/sdk-user-guide/setup/additional-setup/exclusive-display)
+  for the display-side prerequisites.
+- `CudaSinkDesc` renders into CUDA device memory instead of a display: every
+  frame is emitted on `HolovizOp::output()` as a `schema::ImageT` whose `data`
+  tensor comes from a runtime tensor pool, so a second operator (for example
+  another `HolovizOp` that drives a window) consumes it without a copy. The
+  frame carries its wire semantics: `width`/`height` are the sink's extent,
+  `encoding`/`color_space` follow the sink `format` (`MONO8`, `RGBA8`,
+  `BGRA8`, `MONO16`, `RGBA16`; the sRGB formats are stamped `SRGB`), and the
+  tensor is the format's native element type in `{H, W}` (single-channel) or
+  `{H, W, 4}` layout — `uint16 {H, W}` for `kR16Unorm`, for instance. The
+  deployment must bind the output port's CUDA device with
+  `CompileOptions::deployment.bind_tensor_output_device`. The
+  `cuda_sink_example` under `modules/visualization/examples/operators` chains
+  two `HolovizOp` instances this way.
+
+## Temporal contract
+
+By default `HolovizOp` renders one frame per sample admitted on layer 0
+(`LayerTrigger{0}`), so presentation follows the driving producer. Pass a
+`ClockTrigger{.period = ...}` as the third constructor argument to render at a
+fixed cadence instead; a layer-less operator requires it.
+
+- `LayerTrigger{n}` lowers to `OnEach` on layer *n*'s port, which carries no
+  selector; `ClockTrigger` lowers to `OnClock` with every layer selected.
+- Every other layer input uses `LatestWithin{.max_age = max_input_age}`
+  (default 100 ms).
+- A missing or stale image layer applies `ReuseLast` for the same bound, so
+  the last frame stays on screen; other layer kinds apply `SafeDefault` and
+  are skipped for that activation.
+
+<Tip>
+  When a side producer publishes slower than the trigger layer — a 30 fps
+  overlay under a 60 fps camera — pass a wider `max_input_age` to the
+  constructor; otherwise that layer is missing on most activations. Connect
+  the trigger edge as a depth-1 drop-oldest mailbox so a sink stall costs at
+  most one stale frame. See
+  [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+  for the selector and missing-data semantics.
+</Tip>
+
+Graphs require explicit partition membership for the operator, for example
+`graph.partition("holoviz").add(holoviz)`.
+HoloViz backend errors are translated into the Holoscan error domain at the
+operator lifecycle boundary, so they surface through the same
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+path as any other operator failure.
+
+## Build, test, and consume
+
+`HOLOSCAN_BUILD_VISUALIZATION` defaults to `ON`. Rendering needs a
+CUDA-capable GPU and a Vulkan 1.3 capable driver; headless presentation
+additionally needs `libegl1`. The Vulkan SDK is not a build prerequisite. Build
+and test through the SDK-level runner:
+
+```bash
+./run build --config "-DHOLOSCAN_BUILD_VISUALIZATION=ON -DHOLOSCAN_BUILD_TESTS=ON"
+./run test --options "-L holoviz"
+```
+
+The module can also be configured as a top-level project against an installed
+SDK (`cmake -S modules/visualization -B build -Dholoscan_ROOT=<install>`), which
+is how module CI exercises it on Linux and Windows.
+
+Installed consumers link the operator target from the main Holoscan package;
+the HoloViz renderer is carried as a private dependency of the operator, while
+`holoscan::sensor_io` (the `schema::ImageT` port type) is a public one that the
+`visualization` component loads for you:
+
+```cmake
+find_package(holoscan 5 COMPONENTS visualization REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::core holoscan::visualization::op_holoviz)
+```
+
+Standalone consumers can also load the Visualization module package:
+
+```cmake
+find_package(holoscan-visualization
+    HINTS "/path/to/holoscan/lib/cmake/holoscan"
+    REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::visualization)
+```
+
+Replace the example path with the SDK's shared package directory. The module
+package config is installed under `lib/cmake/holoscan`, rather than a
+package-named directory, so a bare `find_package(holoscan-visualization)` may
+not find it through the usual package-name search. Set
+`holoscan-visualization_DIR` to the shared directory, or pass it through
+`HINTS` as shown.
+
+## Troubleshooting
+
+HoloViz reports these conditions through the operator's error or the log. The
+messages below are quoted as HoloViz prints them; placeholders are in angle
+brackets.
+
+| Symptom | Cause and fix |
+|---|---|
+| `[holoviz] No window system route: DISPLAY, WAYLAND_DISPLAY, WAYLAND_SOCKET and XDG_RUNTIME_DIR are all unset.` | A `WindowSinkDesc` needs an X11 or Wayland session, and the process has none (an SSH shell without forwarding, or a container started without display forwarding). Run from the desktop session, or forward the display into the container; `./run launch` forwards X11 and Wayland automatically when `DISPLAY` or `WAYLAND_DISPLAY` is set on the host. Pipelines without a desktop can use `CudaSinkDesc` or `ExclusiveDisplaySinkDesc` instead. |
+| `Failed to initialize GLFW` | A display variable is set, but the window system refused the connection. In a container this usually means the X11 socket (`/tmp/.X11-unix`) or the X authorization cookie is missing; `./run launch` mounts both. |
+| `[holoviz] No matching CUDA device found for Vulkan adapter: <name>` (warning) | HoloViz renders only on Vulkan adapters that are also CUDA devices, so it skips other GPUs (for example an integrated Intel or AMD GPU, or a software renderer). The warning is harmless when an NVIDIA adapter is also found. |
+| `[holoviz] No suitable Vulkan adapters found.` | No Vulkan adapter matched a CUDA device: the NVIDIA Vulkan driver is not installed or not visible. In a container, the NVIDIA runtime must expose the graphics libraries; the SDK container image sets `NVIDIA_DRIVER_CAPABILITIES=all`. |
+| `[holoviz] No suitable adapter found for surface.` | No CUDA-capable adapter can present to the window, which happens when another GPU drives the display, as on hybrid laptops where the integrated GPU owns the panel. Connect the display to the NVIDIA GPU, or enable [PRIME render offload](https://download.nvidia.com/XFree86/Linux-x86_64/535.54.03/README/primerenderoffload.html) in the NVIDIA driver. |
+| `[holoviz] Display "<name>" not found, using the primary display instead` (warning) | A fullscreen `display_name` must match a window-system monitor name exactly. These are window-system output names such as the X11/RandR `DP-0`, not the DRM connector names used for exclusive display (`DP-2`). Use one of the names in the `Available displays` list that follows the warning. |
+| `[holoviz] No monitor is available for a fullscreen window` | The window system reports no monitor. Connect or enable a monitor, or present to a decorated window (`fullscreen = false`). |
+| `HolovizOp: __GL_SYNC_DISPLAY_DEVICE is unset; ...` (info) | A fullscreen window on a named monitor is paced on the primary output's vblank. If that monitor is not the primary output, export the variable before launching, as the message shows; see [Enable G-SYNC](/holoscan/sdk-user-guide/setup/additional-setup/gsync). |
+| `HolovizOp::compute: activation stream is on CUDA device <n>, but the HoloViz device was created on CUDA device <m>; ...` | On a multi-GPU host, the operator's partition runs on a different GPU than the one HoloViz renders on (the GPU that presents to the window or display). Place the `HolovizOp` partition on that GPU; see [Deployment bindings](/holoscan/sdk-user-guide/configuration/configuring-applications#deployment-bindings-requesting-placement-at-compile-time). |
+
+For errors from `ExclusiveDisplaySinkDesc` (display ownership, DRM master,
+display names, and integrated-GPU mode limits), see the troubleshooting table in
+[Enable exclusive display](/holoscan/sdk-user-guide/setup/additional-setup/exclusive-display#troubleshooting).
+
+## Recap
+
+- The Visualization module ships `HolovizOp`; the HoloViz renderer and RHI
+  underneath are internal and may change.
+- Layers and the sink are declared once at construction; each layer becomes a
+  typed input port — `schema::ImageT` for image layers via
+  `image_layer_input(i)`, `Tensor` for the rest via `tensor_layer_input(i)`.
+- The operator renders per arriving frame on the trigger layer by default (or
+  on a `ClockTrigger`), reuses the last image when a layer is late, and skips
+  other stale layers.
+- Build with `HOLOSCAN_BUILD_VISUALIZATION`; consume through
+  `holoscan::visualization::op_holoviz` from the installed Holoscan package.
+- Next: [Holoscan Modules](/holoscan/sdk-user-guide/modules).

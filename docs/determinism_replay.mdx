@@ -1,0 +1,298 @@
+Real-time pipelines are notoriously hard to reproduce: wall-clock jitter, thread
+scheduling, and sensor timing all conspire to make every run slightly different.
+Holoscan attacks this problem at the type level. The runtime distinguishes three
+kinds of "when" — physical time, logical order, and activation identity — and
+keeps the whole runtime on a single, swappable `Clock` abstraction, so the same
+graph can run against real time in production and against manually driven time
+in a deterministic replay.
+
+This page covers the three time types in depth, the clocks you substitute for
+deterministic replay, the discipline of stamping capture time on emitted
+samples, and — importantly — what replay-stable ordering does and does not
+promise today. If you have not yet read the introduction to clocks, start with
+[Time & Clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+<Warning>
+  **Beta primitives; full replay tooling still evolving.** The deterministic
+  execution controls on this page — the time types, clock APIs, named-clock
+  resolution, and per-activation `Tag`/`TagTime` stamping — ship today and are
+  exercised end to end when a pipeline runs in-process. They are Beta: the API
+  may still evolve in upcoming releases. The full capture/replay tooling built
+  on top of these primitives is **not** part of this release — do not read the
+  Beta primitives as a finished replay product.
+</Warning>
+
+**Complete C++ example:** [`examples/experimental/determinism_replay/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/determinism_replay/cpp)
+
+<Note title="You will learn">
+  - Why Holoscan models "when" as three distinct types instead of one timestamp
+  - `TimePoint`: physical time, valid only within one clock domain
+  - `TagTime`: totally ordered logical time that is stable across replays
+  - `Tag`: activation identity — equality and hashing only, never ordering
+  - How `ManualClock` and `SyntheticClock` drive deterministic replay
+  - The capture-time stamping discipline, and the limits of today's replay guarantees
+</Note>
+
+## Three kinds of "when"
+
+All three types answer a question about time, but they answer *different*
+questions. Confusing them is the most common time-related bug, so the types are
+deliberately incompatible.
+
+| Type | Answers | Ordered? | Where you get it |
+|---|---|---|---|
+| `TimePoint` | "At what physical instant?" | Only within one clock domain (no `<` operator) | `clock.now()`, `clock.at_ns(ts)`, `ctx.activation_time()`, `sample.metadata.capture_time()` |
+| `TagTime` | "At what deterministic logical position?" | **Yes** — total order via `operator<` | `ctx.tag_time()` |
+| `Tag` | "*Which* activation is this?" | **No** — equality and hashing only | `ctx.tag()` |
+
+### `TimePoint` — physical time, one domain at a time
+
+A `TimePoint` is a signed nanosecond coordinate **plus a `ClockId`** naming the
+clock domain it belongs to:
+
+```cpp
+struct TimePoint {
+  std::int64_t timestamp_ns{};  // signed nanosecond coordinate in clock_id
+  ClockId clock_id{};           // resolved domain, or zero when absent
+};
+```
+
+Because two clocks can run at different rates and offsets, a `TimePoint` has
+**no total ordering across domains**. The type does not even define `operator<`
+— you compare `timestamp_ns` fields yourself, and only when both values share a
+`ClockId` (or after an admitted clock conversion declared at graph-authoring
+time). This is what physical time is *for*: measuring latency, checking
+freshness against a budget, evaluating maximum start delays, and recording
+capture instants.
+
+<Warning>
+  **Absent time is a zero `ClockId`, not the epoch.** A default-constructed
+  `TimePoint` — or a received sample that carries no capture time — means "no
+  time recorded." Always check `.valid()` before subtracting timestamps;
+  treating the zero value as "midnight, January 1970" silently produces
+  billions of nanoseconds of imaginary latency.
+</Warning>
+
+### `TagTime` — logical order, stable across replays
+
+A `TagTime` is the deterministic position of an activation in the run's logical
+timeline: a signed `logical_ns` coordinate with a `microstep` tie-breaker for
+candidates that share the same logical nanosecond. Unlike `TimePoint`, it **is
+totally ordered** — `operator<` compares `logical_ns` first, then `microstep`:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  const holoscan::TagTime order = ctx.tag_time();  // totally ordered logical coordinate
+  // Two replays of the same recorded run produce the same TagTime order,
+  // even if the wall clock jitters between them.
+  log_ordered_event(order, /* ... */);
+  return {};
+}
+```
+
+Do **not** read `logical_ns` as nanoseconds of real time. `TagTime` is ordering
+evidence, not physical or capture time: it tells you that this activation
+logically precedes that one, reproducibly, regardless of how long either
+actually took. That property is exactly what makes it the right key for
+replay-stable logs, ordered event streams, and any reasoning about logical
+before/after.
+
+### `Tag` — identity, not time at all
+
+A `Tag` names *one specific activation*: a nonzero `sequence` within a nonzero
+execution `generation`. A successfully published lifecycle restart advances the
+generation and restarts the sequence, so the pair uniquely identifies an
+activation within its operator and run. `Tag` supports **equality and hashing
+only** — there is deliberately no ordering, because sequence and generation are
+identity fields, not temporal coordinates. Sorting by them is meaningless (and
+the type will not let you).
+
+```cpp
+const holoscan::Tag id = ctx.tag();       // {sequence, generation}
+telemetry_.record(id, measurement);       // correlate results back to this activation
+```
+
+Use `Tag` for correlation, per-activation keying (it has a `std::hash`
+specialization), and deduplication. A useful analogy: `TimePoint` is the wall
+clock in the lab, `TagTime` is the frame number on a deterministic simulation
+timeline, and `Tag` is the serial number stamped on this one run of the
+operator.
+
+## Manual and synthetic clocks for deterministic replay
+
+The reason time is a first-class, explicitly modeled object — rather than a
+hidden call to the OS clock — is that the entire runtime reads the same `Clock`
+abstraction: periodic triggers, temporal-contract freshness decisions, and the
+interpretation of timestamps that travel with data. Swap the clock, and the
+*same* operator and graph code runs unchanged in real time or in deterministic
+simulated time.
+
+Two clock implementations exist specifically for tests and replay:
+
+- **`ManualClock`** — time moves only when you move it. `advance_to()` jumps to
+  an absolute timestamp and `advance_by()` steps forward by a delta;
+  `sleep_for()` / `sleep_until()` model scheduler progression by moving the
+  clock monotonically forward to the wake-up point. Drive it from a single
+  controlling thread — the usual stepping pattern in a test harness.
+- **`SyntheticClock`** — time is synthesized from a recording or simulation.
+  Unlike `ManualClock`, sleeping threads *block* until another thread advances
+  the clock past their target with `advance_to()` / `advance_by()`. That
+  releases multiple workers in lock-step as synthesized time moves forward,
+  which is what you want when replaying a multi-operator recording.
+
+Substituting one is a graph-authoring concern, done in the same place you would
+declare any named clock:
+
+```cpp
+// Production: the default clock tracks real (steady) time.
+graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+
+// Replay/test: same graph, same operators — only the time base changes.
+graph.set_default_clock(graph.add_clock<holoscan::ManualClock>("replay-clock"));
+```
+
+To drive the clock from a test harness while the graph reads it, construct the
+clock yourself and share the live instance with `bind_shared_clock()`:
+
+```cpp
+auto clock = std::make_shared<holoscan::ManualClock>(/*initial_timestamp_ns=*/0);
+graph.set_default_clock(graph.bind_shared_clock("replay-clock", clock));
+// ... later, from the harness:
+clock->advance_by(std::chrono::milliseconds(16));  // step one 60 Hz frame
+```
+
+None of this changes how an operator reads time. Inside `compute()` you always
+receive a borrowed, read-only `ClockRef` via `ctx.clock()`, exposing only
+`now()`, `at_ns()`, `id()`, and `capabilities()`. The restriction is the point:
+a `ClockRef` cannot sleep (waiting belongs to the scheduler, expressed through
+triggers) and cannot advance the clock. If an operator could move the shared
+time base, it would perturb every trigger, temporal selector, and timestamp in
+the graph — and break deterministic replay, where the harness, not an operator,
+drives time. An operator *observes* time; it never *changes* it.
+
+<Warning>
+  `now()` returns `expected<TimePoint, Error>` and you must check it — a clock
+  that is not readable, or a stale activation-scoped reference, returns an
+  error. Under a manually driven clock this matters more, not less: a harness
+  bug that leaves the clock unresolved surfaces here. `HOLOSCAN_TRY(auto t,
+  clock.now());` keeps the check to one line — see
+  [Errors as Values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+</Warning>
+
+## The capture-time stamping discipline
+
+Replay is only as good as the timestamps recorded on the way in. The discipline
+is simple: **preserve the true acquisition instant, and never substitute a
+convenient one.**
+
+When your operator emits a sample derived from a sensor reading, stamp the
+sample's `capture_time` with the instant the data was *acquired* — the camera
+or IMU driver's hardware timestamp — not the instant your operator happened to
+process it. `at_ns()` exists for exactly this: it takes a nanosecond count you
+already have and labels it with the clock's domain, producing a comparable
+`TimePoint`. It never reads the clock, never fails, and never allocates.
+
+```cpp
+const std::int64_t sensor_hw_ns = /* acquisition timestamp from the camera driver */;
+
+holoscan::EmitOptions options;
+options.capture_time = clock.at_ns(sensor_hw_ns);  // the true acquisition instant
+HOLOSCAN_TRY(out_.emit(std::move(frame), options));
+```
+
+The rule of thumb from the clocks introduction applies here with force:
+**`now()` measures, `at_ns()` labels.** Calling `clock.now()` to stamp
+`capture_time` records when your operator ran, which drifts from acquisition by
+the full upstream latency — and that error is then baked into every downstream
+freshness decision and every future replay of the recording.
+
+Three further points of discipline:
+
+- **Forward, don't re-stamp.** An operator that transforms a sample should
+  propagate the incoming `capture_time()` onto its output, as the fusion stage
+  of the `camera_imu_control` example does. Re-stamping at each hop
+  destroys end-to-end age measurement.
+- **Omission is honest absence.** `EmitOptions::capture_time` is a
+  `std::optional<TimePoint>`. If you genuinely have no acquisition time, leave
+  it unset — the runtime never performs an implicit clock read or timestamp
+  substitution on your behalf, and downstream code checks `.valid()`.
+- **Stay in an admitted domain.** A supplied capture time must belong to a
+  clock domain the compiled plan admitted for that output binding. Graph
+  authors can enforce this: declaring a required capture-time domain on a
+  binding makes the plan reject samples stamped from the wrong clock, and
+  event-time input selection in
+  [temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+  requires genuine capture time by default.
+
+For a source operator without a hardware timestamp, the activation time is the
+closest honest stand-in, as in the `camera_imu_control` example's camera
+stage:
+
+```cpp
+return frame.emit(
+    std::move(*loan),
+    holoscan::EmitOptions{.capture_time = context.activation_time()});
+```
+
+## What replay-stable ordering promises — and what it does not
+
+`TagTime` is the load-bearing guarantee: two runs of the same graph over the
+same inputs produce the same `TagTime` order for an operator's activations,
+even if the wall clock jitters between runs. Concretely, today that means:
+
+**Promised:**
+
+- Within one operator, `TagTime` values from a run form a strict total order
+  (`logical_ns`, then `microstep`), safe to feed to any ordered algorithm.
+- That order is deterministic across replays of the same graph and inputs —
+  it is the coordinate to sort logs by, key ordered event streams with, and
+  diff two runs against.
+- `Tag` identities remain valid correlation keys across a run, including
+  across lifecycle restarts (the generation bump makes pre- and post-restart
+  activations distinguishable).
+
+**Not promised:**
+
+- **No global cross-operator timeline.** A `TagTime` is *local* ordering
+  evidence for its operator's activation candidates. Comparing `TagTime`
+  values from two different operators compiles — the type is totally ordered —
+  but the runtime does not today define a graph-wide logical timeline that
+  makes such a comparison meaningful.
+- **No physical-time reproduction.** Replay reproduces logical order, not
+  durations. `TimePoint` readings, latencies, and ages will differ between a
+  real-time run and a replay; only the recorded `capture_time` stamps carry
+  physical time faithfully across.
+- **No thread-interleaving determinism.** Operators on different execution
+  lanes may still interleave differently between runs; the guarantee is the
+  per-operator logical order, not the OS schedule.
+- **No cross-run comparison of raw `Tag` fields.** Identical numeric
+  `{sequence, generation}` pairs from different operators or different runs
+  are unrelated; a `Tag` is meaningful only within its run session and
+  operator.
+
+<Warning>
+  **Do not order by `Tag`, and do not treat `TagTime` as wall time.** Sorting
+  activations by `Tag::sequence` happens to look right until a lifecycle
+  restart resets the sequence within a new generation; and reading
+  `TagTime::logical_ns` as elapsed real nanoseconds misinterprets a logical
+  coordinate as a physical one. Use `TagTime` for order, `Tag` for identity,
+  and `TimePoint` for physical time — each exactly once.
+</Warning>
+
+## Recap
+
+- Holoscan separates physical time (`TimePoint`), logical order (`TagTime`),
+  and activation identity (`Tag`); the types are deliberately incompatible.
+- `TimePoint` carries a `ClockId` and has no cross-domain ordering; compare
+  timestamps only within one domain, and check `.valid()` first.
+- `TagTime` is totally ordered and replay-stable — the key for reproducible
+  ordering. `Tag` is equality-and-hash-only identity.
+- Swap in `ManualClock` (harness-stepped) or `SyntheticClock` (lock-step
+  release of blocked sleepers) to run the same graph in deterministic time;
+  operators still see only a read-only `ClockRef`.
+- Stamp `capture_time` with the true acquisition instant via `at_ns()`;
+  forward it downstream; never substitute `now()`.
+- Replay guarantees per-operator logical order — not a global timeline,
+  physical durations, or thread interleaving.
+
+Next: [Advanced Temporal Patterns](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns).

@@ -7,7 +7,7 @@ On NVIDIA Jetson developer kits (such as [Jetson AGX Thor](https://www.nvidia.co
 
 <Note>
 
-This guide targets Jetson developer kits running JetPack / Jetson Linux. For production deployments on the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) developer kit, a more aggressively minimized runtime can be built with [OpenEmbedded/Yocto](/holoscan/sdk-user-guide/setup/additional-setup/deployment-stack).
+This guide targets Jetson developer kits running [JetPack / Jetson Linux 7](https://developer.nvidia.com/embedded/jetpack). For production deployments on the [NVIDIA Jetson AGX Thor](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-thor/) and [NVIDIA Jetson AGX Orin](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) platforms, a more aggressively minimized runtime can be built with [Yocto on Jetson](/holoscan/sdk-user-guide/yocto).
 
 </Note>
 
@@ -15,7 +15,7 @@ This guide targets Jetson developer kits running JetPack / Jetson Linux. For pro
 
 ## Install a Real-Time Kernel
 
-The kernel that ships with JetPack uses voluntary preemption. NVIDIA also distributes a `PREEMPT_RT` (real-time) kernel for Jetson Linux that lets the scheduler preempt lower-priority work more aggressively, lowering worst-case scheduling latency. This pairs well with Holoscan's [Linux real-time scheduling policies](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-app-thread-pools-realtime) (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`): the SDK only *requests* a policy from the kernel, so a real-time kernel gives those requests the most consistent effect.
+The kernel that ships with JetPack uses voluntary preemption. NVIDIA also distributes a `PREEMPT_RT` (real-time) kernel for Jetson Linux that lets the scheduler preempt lower-priority work more aggressively, lowering worst-case scheduling latency. This pairs well with Holoscan's [Linux real-time scheduling policies](/holoscan/sdk-user-guide/performance/performance-considerations#host-cpu-isolation) (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`): the SDK only *requests* a policy from the kernel, so a real-time kernel gives those requests the most consistent effect.
 
 The real-time kernel installs alongside the standard kernel through an over-the-air (OTA) update, so you can switch between them without reflashing. For the authoritative install procedure and supported platforms, see the **Real-Time Kernel** page (under *Kernel Customization*) of the Jetson Linux Developer Guide — for example, the [R39.2 release](https://docs.nvidia.com/jetson/archives/r39.2/DeveloperGuide/SD/Kernel/RealTimeKernel.html). If that version-specific link has moved, browse to the guide for your release from the [Jetson Software documentation](https://docs.nvidia.com/jetson/index.html) hub. The package set differs slightly between JetPack 6 (Jetson Orin) and JetPack 7 (Jetson Thor), so use the guide that matches the release installed on your device.
 
@@ -27,7 +27,7 @@ NVIDIA provides the Jetson real-time kernel with **Developer-Preview quality**. 
 
 <Tip>
 
-A real-time kernel reduces scheduling *jitter*, but the largest latency gains come from combining it with CPU isolation and real-time scheduling policies in your application. See [Rt Scheduling Prerequisites](/holoscan/sdk-user-guide/components/schedulers#rt-scheduling-prerequisites) for the host-and-container privilege checklist and [Host CPU isolation](/holoscan/sdk-user-guide/performance/performance-considerations#host-cpu-isolation) for boot-time core isolation (`isolcpus`, `nohz_full`, `rcu_nocbs`) and the CPU frequency governor. On Jetson, the kernel command line lives in `/boot/extlinux/extlinux.conf` rather than GRUB.
+A real-time kernel reduces scheduling *jitter*, but the largest latency gains come from combining it with CPU isolation and real-time scheduling policies in your application. See Rt Scheduling Prerequisites for the host-and-container privilege checklist and [Host CPU isolation](/holoscan/sdk-user-guide/performance/performance-considerations#host-cpu-isolation) for boot-time core isolation (`isolcpus`, `nohz_full`, `rcu_nocbs`) and the CPU frequency governor. On Jetson, the kernel command line lives in `/boot/extlinux/extlinux.conf` rather than GRUB.
 
 </Tip>
 

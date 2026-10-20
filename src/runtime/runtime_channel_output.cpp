@@ -1,0 +1,2213 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <limits>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+
+#include <holoscan/profiler/nvtx3.hpp>
+
+#include "../channel/channel_common.hpp"
+#include "../channel/holomq_tensor.hpp"
+#include "../channel/payload_descriptor_wire.hpp"
+#include "../channel/pod_codec.hpp"
+#include "runtime_channel_session_impl.hpp"
+#include "runtime_fixture_observation.hpp"
+
+namespace holoscan::detail {
+
+namespace {
+
+// Process-wide identities keep a retained error from matching another publication or session.
+// Exhaustion fails closed without wrapping or reusing an identity.
+[[nodiscard]] std::uint64_t next_publication_failure_provenance() noexcept {
+  static std::atomic<std::uint64_t> next{1U};
+  auto value = next.load(std::memory_order_relaxed);
+  while (value != std::numeric_limits<std::uint64_t>::max()) {
+    if (next.compare_exchange_weak(value, value + 1U, std::memory_order_relaxed)) {
+      return value;
+    }
+  }
+  return 0U;
+}
+
+}  // namespace
+
+// Output loans and process-local or transported publication transactions.
+
+void RuntimeChannelSession::Impl::LoanControl::release_reference() noexcept {
+  if (references.fetch_sub(1U, std::memory_order_acq_rel) == 1U) {
+    type_ops->destroy_value(value.data());
+    delete this;
+  }
+}
+
+void RuntimeChannelSession::Impl::LoanControl::reset_value() noexcept {
+  type_ops->destroy_value(value.data());
+  type_ops->construct_value(value.data());
+}
+
+void RuntimeChannelSession::Impl::LoanControl::retire_live_authority() noexcept {
+  if (!live) {
+    return;
+  }
+  live = false;
+  if (live_credit != nullptr) {
+    live_credit->fetch_sub(1U, std::memory_order_acq_rel);
+  }
+  reset_value();
+  release_reference();
+}
+
+void RuntimeChannelSession::Impl::LoanControl::cancel(void* opaque) noexcept {
+  auto* control = static_cast<LoanControl*>(opaque);
+  control->retire_live_authority();
+}
+
+RuntimeChannelSession::Impl::ProcessLocalPublicationScope::ProcessLocalPublicationScope(
+    Impl& session, const bool process_local, const VertexId owner,
+    const bool emit_admitted) noexcept
+    : session_(process_local ? &session : nullptr),
+      in_flight_(session_ != nullptr && session.track_concurrent_process_local_publications_),
+      emit_admitted_(emit_admitted) {
+  // Delivery inside emit() may still leave a blocked or pending head in transport, so every
+  // process-local publication marks its owner for the next activation cut.
+  if (session_ != nullptr) {
+    if (ActivationOwnerState* const activation_owner = session.find_activation_owner(owner)) {
+      activation_owner->transported_since_cut = true;
+    } else {
+      unowned_ = true;
+    }
+  }
+  if (in_flight_) {
+    session_->process_local_publications_in_flight_.fetch_add(1U, std::memory_order_acq_rel);
+  }
+}
+
+RuntimeChannelSession::Impl::ProcessLocalPublicationScope::
+    ~ProcessLocalPublicationScope() noexcept {
+  if (session_ != nullptr) {
+    invalidate();
+  }
+}
+
+void RuntimeChannelSession::Impl::ProcessLocalPublicationScope::accept(
+    const std::uint32_t deliveries,
+    const std::span<SubscriberState* const> activation_cut_subscribers,
+    const std::span<SubscriberState* const> emit_recipients,
+    const std::uint64_t publication_sequence) noexcept {
+  if (session_ != nullptr) {
+    Impl* const session = session_;
+    session_->record_process_local_publication(deliveries, activation_cut_subscribers);
+    if (unowned_) {
+      session_->require_session_cut();
+    }
+    finish();
+    if (emit_admitted_) {
+      session->materialize_experimental_publication(
+          DrainScope::kRecipients, emit_recipients, publication_sequence);
+    }
+  }
+}
+
+void RuntimeChannelSession::Impl::ProcessLocalPublicationScope::reject() noexcept {
+  finish();
+}
+
+void RuntimeChannelSession::Impl::ProcessLocalPublicationScope::invalidate() noexcept {
+  if (session_ != nullptr) {
+    Impl* const session = session_;
+    session_->invalidate_process_local_progress();
+    if (unowned_) {
+      session_->require_session_cut();
+    }
+    finish();
+    if (emit_admitted_) {
+      session->materialize_experimental_publication(DrainScope::kInventory);
+    }
+  }
+}
+
+void RuntimeChannelSession::Impl::ProcessLocalPublicationScope::finish() noexcept {
+  if (session_ == nullptr) {
+    return;
+  }
+  if (in_flight_) {
+    const std::uint64_t previous =
+        session_->process_local_publications_in_flight_.fetch_sub(1U, std::memory_order_acq_rel);
+    static_cast<void>(previous);
+    assert(previous != 0U);
+  }
+  session_ = nullptr;
+}
+
+[[nodiscard]] bool RuntimeChannelSession::Impl::OutputState::tensor_payload() const noexcept {
+  return type_ops == runtime_port_type_ops<Tensor>();
+}
+
+[[nodiscard]] bool RuntimeChannelSession::Impl::OutputState::tensor_schema_payload()
+    const noexcept {
+  return type_ops->codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema;
+}
+
+void RuntimeChannelSession::Impl::OutputState::mark_emit_nvtx(
+    const std::uint64_t sequence) const noexcept {
+  if (emit_nvtx_message == nullptr || source_identity_nvtx_string == nullptr) {
+    return;
+  }
+  holoscan::profiler::EmitReceiveNVTXPayload message_payload{
+      .source_identity = source_identity_nvtx_string,
+      .sequence = sequence,
+  };
+  const nvtx3::payload_data payload_data{message_payload};
+  nvtx3::mark_in<holoscan::profiler::holoscan_operator_domain>(nvtx3::message{emit_nvtx_message},
+                                                               payload_data);
+}
+
+void RuntimeChannelSession::Impl::OutputState::record_emit() noexcept {
+  // Record an accepted emit, or one that may have reached a receiver. Its sequence is never reused,
+  // including after partial or uncertain delivery. Rejected attempts are safe to retry unchanged.
+  mark_emit_nvtx(next_sequence);
+  ++next_sequence;
+  ++emitted_this_activation;
+}
+
+RuntimeChannelSession::Impl::OutputState::~OutputState() {
+  for (LoanControl* loan : loans) {
+    loan->owner = nullptr;
+    loan->live_credit = nullptr;
+    loan->release_reference();
+  }
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
+    expected<void, Error> refreshed, const bool submitted) noexcept {
+  if (refreshed) {
+    return {};
+  }
+  if (!submitted) {
+    return make_unexpected(std::move(refreshed).error());
+  }
+  record_emit();
+  return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+}
+
+[[nodiscard]] bool RuntimeChannelSession::Impl::wait_for_direct_capacity(
+    SubscriberState& subscriber) noexcept {
+  const auto has_capacity = [&]() noexcept {
+    const std::scoped_lock lock{subscriber.mutex};
+    return blocking_typed_capacity_locked(subscriber) != 0U;
+  };
+  if (has_capacity()) {
+    return true;
+  }
+  count_phase(phase_counters_, RuntimePhaseCounter::kChannelDirectPublicationCapacityWaits);
+  // Yield briefly for a consumer that is already retiring, then poll at a short fixed period.
+  constexpr std::uint32_t kYieldAttempts = 64U;
+  constexpr std::chrono::microseconds kPollPeriod{20};
+  const auto deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::nanoseconds{RuntimeChannelBindingAccess::kGraphBlockingRetryBudgetNs};
+  for (std::uint32_t attempt = 0U;; ++attempt) {
+    if (cancel_requested_.load(std::memory_order_acquire) ||
+        terminal_error_.load(std::memory_order_acquire) != ErrorCode::kSuccess) {
+      break;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      break;
+    }
+    // Checked after the budget, so only a wait that the stop actually ends counts as cancelled.
+    if (publication_stop_requested()) {
+      // An accepted stop closes callback admission, so the consumer may never retire again.
+      count_phase(phase_counters_, RuntimePhaseCounter::kChannelPublicationStopAborts);
+      channel_internal::note_publication_cancelled();
+      return false;
+    }
+    if (attempt < kYieldAttempts) {
+      std::this_thread::yield();
+    } else {
+      std::this_thread::sleep_for(std::min<std::chrono::nanoseconds>(deadline - now, kPollPeriod));
+    }
+    if (has_capacity()) {
+      return true;
+    }
+  }
+  count_phase(phase_counters_, RuntimePhaseCounter::kChannelDirectPublicationCapacityWaitsExpired);
+  return false;
+}
+
+// Keep credit scanning, same-lane refusal, and bounded cancellation polling together so a
+// wait never outlives its retry budget or treats a blocked recipient as able to make progress.
+template <typename Endpoints>
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::await_publication_credits(
+    const Endpoints& endpoints) noexcept {
+  const auto first_without_credit = [&]() noexcept -> const SubscriberState* {
+    for (const auto& endpoint : endpoints) {
+      for (const SubscriberState* const subscriber : endpoint.credit_subscribers) {
+        // EOS may advance the admitted sequence past the last data sample sent.
+        const std::uint64_t admitted =
+            subscriber->admitted_sequence.load(std::memory_order_acquire);
+        const std::uint64_t in_flight =
+            endpoint.last_sent_sequence > admitted ? endpoint.last_sent_sequence - admitted : 0U;
+        if (in_flight >= subscriber->drain_capacity) {
+          return subscriber;
+        }
+      }
+    }
+    return nullptr;
+  };
+  const SubscriberState* blocked = first_without_credit();
+  if (blocked == nullptr) {
+    return {};
+  }
+  count_phase(phase_counters_, RuntimePhaseCounter::kChannelPublicationCreditWaits);
+  // A recipient on this producer's lane cannot retire while its producer waits.
+  if (blocked->credit_cross_lane && owner_progress_wake_enabled()) {
+    constexpr std::uint32_t kYieldAttempts = 64U;
+    constexpr std::chrono::microseconds kPollPeriod{20};
+    const auto deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::nanoseconds{RuntimeChannelBindingAccess::kGraphBlockingRetryBudgetNs};
+    for (std::uint32_t attempt = 0U;; ++attempt) {
+      if (cancel_requested_.load(std::memory_order_acquire) ||
+          terminal_error_.load(std::memory_order_acquire) != ErrorCode::kSuccess) {
+        break;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        break;
+      }
+      // Checked after the budget, so only a wait that the stop actually ends counts as cancelled.
+      if (publication_stop_requested()) {
+        // An accepted stop closes callback admission, so the recipient may never retire again.
+        count_phase(phase_counters_, RuntimePhaseCounter::kChannelPublicationStopAborts);
+        channel_internal::note_publication_cancelled();
+        break;
+      }
+      if (attempt < kYieldAttempts) {
+        std::this_thread::yield();
+      } else {
+        std::this_thread::sleep_for(
+            std::min<std::chrono::nanoseconds>(deadline - now, kPollPeriod));
+      }
+      blocked = first_without_credit();
+      if (blocked == nullptr) {
+        return {};
+      }
+      if (!blocked->credit_cross_lane) {
+        break;
+      }
+    }
+  }
+  count_phase(phase_counters_, RuntimePhaseCounter::kChannelPublicationCreditRejections);
+  return make_unexpected(Error{ErrorCode::kBackpressured});
+}
+
+[[nodiscard]] bool RuntimeChannelSession::Impl::direct_recipient_has_capacity(
+    SubscriberState& subscriber) noexcept {
+  if (subscriber.direct_cross_lane && owner_progress_wake_enabled()) {
+    return wait_for_direct_capacity(subscriber);
+  }
+  const std::scoped_lock lock{subscriber.mutex};
+  return blocking_typed_capacity_locked(subscriber) != 0U;
+}
+
+template <typename RetainOperation>
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::commit_direct_publication(
+    OutputState& state, SubscriberState& subscriber, const std::uint64_t publication_sequence,
+    RetainOperation&& retain) noexcept {
+  // Wait before the store, which may consume a Tensor sample. An expired budget reports the same
+  // pre-submit pressure the store would, with publication authority and the sequence retained.
+  if (subscriber.direct_cross_lane && state.session->owner_progress_wake_enabled() &&
+      !state.session->wait_for_direct_capacity(subscriber)) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  const bool capture_continuation = state.direct_continuation_capture;
+  const bool signal_progress = state.session->owner_progress_wake_enabled();
+  const bool observe_readiness = capture_continuation || signal_progress;
+  const std::uint64_t prior_revision =
+      observe_readiness ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
+  auto stored = std::forward<RetainOperation>(retain)(subscriber);
+  if (!stored) {
+    return make_unexpected(std::move(stored).error());
+  }
+  const std::uint64_t destination_revision =
+      observe_readiness ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
+  if (signal_progress && destination_revision != prior_revision) {
+    state.session->signal_owner_data_progress(subscriber);
+  }
+  if (capture_continuation) {
+    state.session->note_direct_continuation_publication(
+        state, subscriber, publication_sequence, prior_revision, destination_revision);
+  }
+  state.record_emit();
+  return {};
+}
+
+template <typename RetainOperation>
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::store_direct_recipients(
+    OutputState& state, const std::uint64_t publication_sequence,
+    RetainOperation& retain) noexcept {
+  // Drop-oldest stores never wait for capacity. Every blocking recipient must have a free typed
+  // slot before anything is stored, so the family either delivers to all recipients or to none and
+  // keeps its sequence. Only this output fills those slots and consumers only free them, so the
+  // checked capacity holds until the stores below. Only the recipient a causal chain continues into
+  // is captured for a continuation; the others are delivered as without one.
+  const bool signal_progress = state.session->owner_progress_wake_enabled();
+  const auto recipients = state.direct_recipients();
+  if (state.direct_fanout_blocking) {
+    for (SubscriberState* const subscriber : recipients) {
+      if (subscriber->queue_policy == QueuePolicy::kBlocking &&
+          !state.session->direct_recipient_has_capacity(*subscriber)) {
+        return make_unexpected(Error{ErrorCode::kBackpressured});
+      }
+    }
+  }
+  std::uint32_t delivered = 0U;
+  for (SubscriberState* const subscriber : recipients) {
+    const bool capture_continuation =
+        state.direct_continuation_capture && subscriber == state.direct_continuation_subscriber;
+    const bool observe_readiness = capture_continuation || signal_progress;
+    const std::uint64_t prior_revision =
+        observe_readiness ? subscriber->input->readiness_revision.load(std::memory_order_acquire)
+                          : 0U;
+    auto stored = retain(*subscriber);
+    if (!stored) {
+      if (delivered == 0U) {
+        return make_unexpected(std::move(stored).error());
+      }
+      // Earlier recipients already hold this sequence, so it is consumed and cannot be retried.
+      // Contain the failure as delivery inside emit() does.
+      state.record_emit();
+      state.session->fail(stored.error(), subscriber->owner);
+      return make_unexpected(
+          make_publication_partial_error(delivered, static_cast<std::uint32_t>(recipients.size())));
+    }
+    ++delivered;
+    const std::uint64_t destination_revision =
+        observe_readiness ? subscriber->input->readiness_revision.load(std::memory_order_acquire)
+                          : 0U;
+    if (signal_progress && destination_revision != prior_revision) {
+      state.session->signal_owner_data_progress(*subscriber);
+    }
+    if (capture_continuation) {
+      state.session->note_direct_continuation_publication(
+          state, *subscriber, publication_sequence, prior_revision, destination_revision);
+    }
+  }
+  return {};
+}
+
+template <typename RetainOperation>
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::commit_direct_fanout_publication(
+    OutputState& state, const std::uint64_t publication_sequence,
+    RetainOperation& retain) noexcept {
+  auto stored = store_direct_recipients(state, publication_sequence, retain);
+  if (stored) {
+    state.record_emit();
+  }
+  return stored;
+}
+
+// Preserve direct and transported publication authority, accounting, and terminal ordering.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_payload(
+    std::span<const std::byte> payload, SampleMetadata metadata,
+    const channel_internal::InlinePayloadEncoder* const encoder) noexcept {
+  if (!active) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  if (emitted_this_activation == max_emits_per_activation) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+  if (next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+  const bool direct_encode = encoder != nullptr;
+  if ((direct_encode &&
+       (type_ops->codec_family != RuntimePayloadCodecFamily::kGeneratedSchema ||
+        encoder->capacity != type_ops->wire_capacity || encoder->state == nullptr ||
+        encoder->encode == nullptr || direct_subscriber != nullptr ||
+        process_local_schema_identity || endpoints.size() != 1U)) ||
+      (!direct_encode && payload.empty()) || payload.size() > type_ops->wire_capacity ||
+      (type_ops->codec_family == RuntimePayloadCodecFamily::kInlinePod &&
+       payload.size() != type_ops->wire_capacity)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  if (type_ops->codec_family == RuntimePayloadCodecFamily::kCustomPod) {
+    if (payload.size() != type_ops->wire_capacity) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+  std::span<const std::byte> process_local_schema_payload;
+  if (process_local_schema_identity) {
+    if (type_ops->codec_family != RuntimePayloadCodecFamily::kGeneratedSchema ||
+        process_local_schema_scratch.data() == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::size_t frame_size = kSchemaEnvelopeHeaderSize + payload.size();
+    const std::span<std::byte> frame{static_cast<std::byte*>(process_local_schema_scratch.data()),
+                                     frame_size};
+    auto envelope = channel_internal::encode_schema_envelope(
+        frame.first(kSchemaEnvelopeHeaderSize), *process_local_schema_identity, payload.size());
+    if (!envelope) {
+      return make_unexpected(std::move(envelope).error());
+    }
+    std::copy(payload.begin(), payload.end(), frame.begin() + kSchemaEnvelopeHeaderSize);
+    if (next_process_local_schema_corruption) {
+      corrupt_process_local_schema_frame(frame, *next_process_local_schema_corruption);
+      next_process_local_schema_corruption.reset();
+    }
+    process_local_schema_payload = frame;
+  }
+  metadata.version = SampleMetadataVersion{};
+  metadata.sequence = next_sequence;
+  metadata.byte_size = direct_encode ? 0U : static_cast<std::uint32_t>(payload.size());
+  metadata.payload_kind = type_ops->payload_kind;
+  if (auto stamped = session->stamp_publication_coordinate(metadata); !stamped) {
+    return make_unexpected(std::move(stamped).error());
+  }
+  const std::span<const std::byte> retained_payload =
+      process_local_schema_identity ? process_local_schema_payload : payload;
+  auto retain = [&](SubscriberState& subscriber) noexcept {
+    return session->retain_direct_inline_payload(subscriber, retained_payload, metadata);
+  };
+  if (direct_subscriber != nullptr && endpoints.empty()) {
+    if (!direct_fanout.empty()) {
+      return commit_direct_fanout_publication(*this, metadata.sequence, retain);
+    }
+    return commit_direct_publication(*this, *direct_subscriber, metadata.sequence, retain);
+  }
+  if (endpoints.empty()) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+
+  // Validate every catalog-bound metadata projection before any endpoint accepts the sample.
+  // This keeps a deterministic plan/catalog identity error on the pre-submit side even when
+  // the same Output also fans out to internal recipients earlier in endpoint order.
+  for (auto& endpoint : endpoints) {
+    if (endpoint.process_local_schema_envelope && process_local_schema_payload.empty() &&
+        !direct_encode) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (!endpoint.refresh_before_emit) {
+      continue;
+    }
+    if (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (endpoint.plan_capture_clock.valid()) {
+      if (metadata.source_clock_id != endpoint.plan_capture_clock) {
+        return make_unexpected(Error{ErrorCode::kInvalidArgument});
+      }
+    } else if (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+
+  if (session->publication_credits_) {
+    if (auto credited = session->await_publication_credits(endpoints); !credited) {
+      return credited;
+    }
+  }
+  // A mixed-locality family stores into its direct recipients before any transported leg, so a
+  // leg that then fails before submission leaves the publication indeterminate.
+  bool submitted = false;
+  if (direct_subscriber != nullptr) {
+    auto stored = store_direct_recipients(*this, metadata.sequence, retain);
+    if (!stored) {
+      return stored;
+    }
+    submitted = true;
+  }
+  trace_output_emit_phase(phase_counters,
+                          RuntimePhaseTracePoint::kInlinePayloadTransportPublicationStarted,
+                          port,
+                          next_sequence);
+  for (auto& endpoint : endpoints) {
+    SampleMetadata endpoint_metadata = metadata;
+    if (endpoint.plan_capture_clock.valid()) {
+      // Internal fanout continues to observe the plan-local metadata above. Only the copy sent
+      // through this catalog endpoint enters the independently dense catalog clock namespace.
+      endpoint_metadata.source_clock_id = endpoint.catalog_capture_clock;
+    }
+    if (endpoint.refresh_before_emit) {
+      // The publication coordinate crosses the same namespace boundary as capture time above,
+      // and for the same reason: this copy leaves for a peer that resolves clock identities
+      // against the catalog rather than the plan.
+      session->project_publication_coordinate(endpoint_metadata);
+    }
+    // External peers may attach after Graph startup, which is deliberately never a peer-wait
+    // barrier. Refresh immediately before the submission boundary so a late peer can
+    // participate without converting an earlier successful refresh into a first-sample
+    // guarantee. A refresh failure is still structurally pre-submit for this endpoint; after
+    // an earlier fanout endpoint accepted the sample, the same failure is necessarily an
+    // terminal partial or indeterminate publication outcome.
+    if (endpoint.refresh_before_emit) {
+      auto refreshed =
+          classify_connection_refresh(endpoint.publisher->update_connections(), submitted);
+      if (!refreshed) {
+        return make_unexpected(std::move(refreshed).error());
+      }
+    }
+    channel_internal::InlinePublicationResult published;
+    const std::span<const std::byte> endpoint_payload =
+        endpoint.process_local_schema_envelope ? process_local_schema_payload : payload;
+    ProcessLocalPublicationScope publication{
+        *session, endpoint.process_local_transport, owner, endpoint.emit_admitted};
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+#endif
+      published =
+          direct_encode ? endpoint.publisher->emit_encoded_phase(*encoder, endpoint_metadata)
+          : endpoint.canonical_pod_publisher
+              ? endpoint.canonical_pod_publisher.emit_phase(
+                    endpoint.canonical_pod_publisher.state, endpoint_payload, endpoint_metadata)
+              : endpoint.publisher->emit_phase(endpoint_payload, endpoint_metadata);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    } catch (...) {
+      record_emit();
+      return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+    }
+#endif
+    switch (published.phase) {
+      case channel_internal::InlinePublicationPhase::kAccepted:
+        endpoint.last_sent_sequence = metadata.sequence;
+        publication.accept(published.recipient_count,
+                           endpoint.activation_cut_subscribers,
+                           endpoint.emit_recipients,
+                           metadata.sequence);
+        endpoint.terminal_obligated |= published.recipient_count != 0U;
+        if (published.recipient_count != endpoint.expected_recipient_count &&
+            (endpoint.peer_required || published.recipient_count != 0U)) {
+          record_emit();
+          if (published.recipient_count < endpoint.expected_recipient_count) {
+            return make_unexpected(make_publication_partial_error(
+                published.recipient_count, endpoint.expected_recipient_count));
+          }
+          return make_unexpected(
+              Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
+        }
+        // An optional endpoint with no attached peer is an intentional local drop. No remote
+        // observer exists, so it must neither fail the activation nor make a later pre-submit
+        // failure on another endpoint indeterminate.
+        submitted = submitted || published.recipient_count != 0U;
+        break;
+      case channel_internal::InlinePublicationPhase::kPostSubmitUncertain:
+        // The sample may have reached recipients and its sequence is spent, so publication credit
+        // counts it as in flight.
+        endpoint.last_sent_sequence = metadata.sequence;
+        publication.invalidate();
+        record_emit();
+        if (publication_error_consumes_authority(published.error.code) ||
+            published.error.code == ErrorCode::kProtocolError ||
+            published.error.code == ErrorCode::kInvalidArgument) {
+          return make_unexpected(std::move(published.error));
+        }
+        return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+      case channel_internal::InlinePublicationPhase::kPreSubmitRejected:
+        publication.reject();
+        if (!endpoint.peer_required && published.error.code == ErrorCode::kNotReady) {
+          // Some backends report the same unobserved optional-peer drop as a pre-submit
+          // readiness miss rather than an accepted zero-recipient publication.
+          break;
+        }
+        if (!submitted) {
+          return make_unexpected(published.error);
+        }
+        record_emit();
+        return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+      default:
+        // A malformed private phase is never equivalent to the proven no-peer rejection
+        // above. Preserve any earlier fanout observation in the returned classification.
+        publication.invalidate();
+        if (!submitted) {
+          return make_unexpected(Error{ErrorCode::kProtocolError});
+        }
+        record_emit();
+        return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+    }
+  }
+  trace_output_emit_phase(phase_counters,
+                          RuntimePhaseTracePoint::kInlinePayloadTransportPublicationReturned,
+                          port,
+                          next_sequence);
+  record_emit();
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::validate_emit_authority(
+    const OutputState& state) noexcept {
+  if (!state.active) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  if (state.emitted_this_activation == state.max_emits_per_activation ||
+      state.next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::classify_tensor_publication(
+    OutputState& state, expected<std::uint32_t, Error> published, bool& submitted) noexcept {
+  if (published) {
+    submitted = true;
+    return {};
+  }
+  return classify_tensor_failure(state, std::move(published).error(), submitted);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::classify_tensor_failure(OutputState& state, Error error,
+                                                                  const bool submitted) noexcept {
+  if (publication_error_consumes_authority(error.code)) {
+    state.record_emit();
+    return make_unexpected(std::move(error));
+  }
+  if (submitted) {
+    state.record_emit();
+    return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+  }
+  // Manual Tensor publishers report bounded HoloMQ loan/callback capacity as
+  // kResourceExhausted. No endpoint has accepted the sample at this boundary, so the
+  // graph-bound Output contract classifies the same proven pre-submit pressure as
+  // kBackpressured without consuming sequence or publication authority.
+  if (error.code == ErrorCode::kResourceExhausted) {
+    error = Error{ErrorCode::kBackpressured};
+  }
+  return make_unexpected(std::move(error));
+}
+
+void RuntimeChannelSession::Impl::OutputState::inject_tensor_fanout_failure(
+    OutputState& state, std::size_t accepted_count) {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  if (state.throw_tensor_fanout_after_accepts_for_test == accepted_count) {
+    state.throw_tensor_fanout_after_accepts_for_test.reset();
+    throw std::runtime_error{accepted_count == 0U ? "injected pre-submit Tensor fanout failure"
+                                                  : "injected post-submit Tensor fanout failure"};
+  }
+#else
+  (void)state;
+  (void)accepted_count;
+#endif
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::validate_catalog_tensor_metadata(
+    const OutputState& state, const SampleMetadata& metadata) noexcept {
+  // Plan and endpoint catalogs use independently dense clock IDs. Validate every projection
+  // before any fanout arm can accept the sample so a provenance mismatch remains pre-submit.
+  for (const auto& endpoint : state.catalog_tensor_endpoints) {
+    if (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (endpoint.plan_capture_clock.valid()) {
+      if (metadata.source_clock_id != endpoint.plan_capture_clock) {
+        return make_unexpected(Error{ErrorCode::kInvalidArgument});
+      }
+    } else if (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_internal_tensor_endpoints(OutputState& state,
+                                                                         Sample<Tensor>& normalized,
+                                                                         bool& submitted) {
+  if (state.tensor_endpoints.empty()) {
+    return {};
+  }
+  // Admission observations identify the publication; the final endpoint consumes the sample.
+  const std::uint64_t publication_sequence = normalized.metadata.sequence;
+  if (state.session->publication_credits_) {
+    if (auto credited = state.session->await_publication_credits(state.tensor_endpoints);
+        !credited) {
+      return credited;
+    }
+  }
+  for (std::size_t index = 0U; index + 1U < state.tensor_endpoints.size(); ++index) {
+    auto& endpoint = state.tensor_endpoints[index];
+    ProcessLocalPublicationScope publication{
+        *state.session, endpoint.process_local_transport, state.owner, endpoint.emit_admitted};
+    auto published = endpoint.publisher.emit_sample(normalized);
+    if (published) {
+      endpoint.last_sent_sequence = publication_sequence;
+      publication.accept(*published,
+                         endpoint.activation_cut_subscribers,
+                         endpoint.emit_recipients,
+                         publication_sequence);
+    } else if (publication_error_consumes_authority(published.error().code)) {
+      endpoint.last_sent_sequence = publication_sequence;
+      publication.invalidate();
+    } else {
+      publication.reject();
+    }
+    auto classified = classify_tensor_publication(state, std::move(published), submitted);
+    if (!classified) {
+      return classified;
+    }
+    inject_tensor_fanout_failure(state, index + 1U);
+  }
+  auto& endpoint = state.tensor_endpoints.back();
+  ProcessLocalPublicationScope publication{
+      *state.session, endpoint.process_local_transport, state.owner, endpoint.emit_admitted};
+  auto published = endpoint.publisher.emit_sample(std::move(normalized));
+  if (published) {
+    endpoint.last_sent_sequence = publication_sequence;
+    publication.accept(*published,
+                       endpoint.activation_cut_subscribers,
+                       endpoint.emit_recipients,
+                       publication_sequence);
+  } else if (publication_error_consumes_authority(published.error().code)) {
+    endpoint.last_sent_sequence = publication_sequence;
+    publication.invalidate();
+  } else {
+    publication.reject();
+  }
+  auto classified = classify_tensor_publication(state, std::move(published), submitted);
+  if (!classified) {
+    return classified;
+  }
+  inject_tensor_fanout_failure(state, state.tensor_endpoints.size());
+  return {};
+}
+
+[[nodiscard]] expected<RuntimeChannelSession::Impl::OutputState::CatalogTensorFanoutPreparation,
+                       Error>
+RuntimeChannelSession::Impl::OutputState::prepare_catalog_tensor_fanout(OutputState& state,
+                                                                        const Tensor& supplied) {
+  CatalogTensorFanoutPreparation preparation;
+  for (std::size_t index = 0U; index < state.catalog_tensor_endpoints.size(); ++index) {
+    auto& endpoint = state.catalog_tensor_endpoints[index];
+    endpoint.active_for_current_fanout = endpoint.peer_required;
+    // Optional endpoints retain their pre-submit skip semantics. Required endpoints defer
+    // topology admission to HoloMQ's exact recipient-count gate, avoiding a redundant shared
+    // dynamic-config read on the ordinary publication path.
+    if (!endpoint.peer_required && !endpoint.publisher.has_subscribers()) {
+      auto refreshed =
+          state.classify_connection_refresh(endpoint.publisher.update_connections(), false);
+      if (!refreshed) {
+        return make_unexpected(std::move(refreshed).error());
+      }
+      if (!endpoint.publisher.has_subscribers()) {
+        continue;
+      }
+    }
+    endpoint.active_for_current_fanout = true;
+
+    auto disposition = channel_internal::TensorPublishLoanAccess::classify_foreign_tensor(
+        endpoint.publisher, supplied);
+    if (!disposition) {
+      return make_unexpected(std::move(disposition).error());
+    }
+    if (preparation.staging_index == std::numeric_limits<std::size_t>::max()) {
+      preparation.staging_index = index;
+    }
+    preparation.copy_required |=
+        *disposition == channel_internal::ForeignTensorDisposition::kCopyRequired;
+  }
+  if (preparation.copy_required) {
+    if (preparation.staging_index >= state.catalog_tensor_endpoints.size()) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    const auto& staging_endpoint = state.catalog_tensor_endpoints[preparation.staging_index];
+    const TensorConsumerScope staging_scope{staging_endpoint.staging_stream,
+                                            &staging_endpoint.staging_lifetime};
+    auto staged = channel_internal::TensorPublishLoanAccess::stage_foreign_tensor(
+        state.catalog_tensor_endpoints[preparation.staging_index].publisher,
+        supplied,
+        TensorAccess::readiness_stream(supplied),
+        state.catalog_tensor_endpoints[preparation.staging_index].staging_stream);
+    if (!staged) {
+      Error error = std::move(staged).error();
+      if (error.code == ErrorCode::kResourceExhausted) {
+        error = Error{ErrorCode::kBackpressured};
+      }
+      return make_unexpected(std::move(error));
+    }
+    preparation.staged_copy.emplace(std::move(*staged));
+    if (state.tensor_test_control != nullptr &&
+        state.catalog_tensor_endpoints[preparation.staging_index].staging_stream != nullptr) {
+      state.tensor_test_control->record_cuda_service_copy(
+          TensorAccess::readiness_stream(supplied),
+          state.catalog_tensor_endpoints[preparation.staging_index].staging_stream);
+    }
+  }
+  return preparation;
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
+    OutputState& state, CatalogTensorEndpointState& endpoint, const Tensor& supplied,
+    const SampleMetadata& normalized_metadata, CatalogTensorFanoutPreparation& preparation,
+    bool& submitted) {
+  if (!endpoint.active_for_current_fanout) {
+    return {};
+  }
+  SampleMetadata endpoint_metadata = normalized_metadata;
+  state.session->project_publication_coordinate(endpoint_metadata);
+  if (endpoint.plan_capture_clock.valid()) {
+    endpoint_metadata.source_clock_id = endpoint.catalog_capture_clock;
+  }
+  expected<std::uint32_t, Error> published = make_unexpected(Error{ErrorCode::kFailure});
+  if (!preparation.copy_required) {
+    published = channel_internal::TensorPublishLoanAccess::emit_prevalidated_exportable_tensor(
+        endpoint.publisher, supplied, endpoint_metadata);
+  } else if (preparation.staged_copy) {
+    published = channel_internal::TensorPublishLoanAccess::emit_prevalidated_exportable_tensor(
+        endpoint.publisher, preparation.staged_copy->tensor, endpoint_metadata);
+  }
+  if (!endpoint.peer_required && !published && published.error().code == ErrorCode::kNotReady) {
+    // The optional peer disappeared after preparation but before submit. HoloMQ proved the
+    // rejection occurred before submission, so the arm remains an optional no-op.
+    return {};
+  }
+  if (published) {
+    endpoint.terminal_obligated |= *published != 0U;
+  }
+  return classify_tensor_publication(state, std::move(published), submitted);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::contain_tensor_fanout_exception(
+    OutputState& state, const bool submitted) noexcept {
+  if (std::ranges::any_of(state.tensor_endpoints,
+                          [](const auto& endpoint) { return endpoint.process_local_transport; })) {
+    state.session->invalidate_process_local_progress();
+  }
+  if (submitted) {
+    state.record_emit();
+    return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+  }
+  return make_unexpected(Error{ErrorCode::kFailure});
+}
+
+[[nodiscard]] expected<RuntimeChannelSession::Impl::OutputState::CatalogTensorFanoutPreparation,
+                       Error>
+RuntimeChannelSession::Impl::OutputState::prepare_tensor_transport(
+    OutputState& state, const Sample<Tensor>& supplied, const SampleMetadata& metadata) noexcept {
+  auto metadata_valid = validate_catalog_tensor_metadata(state, metadata);
+  if (!metadata_valid) {
+    return make_unexpected(std::move(metadata_valid).error());
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    inject_tensor_fanout_failure(state, 0U);
+    return prepare_catalog_tensor_fanout(state, supplied.data);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    return make_unexpected(contain_tensor_fanout_exception(state, false).error());
+  }
+#endif
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::publish_tensor_transport(
+    OutputState& state, const Sample<Tensor>& supplied, Sample<Tensor> normalized,
+    CatalogTensorFanoutPreparation& preparation, bool submitted) noexcept {
+  const SampleMetadata normalized_metadata = normalized.metadata;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kTensorTransportPublicationStarted,
+                            state.port,
+                            normalized_metadata.sequence);
+    auto internal = emit_internal_tensor_endpoints(state, normalized, submitted);
+    if (!internal) {
+      return internal;
+    }
+    for (std::size_t index = 0U; index < state.catalog_tensor_endpoints.size(); ++index) {
+      auto published = emit_catalog_tensor_endpoint(state,
+                                                    state.catalog_tensor_endpoints[index],
+                                                    supplied.data,
+                                                    normalized_metadata,
+                                                    preparation,
+                                                    submitted);
+      if (!published) {
+        return published;
+      }
+    }
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kTensorTransportPublicationReturned,
+                            state.port,
+                            normalized_metadata.sequence);
+    state.record_emit();
+    return {};
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    return contain_tensor_fanout_exception(state, submitted);
+  }
+#endif
+}
+
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_tensor_fanout(
+    OutputState& state, const Sample<Tensor>& supplied, Sample<Tensor> normalized) noexcept {
+  auto preparation = prepare_tensor_transport(state, supplied, normalized.metadata);
+  if (!preparation) {
+    return make_unexpected(std::move(preparation).error());
+  }
+  return publish_tensor_transport(state, supplied, std::move(normalized), *preparation, false);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_mixed_locality_tensor(
+    OutputState& state, const Sample<Tensor>& supplied, Sample<Tensor> normalized) noexcept {
+  // Every check and resource a transported leg can fail on before submission comes first, so such
+  // a failure stores nothing and keeps the sequence. A cross-process leg exports the publication's
+  // own backing, which its transport would reject only after the direct stores below.
+  if (!state.tensor_endpoints.empty() &&
+      channel_internal::holomq_exportable_tensor_memory_reference(normalized.data) == nullptr) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "Tensor is not backed by HoloMQ-exportable storage"});
+  }
+  auto preparation = prepare_tensor_transport(state, supplied, normalized.metadata);
+  if (!preparation) {
+    return make_unexpected(std::move(preparation).error());
+  }
+  // The direct recipients each take a handle to the backing that the legs then publish, so a leg
+  // that fails after these stores leaves the publication indeterminate.
+  auto retain = [&](SubscriberState& subscriber) noexcept {
+    return state.session->retain_direct_tensor_sample(subscriber, normalized);
+  };
+  auto stored = store_direct_recipients(state, normalized.metadata.sequence, retain);
+  if (!stored) {
+    return stored;
+  }
+  return publish_tensor_transport(state, supplied, std::move(normalized), *preparation, true);
+}
+
+void RuntimeChannelSession::Impl::OutputState::capture_tensor_rejection(
+    const Tensor& tensor, const TensorAccessSnapshot& snapshot, bool native_contract_matches,
+    bool port_contract_matches) noexcept {
+  if (tensor_failure == nullptr || tensor_failure->port) {
+    return;
+  }
+  TensorContractMismatchCapture mismatch;
+  if (!native_contract_matches) {
+    static_cast<void>(tensor_snapshot_matches_plan(
+        snapshot, tensor_max_byte_span, tensor_memory_kind, tensor_device, &mismatch));
+  } else if (!port_contract_matches && tensor_contract.has_value()) {
+    static_cast<void>(tensor_matches_port_contract(tensor, snapshot, *tensor_contract, &mismatch));
+  } else if (!snapshot.initialized || !snapshot.valid) {
+    capture_tensor_mismatch(&mismatch, "snapshot", "invalid", "initialized and valid");
+  } else if (catalog_tensor_requirements.has_value()) {
+    const auto& requirements = *catalog_tensor_requirements;
+    if (!requirements.max_byte_span.has_value() ||
+        snapshot.byte_span > *requirements.max_byte_span) {
+      capture_tensor_mismatch(
+          &mismatch, "max_byte_span", snapshot.byte_span, requirements.max_byte_span.value_or(0U));
+    } else {
+      static_cast<void>(tensor_matches_logical_requirements(tensor, requirements, &mismatch));
+    }
+  }
+  mismatch.port = port;
+  *tensor_failure = mismatch;
+}
+
+// Keep contract validation and every recipient preflight before the first publication so
+// direct and transported legs cannot partially accept a Tensor rejected by a sibling.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_tensor_sample(
+    OutputState& state, const Sample<Tensor>& supplied) noexcept {
+  auto authority = validate_emit_authority(state);
+  if (!authority) {
+    return authority;
+  }
+  if (state.direct_subscriber == nullptr && state.tensor_endpoints.empty() &&
+      state.catalog_tensor_endpoints.empty()) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+  const std::uint64_t emitted_sequence = state.next_sequence;
+  trace_output_emit_phase(state.phase_counters,
+                          RuntimePhaseTracePoint::kTensorEmitStarted,
+                          state.port,
+                          emitted_sequence);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    const TensorAccessSnapshot snapshot = TensorAccess::snapshot(supplied.data);
+    const bool has_internal_tensor_recipient =
+        state.direct_subscriber != nullptr || !state.tensor_endpoints.empty();
+    const bool native_contract_matches =
+        !has_internal_tensor_recipient ||
+        tensor_snapshot_matches_plan(
+            snapshot, state.tensor_max_byte_span, state.tensor_memory_kind, state.tensor_device);
+    const bool port_contract_matches =
+        !state.tensor_contract ||
+        tensor_matches_port_contract(supplied.data, snapshot, *state.tensor_contract);
+    const bool catalog_contract_matches =
+        !state.catalog_tensor_requirements ||
+        (snapshot.initialized && snapshot.valid &&
+         state.catalog_tensor_requirements->max_byte_span &&
+         snapshot.byte_span <= *state.catalog_tensor_requirements->max_byte_span &&
+         tensor_matches_logical_requirements(supplied.data, *state.catalog_tensor_requirements));
+    if (!native_contract_matches || !port_contract_matches || !catalog_contract_matches) {
+      state.capture_tensor_rejection(
+          supplied.data, snapshot, native_contract_matches, port_contract_matches);
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    Sample<Tensor> normalized{supplied};
+    normalized.metadata.version = SampleMetadataVersion{};
+    normalized.metadata.sequence = state.next_sequence;
+    normalized.metadata.byte_size = snapshot.byte_size;
+    normalized.metadata.payload_kind = PayloadKind::kDescriptorBacked;
+    if (auto stamped = state.session->stamp_publication_coordinate(normalized.metadata); !stamped) {
+      return make_unexpected(std::move(stamped).error());
+    }
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kTensorEmitValidated,
+                            state.port,
+                            emitted_sequence);
+    if (state.direct_subscriber != nullptr) {
+      // A direct output's only endpoints are a mixed-locality family's cross-process and exported
+      // legs, which materialization admits only beside drop-oldest recipients.
+      const bool transported =
+          !state.tensor_endpoints.empty() || !state.catalog_tensor_endpoints.empty();
+      if (!state.direct_fanout.empty() || transported) {
+        // Every recipient shares this backing. Check each one's contract before storing into any,
+        // or preparing a leg, so a recipient that would reject the sample cannot turn it into a
+        // partial publication.
+        for (const SubscriberState* const recipient : state.direct_recipients()) {
+          if (!tensor_recipient_admits(
+                  *recipient, normalized.data, snapshot, normalized.metadata)) {
+            state.capture_tensor_rejection(supplied.data, snapshot, true, false);
+            return make_unexpected(Error{ErrorCode::kInvalidArgument});
+          }
+        }
+      }
+      expected<void, Error> stored;
+      if (transported) {
+        stored = emit_mixed_locality_tensor(state, supplied, std::move(normalized));
+      } else if (!state.direct_fanout.empty()) {
+        auto retain = [&](SubscriberState& subscriber) noexcept {
+          return state.session->retain_direct_tensor_sample(subscriber, normalized);
+        };
+        stored = commit_direct_fanout_publication(state, emitted_sequence, retain);
+      } else {
+        stored = commit_direct_publication(state,
+                                           *state.direct_subscriber,
+                                           emitted_sequence,
+                                           [&](SubscriberState& subscriber) noexcept {
+                                             return state.session->retain_direct_tensor_sample(
+                                                 subscriber, std::move(normalized));
+                                           });
+      }
+      if (!stored) {
+        return stored;
+      }
+      trace_output_emit_phase(state.phase_counters,
+                              RuntimePhaseTracePoint::kTensorEmitCompleted,
+                              state.port,
+                              emitted_sequence);
+      return {};
+    }
+    auto emitted = emit_tensor_fanout(state, supplied, std::move(normalized));
+    if (emitted) {
+      trace_output_emit_phase(state.phase_counters,
+                              RuntimePhaseTracePoint::kTensorEmitCompleted,
+                              state.port,
+                              emitted_sequence);
+    }
+    return emitted;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    return make_unexpected(Error{ErrorCode::kFailure});
+  }
+#endif
+}
+
+[[nodiscard]] expected<void, Error>
+// Descriptor fanout is one encode, reservation, and per-endpoint publication transaction.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_fanout(
+    OutputState& state, const void* payload, const std::span<const Tensor> tensors,
+    const std::span<std::byte> destination, const SampleMetadata& metadata,
+    const bool require_direct_export) noexcept {
+  const auto encode_payload =
+      [&](const SampleMetadata& endpoint_metadata,
+          const std::uint64_t endpoint_generation) -> expected<std::size_t, Error> {
+    expected<std::size_t, Error> encoded = make_unexpected(Error{ErrorCode::kProtocolError});
+    if (require_direct_export) {
+      if (tensors.size() == 1U && state.type_ops->encode_descriptor_tensor_loan != nullptr) {
+        encoded = state.type_ops->encode_descriptor_tensor_loan(
+            payload, tensors.front(), endpoint_metadata, endpoint_generation, destination);
+      } else if (state.type_ops->encode_descriptor_tensor_loans != nullptr) {
+        encoded = state.type_ops->encode_descriptor_tensor_loans(
+            payload, tensors, endpoint_metadata, endpoint_generation, destination);
+      }
+    } else if (state.type_ops->encode_descriptor_tensor_sample != nullptr) {
+      encoded = state.type_ops->encode_descriptor_tensor_sample(
+          payload, endpoint_metadata, endpoint_generation, destination);
+    }
+    if (!encoded || *encoded == 0U || *encoded > destination.size() ||
+        state.type_ops->descriptor_offset > *encoded ||
+        tensors.size() * sizeof(PayloadDescriptor) > *encoded - state.type_ops->descriptor_offset) {
+      return encoded ? make_unexpected(Error{ErrorCode::kProtocolError})
+                     : make_unexpected(std::move(encoded).error());
+    }
+    return *encoded;
+  };
+
+  bool submitted = false;
+  bool destination_has_shared_encoding = false;
+  std::size_t shared_encoded_size = 0U;
+  for (const auto& endpoint : state.tensor_schema_endpoints) {
+    if (endpoint.refresh_before_emit &&
+        (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid() ||
+         (endpoint.plan_capture_clock.valid() &&
+          metadata.source_clock_id != endpoint.plan_capture_clock) ||
+         (!endpoint.plan_capture_clock.valid() &&
+          (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0)))) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+  for (auto& endpoint : state.tensor_schema_endpoints) {
+    SampleMetadata endpoint_metadata = metadata;
+    if (endpoint.refresh_before_emit) {
+      auto refreshed =
+          state.classify_connection_refresh(endpoint.publisher->update_connections(), submitted);
+      if (!refreshed) {
+        return make_unexpected(std::move(refreshed).error());
+      }
+      if (!endpoint.peer_required && !endpoint.publisher->has_subscribers()) {
+        continue;
+      }
+      // Output activation serialization is the sole writer for this endpoint, so this peek
+      // remains valid through the immediately following publication.
+      auto endpoint_sequence = endpoint.publisher->next_operation_sequence();
+      if (!endpoint_sequence) {
+        return classify_tensor_failure(state, std::move(endpoint_sequence).error(), submitted);
+      }
+      endpoint_metadata.sequence = *endpoint_sequence;
+      if (endpoint.plan_capture_clock.valid()) {
+        endpoint_metadata.source_clock_id = endpoint.catalog_capture_clock;
+      }
+      state.session->project_publication_coordinate(endpoint_metadata);
+    }
+    const std::uint64_t endpoint_generation =
+        endpoint.refresh_before_emit ? channel_internal::kCompatibilitySchemaEndpointGeneration
+                                     : state.session->plan_generation_;
+    std::size_t encoded_size = shared_encoded_size;
+    if (endpoint.refresh_before_emit || !destination_has_shared_encoding) {
+      auto encoded = encode_payload(endpoint_metadata, endpoint_generation);
+      if (!encoded) {
+        if (!submitted) {
+          return make_unexpected(std::move(encoded).error());
+        }
+        return classify_tensor_failure(state, std::move(encoded).error(), true);
+      }
+      encoded_size = *encoded;
+      destination_has_shared_encoding = !endpoint.refresh_before_emit;
+      if (destination_has_shared_encoding) {
+        shared_encoded_size = encoded_size;
+      }
+    }
+    auto reserved = endpoint.publisher->reserve_tensors(tensors, require_direct_export);
+    if (!reserved) {
+      return classify_tensor_failure(state, std::move(reserved).error(), submitted);
+    }
+    if (reserved->field_count != tensors.size()) {
+      endpoint.publisher->release_tensor(std::move(*reserved));
+      return classify_tensor_failure(state, Error{ErrorCode::kProtocolError}, submitted);
+    }
+    for (std::size_t index = 0U; index < tensors.size(); ++index) {
+      auto* field = reserved->field_at(index);
+      if (field == nullptr) {
+        endpoint.publisher->release_tensor(std::move(*reserved));
+        return classify_tensor_failure(state, Error{ErrorCode::kProtocolError}, submitted);
+      }
+      field->descriptor.schema_id = state.tensor_schema_id;
+      auto descriptor_encoded = channel_internal::encode_payload_descriptor_wire(
+          field->descriptor,
+          destination.subspan(state.type_ops->descriptor_offset + index * sizeof(PayloadDescriptor),
+                              sizeof(PayloadDescriptor)));
+      if (!descriptor_encoded) {
+        endpoint.publisher->release_tensor(std::move(*reserved));
+        return classify_tensor_failure(state, std::move(descriptor_encoded).error(), submitted);
+      }
+    }
+    ProcessLocalPublicationScope publication{
+        *state.session, endpoint.process_local_transport, state.owner, endpoint.emit_admitted};
+    auto published = endpoint.publisher->publish_payload(
+        destination.first(encoded_size), std::move(*reserved), endpoint_metadata);
+    if (!published) {
+      if (publication_error_consumes_authority(published.error().code)) {
+        endpoint.last_sent_sequence = endpoint_metadata.sequence;
+        publication.invalidate();
+      } else {
+        publication.reject();
+      }
+      return classify_tensor_failure(state, std::move(published).error(), submitted);
+    }
+    endpoint.last_sent_sequence = endpoint_metadata.sequence;
+    publication.accept(*published, endpoint.activation_cut_subscribers, endpoint.emit_recipients);
+    endpoint.terminal_obligated |= *published != 0U;
+    if (*published != endpoint.expected_recipient_count) {
+      state.record_emit();
+      if (*published < endpoint.expected_recipient_count) {
+        return make_unexpected(
+            make_publication_partial_error(*published, endpoint.expected_recipient_count));
+      }
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
+    }
+    submitted = true;
+  }
+  state.record_emit();
+  return {};
+}
+
+[[nodiscard]] expected<std::size_t, Error>
+RuntimeChannelSession::Impl::OutputState::encode_tensor_schema_transport(
+    void* opaque, const std::span<std::byte> destination,
+    const channel_internal::TensorSchemaPayloadReservation& reservation) noexcept {
+  auto& context = *static_cast<TensorSchemaEncodeContext*>(opaque);
+  const OutputState& state = *context.output;
+  expected<std::size_t, Error> encoded = make_unexpected(Error{ErrorCode::kProtocolError});
+  if (context.separate_tensor) {
+    if (context.tensors.size() == 1U && state.type_ops->encode_descriptor_tensor_loan != nullptr) {
+      encoded = state.type_ops->encode_descriptor_tensor_loan(context.payload,
+                                                              context.tensors.front(),
+                                                              context.metadata,
+                                                              context.endpoint_generation,
+                                                              destination);
+    } else if (state.type_ops->encode_descriptor_tensor_loans != nullptr) {
+      encoded = state.type_ops->encode_descriptor_tensor_loans(context.payload,
+                                                               context.tensors,
+                                                               context.metadata,
+                                                               context.endpoint_generation,
+                                                               destination);
+    }
+  } else if (state.type_ops->encode_descriptor_tensor_sample != nullptr) {
+    encoded = state.type_ops->encode_descriptor_tensor_sample(
+        context.payload, context.metadata, context.endpoint_generation, destination);
+  }
+  if (!encoded || *encoded == 0U || *encoded > destination.size() ||
+      reservation.field_count != context.tensors.size() ||
+      state.type_ops->descriptor_offset > *encoded ||
+      context.tensors.size() * sizeof(PayloadDescriptor) >
+          *encoded - state.type_ops->descriptor_offset) {
+    return encoded ? make_unexpected(Error{ErrorCode::kProtocolError})
+                   : make_unexpected(std::move(encoded).error());
+  }
+  for (std::size_t index = 0U; index < context.tensors.size(); ++index) {
+    const auto* field = reservation.field_at(index);
+    if (field == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    PayloadDescriptor descriptor = field->descriptor;
+    descriptor.schema_id = state.tensor_schema_id;
+    auto descriptor_encoded = channel_internal::encode_payload_descriptor_wire(
+        descriptor,
+        destination.subspan(state.type_ops->descriptor_offset + index * sizeof(PayloadDescriptor),
+                            sizeof(PayloadDescriptor)));
+    if (!descriptor_encoded) {
+      return make_unexpected(std::move(descriptor_encoded).error());
+    }
+  }
+  return *encoded;
+}
+
+[[nodiscard]] expected<void, Error>
+// Direct descriptor loans keep refresh, reservation, and recipient accounting indivisible.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_direct_loan(
+    OutputState& state, const void* payload, const std::span<const Tensor> tensors,
+    const SampleMetadata metadata, const bool require_direct_export) noexcept {
+  if (state.tensor_schema_endpoints.size() != 1U) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  auto& endpoint = state.tensor_schema_endpoints.front();
+  SampleMetadata endpoint_metadata = metadata;
+  if (endpoint.refresh_before_emit) {
+    if (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid() ||
+        (endpoint.plan_capture_clock.valid() &&
+         endpoint_metadata.source_clock_id != endpoint.plan_capture_clock) ||
+        (!endpoint.plan_capture_clock.valid() && (endpoint_metadata.source_clock_id.valid() ||
+                                                  endpoint_metadata.capture_timestamp_ns != 0))) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    auto refreshed =
+        state.classify_connection_refresh(endpoint.publisher->update_connections(), false);
+    if (!refreshed) {
+      return make_unexpected(std::move(refreshed).error());
+    }
+    if (!endpoint.peer_required && !endpoint.publisher->has_subscribers()) {
+      state.record_emit();
+      return {};
+    }
+    // Output activation serialization is the sole writer for this endpoint, so this peek
+    // remains valid through the immediately following publication.
+    auto endpoint_sequence = endpoint.publisher->next_operation_sequence();
+    if (!endpoint_sequence) {
+      return classify_tensor_failure(state, std::move(endpoint_sequence).error(), false);
+    }
+    endpoint_metadata.sequence = *endpoint_sequence;
+    if (endpoint.plan_capture_clock.valid()) {
+      endpoint_metadata.source_clock_id = endpoint.catalog_capture_clock;
+    }
+    state.session->project_publication_coordinate(endpoint_metadata);
+  }
+  auto reservation = endpoint.publisher->reserve_tensors(tensors, require_direct_export);
+  if (!reservation) {
+    return classify_tensor_failure(state, std::move(reservation).error(), false);
+  }
+  TensorSchemaEncodeContext context{
+      .output = &state,
+      .payload = payload,
+      .tensors = tensors,
+      .metadata = endpoint_metadata,
+      .endpoint_generation = endpoint.refresh_before_emit
+                                 ? channel_internal::kCompatibilitySchemaEndpointGeneration
+                                 : state.session->plan_generation_,
+      .separate_tensor = require_direct_export,
+  };
+  const channel_internal::TensorSchemaPayloadEncoder encoder{
+      .state = &context,
+      .encode = &encode_tensor_schema_transport,
+      .capacity = state.type_ops->wire_capacity,
+  };
+  ProcessLocalPublicationScope publication{
+      *state.session, endpoint.process_local_transport, state.owner, endpoint.emit_admitted};
+  auto published = endpoint.publisher->publish_encoded_payload(
+      encoder, std::move(*reservation), endpoint_metadata);
+  if (!published) {
+    if (publication_error_consumes_authority(published.error().code)) {
+      endpoint.last_sent_sequence = endpoint_metadata.sequence;
+      publication.invalidate();
+    } else {
+      publication.reject();
+    }
+    return classify_tensor_failure(state, std::move(published).error(), false);
+  }
+  endpoint.last_sent_sequence = endpoint_metadata.sequence;
+  publication.accept(*published, endpoint.activation_cut_subscribers, endpoint.emit_recipients);
+  endpoint.terminal_obligated |= *published != 0U;
+  if (*published != endpoint.expected_recipient_count) {
+    state.record_emit();
+    return make_unexpected(
+        *published < endpoint.expected_recipient_count
+            ? make_publication_partial_error(*published, endpoint.expected_recipient_count)
+            : Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
+  }
+  state.record_emit();
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+// Validate all schema fields before selecting one exact local or transported emission path.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_value(
+    OutputState& state, const void* payload, const std::span<const Tensor> tensors,
+    const SampleMetadata& metadata, const bool separate_tensor) noexcept {
+  auto authority = validate_emit_authority(state);
+  if (!authority) {
+    return authority;
+  }
+  const std::size_t tensor_count = state.type_ops->descriptor_tensor_static_count;
+  SubscriberState* const projected_subscriber = state.direct_subscriber;
+  const auto* projection =
+      projected_subscriber != nullptr && projected_subscriber->tensor_projection
+          ? &*projected_subscriber->tensor_projection
+          : nullptr;
+  if ((state.direct_subscriber == nullptr && state.tensor_schema_endpoints.empty()) ||
+      (projection == nullptr && state.encode_scratch.data() == nullptr) || tensor_count == 0U ||
+      tensor_count != tensors.size() ||
+      tensor_count > channel_internal::kMaximumDescriptorTensorFields ||
+      state.type_ops->descriptor_offset > state.type_ops->wire_capacity ||
+      tensor_count * sizeof(PayloadDescriptor) >
+          state.type_ops->wire_capacity - state.type_ops->descriptor_offset ||
+      (separate_tensor && state.type_ops->encode_descriptor_tensor_loans == nullptr &&
+       (tensor_count != 1U || state.type_ops->encode_descriptor_tensor_loan == nullptr))) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  if (projection != nullptr &&
+      (projection->tensor_index >= tensor_count || !state.tensor_schema_endpoints.empty())) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  if ((!state.tensor_fields.empty() && state.tensor_fields.size() != tensor_count) ||
+      (!state.tensor_logical_fields.empty() &&
+       state.tensor_logical_fields.size() != tensor_count)) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  if (state.type_ops->descriptor_metadata_fits != nullptr &&
+      !state.type_ops->descriptor_metadata_fits(payload)) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+  std::uint64_t aggregate_byte_size = 0U;
+  std::uint64_t selected_byte_size = 0U;
+  for (std::size_t index = 0U; index < tensor_count; ++index) {
+    const TensorAccessSnapshot snapshot = TensorAccess::snapshot(tensors[index]);
+    const bool matches =
+        state.tensor_fields.empty()
+            ? tensor_snapshot_matches_plan(snapshot,
+                                           state.tensor_max_byte_span,
+                                           state.tensor_memory_kind,
+                                           state.tensor_device) &&
+                  (!state.tensor_layout ||
+                   (tensor_count == 1U &&
+                    tensor_matches_port_layout(tensors[index], snapshot, *state.tensor_layout)))
+            : state.tensor_fields[index].tensor_index == index &&
+                  tensor_matches_field_contract(
+                      tensors[index], snapshot, state.tensor_fields[index]);
+    const bool logical_matches = state.tensor_logical_fields.empty() ||
+                                 (state.tensor_logical_fields[index].tensor_index == index &&
+                                  tensor_matches_logical_requirements(
+                                      tensors[index], state.tensor_logical_fields[index].tensor));
+    if (!matches || !logical_matches ||
+        snapshot.byte_size > std::numeric_limits<std::uint64_t>::max() - aggregate_byte_size) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    aggregate_byte_size += snapshot.byte_size;
+    if (projection != nullptr && projection->tensor_index == index) {
+      selected_byte_size = snapshot.byte_size;
+    }
+  }
+  SampleMetadata normalized = metadata;
+  normalized.version = SampleMetadataVersion{};
+  normalized.sequence = state.next_sequence;
+  normalized.byte_size = aggregate_byte_size;
+  normalized.payload_kind = PayloadKind::kDescriptorBacked;
+  if (auto stamped = state.session->stamp_publication_coordinate(normalized); !stamped) {
+    return make_unexpected(std::move(stamped).error());
+  }
+  if (state.direct_subscriber == nullptr && state.session->publication_credits_) {
+    // Publication credits: prove every recipient's capacity before reserving any sidecar record.
+    if (auto credited = state.session->await_publication_credits(state.tensor_schema_endpoints);
+        !credited) {
+      return credited;
+    }
+  }
+  if (state.direct_subscriber == nullptr && state.tensor_schema_endpoints.size() == 1U) {
+    return emit_tensor_schema_direct_loan(state, payload, tensors, normalized, separate_tensor);
+  }
+  // A projected direct subscriber takes one Tensor member of this sample and never reads the
+  // serialized root, so nothing has to be encoded for it. It receives the provider's own Tensor:
+  // the emitting loan still governs every slot, and the fields nobody asked for are simply not
+  // retained rather than separately released.
+  if (projection != nullptr) {
+    SampleMetadata projected_metadata = normalized;
+    projected_metadata.byte_size = selected_byte_size;
+    Sample<Tensor> projected{tensors[projection->tensor_index], projected_metadata};
+    return commit_direct_publication(state,
+                                     *projected_subscriber,
+                                     projected_metadata.sequence,
+                                     [&](SubscriberState& subscriber) noexcept {
+                                       return state.session->retain_direct_tensor_sample(
+                                           subscriber, std::move(projected));
+                                     });
+  }
+  const std::span<std::byte> destination{static_cast<std::byte*>(state.encode_scratch.data()),
+                                         state.type_ops->wire_capacity};
+  if (state.direct_subscriber == nullptr) {
+    return emit_tensor_schema_fanout(
+        state, payload, tensors, destination, normalized, separate_tensor);
+  }
+  expected<std::size_t, Error> encoded = make_unexpected(Error{ErrorCode::kProtocolError});
+  if (separate_tensor) {
+    if (tensor_count == 1U && state.type_ops->encode_descriptor_tensor_loan != nullptr) {
+      encoded = state.type_ops->encode_descriptor_tensor_loan(
+          payload, tensors.front(), normalized, state.session->plan_generation_, destination);
+    } else {
+      encoded = state.type_ops->encode_descriptor_tensor_loans(
+          payload, tensors, normalized, state.session->plan_generation_, destination);
+    }
+  } else {
+    if (state.type_ops->encode_descriptor_tensor_sample == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    encoded = state.type_ops->encode_descriptor_tensor_sample(
+        payload, normalized, state.session->plan_generation_, destination);
+  }
+  if (!encoded) {
+    return make_unexpected(std::move(encoded).error());
+  }
+  if (*encoded == 0U || *encoded > state.type_ops->wire_capacity ||
+      state.type_ops->descriptor_offset > *encoded ||
+      tensor_count * sizeof(PayloadDescriptor) > *encoded - state.type_ops->descriptor_offset) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  // A direct output's only schema endpoints are a mixed-locality family's cross-process and
+  // exported legs, which materialization admits only beside drop-oldest recipients.
+  const bool transported = !state.tensor_schema_endpoints.empty();
+  if (!state.direct_fanout.empty() || transported) {
+    // Encode once and share every field's backing; check each recipient before storing into any,
+    // or reserving a leg.
+    for (const SubscriberState* const recipient : state.direct_recipients()) {
+      if (!tensor_schema_recipient_admits(*recipient, tensors, normalized)) {
+        return make_unexpected(Error{ErrorCode::kInvalidArgument});
+      }
+    }
+  }
+  if (transported) {
+    return emit_mixed_locality_tensor_schema(
+        state, payload, tensors, destination, *encoded, normalized, separate_tensor);
+  }
+  auto retain = [&](SubscriberState& subscriber) noexcept {
+    return state.session->retain_direct_tensor_schema_sample(
+        subscriber, destination.first(*encoded), tensors);
+  };
+  expected<void, Error> retained;
+  if (!state.direct_fanout.empty()) {
+    retained = commit_direct_fanout_publication(state, normalized.sequence, retain);
+  } else {
+    retained =
+        commit_direct_publication(state, *state.direct_subscriber, normalized.sequence, retain);
+  }
+  if (!retained) {
+    return retained;
+  }
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+// One reservation, store, and publication transaction across the direct recipients and every leg.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+RuntimeChannelSession::Impl::OutputState::emit_mixed_locality_tensor_schema(
+    OutputState& state, const void* payload, const std::span<const Tensor> tensors,
+    const std::span<std::byte> destination, const std::size_t direct_encoded_size,
+    const SampleMetadata& metadata, const bool separate_tensor) noexcept {
+  // Every leg is refreshed and reserved before anything is stored, so a failure there releases the
+  // earlier reservations and keeps the sequence. The direct recipients then decode the shared
+  // encoding, and only afterward does each leg overwrite its descriptors and publish; a leg that
+  // fails then leaves the publication indeterminate.
+  const auto release_pending = [&]() noexcept {
+    for (auto& endpoint : state.tensor_schema_endpoints) {
+      if (endpoint.pending_reservation) {
+        endpoint.publisher->release_tensor(std::move(*endpoint.pending_reservation));
+        endpoint.pending_reservation.reset();
+      }
+    }
+  };
+  for (const auto& endpoint : state.tensor_schema_endpoints) {
+    if (endpoint.refresh_before_emit &&
+        (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid() ||
+         (endpoint.plan_capture_clock.valid() &&
+          metadata.source_clock_id != endpoint.plan_capture_clock) ||
+         (!endpoint.plan_capture_clock.valid() &&
+          (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0)))) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+  for (auto& endpoint : state.tensor_schema_endpoints) {
+    endpoint.pending_metadata = metadata;
+    if (endpoint.refresh_before_emit) {
+      auto refreshed =
+          state.classify_connection_refresh(endpoint.publisher->update_connections(), false);
+      if (!refreshed) {
+        release_pending();
+        return make_unexpected(std::move(refreshed).error());
+      }
+      if (!endpoint.peer_required && !endpoint.publisher->has_subscribers()) {
+        continue;
+      }
+      // Output activation serialization is the sole writer for this endpoint, so this peek
+      // remains valid through the publication below.
+      auto endpoint_sequence = endpoint.publisher->next_operation_sequence();
+      if (!endpoint_sequence) {
+        release_pending();
+        return classify_tensor_failure(state, std::move(endpoint_sequence).error(), false);
+      }
+      endpoint.pending_metadata.sequence = *endpoint_sequence;
+      if (endpoint.plan_capture_clock.valid()) {
+        endpoint.pending_metadata.source_clock_id = endpoint.catalog_capture_clock;
+      }
+      state.session->project_publication_coordinate(endpoint.pending_metadata);
+    }
+    auto reserved = endpoint.publisher->reserve_tensors(tensors, separate_tensor);
+    if (!reserved) {
+      release_pending();
+      return classify_tensor_failure(state, std::move(reserved).error(), false);
+    }
+    if (reserved->field_count != tensors.size()) {
+      endpoint.publisher->release_tensor(std::move(*reserved));
+      release_pending();
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    endpoint.pending_reservation.emplace(std::move(*reserved));
+  }
+
+  auto retain = [&](SubscriberState& subscriber) noexcept {
+    return state.session->retain_direct_tensor_schema_sample(
+        subscriber, destination.first(direct_encoded_size), tensors);
+  };
+  auto stored = store_direct_recipients(state, metadata.sequence, retain);
+  if (!stored) {
+    release_pending();
+    return stored;
+  }
+
+  // The direct encoding already carries the plan generation and this metadata, so a leg that
+  // does not refresh reuses it until a catalog leg re-encodes the scratch.
+  bool shared_encoding = true;
+  std::size_t shared_encoded_size = direct_encoded_size;
+  for (auto& endpoint : state.tensor_schema_endpoints) {
+    if (!endpoint.pending_reservation) {
+      continue;
+    }
+    std::size_t encoded_size = shared_encoded_size;
+    if (endpoint.refresh_before_emit || !shared_encoding) {
+      const std::uint64_t generation =
+          endpoint.refresh_before_emit ? channel_internal::kCompatibilitySchemaEndpointGeneration
+                                       : state.session->plan_generation_;
+      expected<std::size_t, Error> encoded = make_unexpected(Error{ErrorCode::kProtocolError});
+      if (separate_tensor) {
+        if (tensors.size() == 1U && state.type_ops->encode_descriptor_tensor_loan != nullptr) {
+          encoded = state.type_ops->encode_descriptor_tensor_loan(
+              payload, tensors.front(), endpoint.pending_metadata, generation, destination);
+        } else if (state.type_ops->encode_descriptor_tensor_loans != nullptr) {
+          encoded = state.type_ops->encode_descriptor_tensor_loans(
+              payload, tensors, endpoint.pending_metadata, generation, destination);
+        }
+      } else if (state.type_ops->encode_descriptor_tensor_sample != nullptr) {
+        encoded = state.type_ops->encode_descriptor_tensor_sample(
+            payload, endpoint.pending_metadata, generation, destination);
+      }
+      if (encoded && (*encoded == 0U || *encoded > destination.size() ||
+                      state.type_ops->descriptor_offset > *encoded ||
+                      tensors.size() * sizeof(PayloadDescriptor) >
+                          *encoded - state.type_ops->descriptor_offset)) {
+        encoded = make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+      if (!encoded) {
+        release_pending();
+        return classify_tensor_failure(state, std::move(encoded).error(), true);
+      }
+      encoded_size = *encoded;
+      shared_encoding = !endpoint.refresh_before_emit;
+      if (shared_encoding) {
+        shared_encoded_size = encoded_size;
+      }
+    }
+    auto& reservation = *endpoint.pending_reservation;
+    for (std::size_t index = 0U; index < tensors.size(); ++index) {
+      auto* field = reservation.field_at(index);
+      if (field == nullptr) {
+        release_pending();
+        return classify_tensor_failure(state, Error{ErrorCode::kProtocolError}, true);
+      }
+      field->descriptor.schema_id = state.tensor_schema_id;
+      auto descriptor_encoded = channel_internal::encode_payload_descriptor_wire(
+          field->descriptor,
+          destination.subspan(state.type_ops->descriptor_offset + index * sizeof(PayloadDescriptor),
+                              sizeof(PayloadDescriptor)));
+      if (!descriptor_encoded) {
+        release_pending();
+        return classify_tensor_failure(state, std::move(descriptor_encoded).error(), true);
+      }
+    }
+    ProcessLocalPublicationScope publication{
+        *state.session, endpoint.process_local_transport, state.owner, endpoint.emit_admitted};
+    channel_internal::TensorSchemaPayloadReservation published_reservation = std::move(reservation);
+    endpoint.pending_reservation.reset();
+    auto published = endpoint.publisher->publish_payload(destination.first(encoded_size),
+                                                         std::move(published_reservation),
+                                                         endpoint.pending_metadata);
+    if (!published) {
+      if (publication_error_consumes_authority(published.error().code)) {
+        publication.invalidate();
+      } else {
+        publication.reject();
+      }
+      release_pending();
+      return classify_tensor_failure(state, std::move(published).error(), true);
+    }
+    endpoint.last_sent_sequence = endpoint.pending_metadata.sequence;
+    publication.accept(*published, endpoint.activation_cut_subscribers, endpoint.emit_recipients);
+    endpoint.terminal_obligated |= *published != 0U;
+    if (*published != endpoint.expected_recipient_count) {
+      release_pending();
+      state.record_emit();
+      if (*published < endpoint.expected_recipient_count) {
+        return make_unexpected(
+            make_publication_partial_error(*published, endpoint.expected_recipient_count));
+      }
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
+    }
+  }
+  state.record_emit();
+  return {};
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_sample(
+    OutputState& state, const void* payload, const SampleMetadata& metadata) noexcept {
+  const std::uint32_t tensor_count = state.type_ops->descriptor_tensor_static_count;
+  if (state.type_ops->descriptor_tensor_count == nullptr ||
+      state.type_ops->descriptor_tensor_at == nullptr || tensor_count == 0U ||
+      tensor_count > channel_internal::kMaximumDescriptorTensorFields ||
+      state.type_ops->descriptor_tensor_count(payload) != tensor_count) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  auto& tensors = state.tensor_schema_scratch;
+  if (tensors.size() != tensor_count) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  const TensorScratchReset reset{tensors};
+  for (std::uint32_t index = 0U; index < tensor_count; ++index) {
+    const Tensor* tensor = state.type_ops->descriptor_tensor_at(payload, index);
+    if (tensor == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    tensors[index] = *tensor;
+  }
+  return emit_tensor_schema_value(
+      state, payload, std::span<const Tensor>{tensors}, metadata, false);
+}
+
+[[nodiscard]] expected<std::size_t, Error>
+RuntimeChannelSession::Impl::OutputState::encode_generated_schema(
+    void* opaque, const std::span<std::byte> destination) noexcept {
+  auto& context = *static_cast<GeneratedSchemaEncodeContext*>(opaque);
+  if (context.output == nullptr || context.payload == nullptr ||
+      context.output->type_ops->encode_payload == nullptr) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  auto encoded = context.output->type_ops->encode_payload(context.payload, destination);
+  if (encoded) {
+    trace_output_emit_phase(context.output->phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEncoded,
+                            context.output->port,
+                            context.sequence);
+  }
+  return encoded;
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_generated_schema_payload(
+    OutputState& state, const void* payload, const SampleMetadata& metadata,
+    const std::uint64_t emitted_sequence) noexcept {
+  if (state.type_ops->encode_payload == nullptr || state.encode_scratch.data() == nullptr) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  GeneratedSchemaEncodeContext context{
+      .output = &state,
+      .payload = payload,
+      .sequence = emitted_sequence,
+  };
+  const channel_internal::InlinePayloadEncoder encoder{
+      .state = &context,
+      .encode = &encode_generated_schema,
+      .capacity = state.type_ops->wire_capacity,
+  };
+  if (state.direct_subscriber == nullptr && !state.process_local_schema_identity &&
+      state.endpoints.size() == 1U) {
+    auto published = state.emit_payload({}, metadata, &encoder);
+    if (published || published.error().code != ErrorCode::kNotSupported) {
+      return published;
+    }
+  }
+  const std::span<std::byte> destination{static_cast<std::byte*>(state.encode_scratch.data()),
+                                         state.type_ops->wire_capacity};
+  auto encoded = encode_generated_schema(&context, destination);
+  if (!encoded) {
+    return make_unexpected(std::move(encoded).error());
+  }
+  return state.emit_payload(destination.first(*encoded), metadata);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_process_local_object(
+    OutputState& state, const void* payload, SampleMetadata metadata) noexcept {
+  if (!state.active) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  if (state.emitted_this_activation == state.max_emits_per_activation ||
+      state.next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+  if (payload == nullptr || state.direct_subscriber == nullptr || !state.endpoints.empty() ||
+      state.process_local_schema_identity.has_value()) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+  metadata.version = SampleMetadataVersion{};
+  metadata.sequence = state.next_sequence;
+  metadata.byte_size = 0U;
+  metadata.payload_kind = state.type_ops->payload_kind;
+  if (auto stamped = state.session->stamp_publication_coordinate(metadata); !stamped) {
+    return make_unexpected(std::move(stamped).error());
+  }
+  // Every recipient retains the same object. A store can displace an object from each recipient's
+  // slots; those references are released only after the channel locks unwind, when this returns.
+  std::size_t maximum_releases = 0U;
+  for (const SubscriberState* const recipient : state.direct_recipients()) {
+    maximum_releases += recipient->slots.size() + 1U;
+  }
+  DeferredSampleReleases releases{*state.direct_subscriber->input->type_ops, maximum_releases};
+  auto retain = [&](SubscriberState& subscriber) noexcept {
+    return state.session->store_direct_object_payload(subscriber, releases, payload, metadata);
+  };
+  if (!state.direct_fanout.empty()) {
+    return commit_direct_fanout_publication(state, metadata.sequence, retain);
+  }
+  return commit_direct_publication(state, *state.direct_subscriber, metadata.sequence, retain);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_non_tensor_sample(
+    OutputState& state, const void* payload, const SampleMetadata& metadata) noexcept {
+  const std::uint64_t emitted_sequence = state.next_sequence;
+  trace_output_emit_phase(state.phase_counters,
+                          RuntimePhaseTracePoint::kInlinePayloadEmitStarted,
+                          state.port,
+                          emitted_sequence);
+  expected<void, Error> emitted = make_unexpected(Error{ErrorCode::kFailure});
+  if (state.type_ops->codec_family == RuntimePayloadCodecFamily::kProcessLocalObject) {
+    emitted = emit_process_local_object(state, payload, metadata);
+  } else if (state.type_ops->codec_family == RuntimePayloadCodecFamily::kGeneratedSchema) {
+    emitted = emit_generated_schema_payload(state, payload, metadata, emitted_sequence);
+  } else if (state.type_ops->codec_family == RuntimePayloadCodecFamily::kCustomPod) {
+    if (!state.pod_identity || state.encode_scratch.data() == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::span<const std::byte> native{static_cast<const std::byte*>(payload),
+                                            state.type_ops->payload_size};
+    const std::span<std::byte> destination{static_cast<std::byte*>(state.encode_scratch.data()),
+                                           state.type_ops->wire_capacity};
+    auto encoded = channel_internal::PodFieldwiseCodec::encode_prevalidated(
+        *state.pod_identity, native, destination);
+    if (!encoded) {
+      return make_unexpected(std::move(encoded).error());
+    }
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEncoded,
+                            state.port,
+                            emitted_sequence);
+    emitted = state.emit_payload(destination, metadata);
+  } else {
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEncoded,
+                            state.port,
+                            emitted_sequence);
+    emitted = state.emit_payload(
+        {static_cast<const std::byte*>(payload), state.type_ops->wire_capacity}, metadata);
+  }
+  if (emitted) {
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEmitCompleted,
+                            state.port,
+                            emitted_sequence);
+  }
+  return emitted;
+}
+
+void RuntimeChannelSession::Impl::OutputState::note_publication_failure(Error& error) noexcept {
+  // Only the stop's own cancellation of this publication's wait is evidence. An expired budget, a
+  // fault after an earlier recipient accepted, or a stop accepted after the failure is not.
+  const bool cancelled = channel_internal::take_publication_cancelled();
+  if (!cancelled ||
+      (error.code != ErrorCode::kBackpressured && error.code != ErrorCode::kPublicationPartial &&
+       error.code != ErrorCode::kPublicationIndeterminate)) {
+    return;
+  }
+  // The marked error identifies this publication. A callback reports the stop only by returning
+  // it unchanged, so another publication's failure or a new error in the same activation cannot.
+  constexpr std::string_view kStopped{"RUNTIME_PUBLICATION_STOPPED"};
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    std::string message{kStopped};
+    if (!error.message.empty()) {
+      message.append(": ").append(error.message);
+    }
+    error.message = std::move(message);
+    error.provenance = next_publication_failure_provenance();
+    stop_cancelled_error = error;
+    stop_cancelled_generation = active_generation;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {  // NOLINT(bugprone-empty-catch)
+    // Left unrecorded, the failure keeps its ordinary classification.
+  }
+#endif
+}
+
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_sample(
+    void* opaque, const void* sample) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAttempts);
+  auto published = [&]() -> expected<void, Error> {
+    if (sample == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    if (state.tensor_payload()) {
+      return emit_tensor_sample(state, *static_cast<const Sample<Tensor>*>(sample));
+    }
+    const void* payload = state.type_ops->sample_payload(sample);
+    const SampleMetadata* metadata = state.type_ops->sample_metadata(sample);
+    if (payload == nullptr || metadata == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    return state.tensor_schema_payload() ? emit_tensor_schema_sample(state, payload, *metadata)
+                                         : emit_non_tensor_sample(state, payload, *metadata);
+  }();
+  if (published) {
+    count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAccepted);
+  } else {
+    if (published.error().code == ErrorCode::kBackpressured) {
+      count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitBackpressured);
+    }
+    state.note_publication_failure(published.error());
+  }
+  return published;
+}
+
+// Encode the borrowed native value synchronously through the bounded publication path.
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_ref(
+    void* opaque, const void* payload, EmitOptions options) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAttempts);
+  auto published = [&]() -> expected<void, Error> {
+    if (payload == nullptr)
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    if (state.type_ops->codec_family != RuntimePayloadCodecFamily::kGeneratedSchema)
+      return make_unexpected(Error{ErrorCode::kNotSupported});
+    // The existing bounded encoder consumes this reference synchronously, whether encoding
+    // directly into a transport reservation or into the Runtime-owned fanout scratch buffer.
+    // Reuse the owning path's authority, sequence, tracing and byte-size accounting unchanged.
+    return emit_non_tensor_sample(state, payload, metadata_from_options(options, 0U));
+  }();
+  if (published) {
+    count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAccepted);
+  } else {
+    if (published.error().code == ErrorCode::kBackpressured) {
+      count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitBackpressured);
+    }
+    state.note_publication_failure(published.error());
+  }
+  return published;
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_descriptor_tensor(void* opaque,
+                                                                 const void* descriptor,
+                                                                 const Tensor* tensor,
+                                                                 EmitOptions options) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAttempts);
+  auto published = [&]() -> expected<void, Error> {
+    if (descriptor == nullptr || tensor == nullptr || !state.tensor_schema_payload()) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    const TensorAccessSnapshot snapshot = TensorAccess::snapshot(*tensor);
+    const std::array tensors{*tensor};
+    return emit_tensor_schema_value(
+        state, descriptor, tensors, metadata_from_options(options, snapshot.byte_size), true);
+  }();
+  if (published) {
+    count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAccepted);
+  } else {
+    if (published.error().code == ErrorCode::kBackpressured) {
+      count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitBackpressured);
+    }
+    state.note_publication_failure(published.error());
+  }
+  return published;
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::emit_descriptor_tensors(
+    void* opaque, const void* descriptor, const std::span<const Tensor> tensors,
+    EmitOptions options) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAttempts);
+  auto published = [&]() -> expected<void, Error> {
+    if (descriptor == nullptr || tensors.empty() || !state.tensor_schema_payload()) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    std::uint64_t byte_size = 0U;
+    for (const Tensor& tensor : tensors) {
+      const TensorAccessSnapshot snapshot = TensorAccess::snapshot(tensor);
+      if (!snapshot.initialized || !snapshot.valid ||
+          snapshot.byte_size > std::numeric_limits<std::uint64_t>::max() - byte_size) {
+        return make_unexpected(Error{ErrorCode::kInvalidArgument});
+      }
+      byte_size += snapshot.byte_size;
+    }
+    return emit_tensor_schema_value(
+        state, descriptor, tensors, metadata_from_options(options, byte_size), true);
+  }();
+  if (published) {
+    count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAccepted);
+  } else {
+    if (published.error().code == ErrorCode::kBackpressured) {
+      count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitBackpressured);
+    }
+    state.note_publication_failure(published.error());
+  }
+  return published;
+}
+
+[[nodiscard]] expected<RuntimeLoanAllocation, Error>
+RuntimeChannelSession::Impl::OutputState::allocate(void* opaque) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  if (!state.active) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  const std::uint32_t prior = state.live_loan_count.fetch_add(1U, std::memory_order_acq_rel);
+  if (prior >= state.max_live_loans) {
+    state.live_loan_count.fetch_sub(1U, std::memory_order_acq_rel);
+    return make_unexpected(
+        Error{state.loans.empty() ? ErrorCode::kNotSupported : ErrorCode::kResourceExhausted});
+  }
+  for (LoanControl* loan : state.loans) {
+    if (!loan->live) {
+      loan->live = true;
+      loan->activation_generation = state.active_generation;
+      loan->references.fetch_add(1U, std::memory_order_relaxed);
+      return RuntimeLoanAllocation{.value = loan->value.data(), .loan = &loan->binding};
+    }
+  }
+  state.live_loan_count.fetch_sub(1U, std::memory_order_acq_rel);
+  return make_unexpected(
+      Error{state.loans.empty() ? ErrorCode::kNotSupported : ErrorCode::kResourceExhausted});
+}
+
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_loan(
+    void* opaque, RuntimeLoanBinding* binding, EmitOptions options) noexcept {
+  auto& state = *static_cast<OutputState*>(opaque);
+  count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAttempts);
+  if (binding == nullptr || binding->state == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  auto* loan = static_cast<LoanControl*>(binding->state);
+  if (loan->owner != &state || !loan->live) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  if (!state.active || loan->activation_generation != state.active_generation) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  const std::uint64_t emitted_sequence = state.next_sequence;
+  trace_output_emit_phase(state.phase_counters,
+                          RuntimePhaseTracePoint::kInlinePayloadEmitStarted,
+                          state.port,
+                          emitted_sequence);
+  expected<void, Error> published;
+  if (state.type_ops->codec_family == RuntimePayloadCodecFamily::kGeneratedSchema) {
+    published = emit_generated_schema_payload(
+        state, loan->value.data(), metadata_from_options(options, 0U), emitted_sequence);
+  } else if (state.type_ops->codec_family == RuntimePayloadCodecFamily::kCustomPod) {
+    if (!state.pod_identity || state.encode_scratch.data() == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::span<const std::byte> native{static_cast<const std::byte*>(loan->value.data()),
+                                            state.type_ops->payload_size};
+    const std::span<std::byte> destination{static_cast<std::byte*>(state.encode_scratch.data()),
+                                           state.type_ops->wire_capacity};
+    auto encoded = channel_internal::PodFieldwiseCodec::encode_prevalidated(
+        *state.pod_identity, native, destination);
+    if (!encoded) {
+      return make_unexpected(std::move(encoded).error());
+    }
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEncoded,
+                            state.port,
+                            emitted_sequence);
+    published = state.emit_payload(destination, metadata_from_options(options, destination.size()));
+  } else {
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEncoded,
+                            state.port,
+                            emitted_sequence);
+    published = state.emit_payload(
+        {static_cast<const std::byte*>(loan->value.data()), state.type_ops->wire_capacity},
+        metadata_from_options(options, state.type_ops->wire_capacity));
+  }
+  if (published || publication_error_consumes_authority(published.error().code)) {
+    loan->retire_live_authority();
+  }
+  if (published) {
+    trace_output_emit_phase(state.phase_counters,
+                            RuntimePhaseTracePoint::kInlinePayloadEmitCompleted,
+                            state.port,
+                            emitted_sequence);
+    count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitAccepted);
+  } else {
+    if (published.error().code == ErrorCode::kBackpressured) {
+      count_phase(state.phase_counters, RuntimePhaseCounter::kChannelEmitBackpressured);
+    }
+    state.note_publication_failure(published.error());
+  }
+  return published;
+}
+
+expected<void, Error> RuntimeChannelSession::Impl::OutputState::observed_emit_sample(
+    void* opaque, const void* sample) noexcept {
+  // Selected only during cold attachment. Reuse the existing session link to its observation
+  // owner, including after failed CUDA quiescence; ordinary OutputState needs no extra field.
+  // The single observed partition invokes this on its
+  // owner or synchronously dispatched callback lane, never concurrently with owner-side append.
+  // Call the native operation first: a rejected outside-activation emit is evidence of rejection,
+  // not evidence loss. publication() records it separately and authenticates active identities.
+  auto& state = *static_cast<OutputState*>(opaque);
+  auto* const observation = state.session->fixture_observation_.get();
+  const std::uint64_t sequence = state.next_sequence;
+  const auto result = emit_sample(opaque, sample);
+  if (result && state.next_sequence != sequence + 1U)
+    observation->invalidate();
+  observation->publication(
+      state.owner,
+      state.active_generation,
+      FixtureObservedPublication{.output = state.port,
+                                 .sequence = sequence,
+                                 .error = result ? ErrorCode::kSuccess : result.error().code,
+                                 .sequence_consumed = state.next_sequence != sequence});
+  return result;
+}
+
+expected<void, Error> RuntimeChannelSession::Impl::OutputState::observed_emit_loan(
+    void* opaque, RuntimeLoanBinding* binding, EmitOptions options) noexcept {
+  // Same synchronous single-writer and channel-owned observer lifetime as observed_emit_sample.
+  auto& state = *static_cast<OutputState*>(opaque);
+  auto* const observation = state.session->fixture_observation_.get();
+  const std::uint64_t sequence = state.next_sequence;
+  const auto result = emit_loan(opaque, binding, options);
+  if (result && state.next_sequence != sequence + 1U)
+    observation->invalidate();
+  observation->publication(
+      state.owner,
+      state.active_generation,
+      FixtureObservedPublication{.output = state.port,
+                                 .sequence = sequence,
+                                 .error = result ? ErrorCode::kSuccess : result.error().code,
+                                 .sequence_consumed = state.next_sequence != sequence});
+  return result;
+}
+
+const RuntimeOutputBindingOps RuntimeChannelSession::Impl::OutputState::kObservedBindingOps{
+    .emit_sample = &observed_emit_sample,
+    .emit_descriptor_tensor = &emit_descriptor_tensor,
+    .emit_descriptor_tensors = &emit_descriptor_tensors,
+    .allocate = &allocate,
+    .emit_loan = &observed_emit_loan,
+};
+
+const RuntimeOutputBindingOps RuntimeChannelSession::Impl::OutputState::kBindingOps{
+    .emit_sample = &emit_sample,
+    .emit_ref = &emit_ref,
+    .emit_descriptor_tensor = &emit_descriptor_tensor,
+    .emit_descriptor_tensors = &emit_descriptor_tensors,
+    .allocate = &allocate,
+    .emit_loan = &emit_loan,
+};
+
+}  // namespace holoscan::detail

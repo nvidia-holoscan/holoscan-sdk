@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace holoscan.tests;
+
+table ScopedMessage {
+  value:uint64 (id: 0);
+}
+
+root_type ScopedMessage;
+file_identifier "SCPM";

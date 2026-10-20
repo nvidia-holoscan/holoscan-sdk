@@ -1,0 +1,1 @@
+{"schema":"holoscan.tooling-component/v1","component":"holoscan-config-io","target":"holoscan::config_io","version":"@PROJECT_VERSION@","direct_holoscan_dependencies":["holoscan::config"],"features":{"formats":["json","yaml"],"raw_digest_version":1,"preservation_version":1},"experimental":false}

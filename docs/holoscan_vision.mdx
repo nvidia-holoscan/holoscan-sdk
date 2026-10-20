@@ -1,0 +1,379 @@
+<Note title="You will learn">
+  - Which GPU image and detection operators Holoscan Vision provides
+  - Which tensor layouts, channel counts, and element types each operator accepts
+  - How to compose Vision operators and bind their output tensors to a CUDA device
+  - How to build the module and consume its installed CMake package
+</Note>
+
+Holoscan Vision is the [core module](/holoscan/sdk-user-guide/modules) for
+GPU-resident image and detection pipelines. Eight operators use CV-CUDA, while
+`BayerDemosaicOp` uses NPP because CV-CUDA has no Bayer demosaic operation. All
+nine use the Holoscan 5.x programming model: typed ports, temporal
+contracts, bounded output pools, typed image payloads, and explicit image
+metadata transformations.
+
+<Warning>
+  The operators listed below and the types in
+  `<holoscan/vision/vision_types.hpp>` are the public, supported API of this
+  module in Holoscan SDK 5.0. The CV-CUDA and NPP calls each operator issues are an
+  implementation detail: backend versions and how the module invokes them may
+  change in any release. Write applications against the operators.
+</Warning>
+
+## Operators
+
+All operators live in the `holoscan::vision` namespace. Image operators use
+`Input<schema::ImageT>` and `Output<schema::ImageT>` ports named `input` and
+`output`. Their `Image.data` field holds the CUDA tensor. `RemapOp` also has a
+`map` input carrying `Tensor`; NMS uses `Tensor` for boxes, scores, and mask.
+The eight image operators have no Tensor compatibility ports or payload template
+variants.
+Names such as `CustomCropOp`, `CopyMakeBorderOp`, `ConvertToOp`, and
+`ReformatOp` deliberately retain their CV-CUDA operation names so developers
+can find the corresponding backend documentation and behavior directly.
+
+| Operator | Ports | Operation |
+|---|---|---|
+| `BayerDemosaicOp` | `input` → `output` | Reconstruct RGB or RGBA from a Bayer mosaic using NPP |
+| `ResizeOp` | `input` → `output` | Resize with nearest-neighbor, linear, cubic, or area interpolation |
+| `CustomCropOp` | `input` → `output` | Extract a crop rectangle contained within the input image |
+| `CopyMakeBorderOp` | `input` → `output` | Add constant, replicate, reflect, wrap, or reflect-101 borders |
+| `RemapOp` | `input` + `map` → `output` | Transform an image with absolute or normalized coordinate maps |
+| `NormalizeOp` | `input` → `output` | Apply per-channel base and scale values, plus global scale and shift |
+| `ConvertToOp` | `input` → `output` | Apply `alpha * input + beta` and saturate to a configured element type |
+| `ReformatOp` | `input` → `output` | Convert between interleaved HWC/NHWC and planar CHW/NCHW layouts |
+| `NonMaximumSuppressionOp` | `boxes` + `scores` → `mask` | Select boxes by score and intersection-over-union thresholds |
+
+Unary operators process each input sample independently. By default,
+`RemapOpParams::map_synchronization` is
+`RemapMapSynchronizationMode::kLatest`: every image anchors an activation, and
+the operator selects the newest causal map within `map_max_age`. A selected map
+can be reused for later images within the same age bound. The default maximum
+age permits run-lifetime reuse, which suits static lens and rectification maps.
+
+Image and map capture times must use the same clock domain for causal
+comparison. Publish the first eligible map before starting the image stream;
+images that arrive without an eligible map do not run later when a map becomes
+available. For frame-varying maps that require exact pairing, set
+`map_synchronization` to `RemapMapSynchronizationMode::kExact`. Exact mode uses
+a zero-width alignment window and requires identical image and map capture
+times. `NonMaximumSuppressionOp` always applies that exact requirement to boxes
+and scores.
+
+## Tensor contract
+
+Image inputs use rank-3 HWC or rank-4 NHWC layouts; `BayerDemosaicOp` accepts
+only rank-3 HWC. `ReformatOp` additionally accepts CHW and NCHW inputs and
+produces the corresponding target layout.
+`Image.width` and `Image.height` must match tensor dimensions. The image
+encoding must agree with the tensor's dtype, channels, and layout, and supplied
+plane descriptors must agree with its strides. `CUSTOM` encodings are accepted
+when the scalar storage satisfies the operator's requirements.
+
+Packed and chroma-subsampled encodings are unsupported and are rejected rather
+than reinterpreted as scalar image data.
+
+<Warning>
+  After `ReformatOp` produces CHW or NCHW, the next Holoscan Vision image
+  operator must be `ReformatOp` configured to convert back to HWC or NHWC;
+  otherwise, the tensor must leave the Vision module.
+</Warning>
+
+The following table is the accepted matrix for scalar, byte-addressable DLPack
+element types:
+
+| Operator input | Channels | Accepted element types |
+|---|---|---|
+| `BayerDemosaicOp` | 1 | U8 or U16 |
+| `ResizeOp` | 1, 3, or 4 | U8, U16, S16, or F32 |
+| `CustomCropOp` | 1–4 | U8, S8, U16, S16, S32, F32, or F64 |
+| `CopyMakeBorderOp` | 1, 3, or 4; 2 only for U8 | U8, U16, S16, or F32 |
+| `RemapOp` image | 1, 3, or 4 for U8; 1 for F32 | U8 or F32 |
+| `RemapOp` map | 2 | F32 |
+| `NormalizeOp` | 1, 3, or 4 | U8, S8, U16, S16, S32, or F32 |
+| `ConvertToOp` | 1–4 | U8, S8, U16, S16, S32, F32, or F64 |
+| `ReformatOp` | 1–4 | U8, S8, U16, S16, S32, F32, or F64 |
+
+`NonMaximumSuppressionOp` accepts S16 boxes shaped `[N, W, 4]` and F32
+scores shaped `[N, W]`. It emits a contiguous U8 selection mask shaped
+`[N, W]`. Each box is encoded as `(x, y, width, height)`.
+
+The following storage rules apply:
+
+- Interleaved inputs have tightly packed channels and pixels. Row and batch
+  pitch may include padding.
+- Planar `ReformatOp` inputs have tightly packed pixels. Row, channel, and
+  batch pitch may include padding.
+- NMS boxes and scores may use row pitch, but coordinates and scores are
+  tightly packed within a row. Boxes require an 8-byte-aligned base address
+  and batch pitch; scores require 4-byte alignment for both.
+- Vision outputs use contiguous storage.
+- Every byte stride and each tensor's total strided byte span must not exceed
+  `INT32_MAX`, as required by the underlying CV-CUDA operators.
+- Every tensor participating in one invocation uses the same CUDA device.
+
+A two-channel F32 `RemapOp` map may have a batch size of one or the image batch
+size. Its spatial dimensions may differ from both the input and output image:
+CV-CUDA samples the map over the destination grid when producing the configured
+output geometry. Image and detection batch capacities cannot exceed
+`holoscan::vision::kMaximumBatchSize` (65,535).
+
+`VisionElementType`, used by `ConvertToOpParams::output_type`, maps to DLPack as
+follows. Every Vision dtype is scalar (`lanes = 1`).
+
+| `VisionElementType` | DLPack code | Bits | Lanes |
+|---|---:|---:|---:|
+| `kU8` | `kDLUInt` | 8 | 1 |
+| `kS8` | `kDLInt` | 8 | 1 |
+| `kU16` | `kDLUInt` | 16 | 1 |
+| `kS16` | `kDLInt` | 16 | 1 |
+| `kS32` | `kDLInt` | 32 | 1 |
+| `kF32` | `kDLFloat` | 32 | 1 |
+| `kF64` | `kDLFloat` | 64 | 1 |
+
+`NormalizeOp` preserves the input dtype. To produce F32 values from a U8
+image, place `ConvertToOp` configured with `VisionElementType::kF32` before
+`NormalizeOp`; normalization alone does not cast the tensor.
+
+For more about Holoscan tensors and output allocation, see
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+## Bayer demosaic
+
+`BayerDemosaicOp` uses NPP's CFA-to-RGB(A) kernels because CV-CUDA has no
+corresponding Bayer demosaic operation. Its `ImageT` input carries a CUDA-device
+U8 or U16 tensor shaped `[H, W, 1]`, with even width and height and tightly
+packed samples. Row pitch may include padding. The image dimensions, encoding,
+and supplied plane records must agree with the tensor.
+
+`bayer_grid_pos` declares the CFA phase at the input ROI origin and defaults to
+`kGBRG`. Each named `BAYER_RGGB`, `BAYER_BGGR`, `BAYER_GRBG`, or `BAYER_GBRG`
+encoding must match the corresponding parameter value; a contradiction returns
+`kInvalidArgument` before allocation. For `CUSTOM`, `MONO8`, or `MONO16`, the
+parameter supplies the otherwise unnamed Bayer phase. A producer using these
+encodings must supply mosaic samples rather than an already reconstructed image.
+
+Output has the same dimensions and element type, with contiguous RGB storage
+or RGBA when `generate_alpha` is true. `alpha_value` is unscaled: its default
+255 remains 255 in U16 output; use 65535 for full-scale U16 alpha. U8 RGBA
+rejects values above 255 before allocation. When alpha generation is disabled,
+`alpha_value` is unused.
+
+Output encoding is `RGB8`/`RGBA8` or `RGB16`/`RGBA16`. ROI offsets, image header,
+exposure, gain, sample metadata, and provenance are preserved. `color_space` is
+cleared and `significant_bits` becomes unknown because interpolation changes
+sample values. Plane layout is rebuilt for the output tensor, and publication
+attaches its committed runtime-pool loan without copying pixels.
+
+## Execution and metadata
+
+CV-CUDA operators wrap the existing input storage and the plan-owned output
+tensor loan as non-owning NVCV tensors; Bayer passes their pointers directly to
+NPP. Neither path stages pixel storage or synchronizes the host. Backend work
+uses the CUDA stream supplied by the operator's `ExecutionContext`.
+
+Unary outputs preserve capture time, frame identity, trace identity, and sample
+flags. `RemapOp` treats its map as configuration: it takes capture time, frame
+identity, and trace identity from the image, and unions image and map flags,
+including when a retained map is reused. NMS combines both boxes and scores:
+it unions flags, keeps frame identity only on agreement, retires conflicting
+trace roots, and preserves their common capture time. Mixed clock domains are
+rejected. Image outputs also preserve the image header, exposure, and
+gain. `output.emit_tensor` attaches the committed runtime-pool loan to the
+output image without copying pixels.
+
+Image descriptors track the actual output geometry and storage. Plane offsets
+and row strides are rebuilt from output tensor strides. For NHWC/NCHW batches,
+the planes describe the first image; the tensor batch stride repeats that
+layout for the remaining images.
+
+| Operator | Image metadata changes |
+|---|---|
+| `BayerDemosaicOp` | Preserve geometry and ROI; set RGB8/RGBA8 or RGB16/RGBA16 encoding, mark significant bits unknown, and clear color space. |
+| `CustomCropOp` | Add the crop origin to ROI offsets with overflow checks. Shift Bayer phase according to the crop origin's parity. Preserve color space and significant bits. |
+| `CopyMakeBorderOp` | Subtract left/top padding from ROI offsets when both remain nonnegative; otherwise reset both to zero. Any padding changes Bayer encoding to `CUSTOM`. Zero or sample-copy borders preserve significant bits; nonzero constant borders mark precision unknown. With no padding, preserve metadata. |
+| `ResizeOp` | Changed dimensions reset ROI offsets and change Bayer encoding to `CUSTOM`. Nearest-neighbor preserves significant bits; other interpolation marks precision unknown. Unchanged dimensions preserve these claims. |
+| `RemapOp` | Always reset ROI offsets and change Bayer encoding to `CUSTOM`. Preserve significant bits only for nearest-neighbor image sampling with zero or sample-copy borders. |
+| `NormalizeOp` | Preserve geometry and dtype. Mark precision unknown and clear `color_space` for value-changing normalization; preserve both fields for identity normalization. |
+| `ConvertToOp` | Preserve geometry. Unscaled lossless casts retain source precision; lossy casts or nonidentity alpha/beta mark it unknown. Dtype changes or nonidentity alpha/beta clear `color_space`. Use a corresponding named encoding for the output dtype if available, otherwise `CUSTOM`. |
+| `ReformatOp` | Preserve geometry, color space, and significant bits. Convert `RGB8`/`BGR8` to planar `R8_G8_B8`/`B8_G8_R8` and back. Other combinations without a corresponding named encoding become `CUSTOM`. |
+
+Geometric operations preserve color space. Unknown precision is represented by
+`schema::kUnknownImageSignificantBits` (255); zero still means full container
+width. An unscaled lossless cast retains source precision, expanding zero to
+the input container width when the dtype changes. For example, a 10-bit
+`MONO16` image cast to F32 still reports 10 significant bits. This field does
+not specify a code range or valid-bit alignment: casting does not rescale
+white, shift bits, or normalize integer values to [0, 1]. Consumers must handle
+unknown precision explicitly instead of inferring it from the output dtype.
+
+## Author a graph
+
+Vision operators are default-constructible. Their typed Parameters provide the
+structural fields used to derive fixed output-pool capacity. `ResizeOp`,
+`CustomCropOp`, and `RemapOp` use their fixed output dimensions directly;
+`NormalizeOp` and `ReformatOp` inherit their connected input's maximum byte
+span, and `ConvertToOp` scales that input bound for its selected output dtype.
+`CopyMakeBorderOp` requires maximum output dimensions, while NMS requires a
+maximum box count. Complete configuration loading also requires every
+capacity-only maximum, including `max_batch_size`; direct C++ aggregate setup
+should set these fields to the application's real bound instead of relying on
+their single-sample defaults. This example omits the source and sink operators:
+
+```cpp
+#include <utility>
+
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/graph.hpp>
+#include <holoscan/vision/copy_make_border_op.hpp>
+#include <holoscan/vision/custom_crop_op.hpp>
+#include <holoscan/vision/resize_op.hpp>
+
+holoscan::Graph graph{"vision"};
+
+auto resize = graph.op<holoscan::vision::ResizeOp>("resize");
+resize.set_params(holoscan::vision::ResizeOpParams{
+    .width = 1280,
+    .height = 720,
+    .max_batch_size = 4U,
+    .interpolation = holoscan::vision::InterpolationMode::kLinear,
+});
+
+auto crop = graph.op<holoscan::vision::CustomCropOp>("crop");
+crop.set_params(holoscan::vision::CustomCropOpParams{
+    .x = 64,
+    .y = 32,
+    .width = 640,
+    .height = 480,
+    .max_batch_size = 4U,
+});
+
+auto border = graph.op<holoscan::vision::CopyMakeBorderOp>("border");
+border.set_params(holoscan::vision::CopyMakeBorderOpParams{
+    .max_width = 672,
+    .max_height = 512,
+    .max_batch_size = 4U,
+    .top = 16,
+    .bottom = 16,
+    .left = 16,
+    .right = 16,
+});
+
+graph.add_flow(resize->output, crop->input);
+graph.add_flow(crop->output, border->input);
+```
+
+Python uses schema-derived operator proxies from the separately packaged
+`holoscan_vision` module. The Bayer phase accepts a stable name or its numeric
+value, and both ports carry `holoscan.schema.Image`:
+
+```python
+import holoscan as hs
+from holoscan_vision import operators as vision_ops
+
+graph = hs.Graph("bayer")
+demosaic = vision_ops.BayerDemosaicOp(
+    graph,
+    "demosaic",
+    bayer_grid_pos="rggb",
+    generate_alpha=True,
+    alpha_value=255,
+)
+```
+
+The other accepted names are `"bggr"`, `"gbrg"`, and `"grbg"`; numeric values
+0 through 3 are equivalent. Invalid phases and values outside the `uint16`
+range for `alpha_value` are rejected before the operator is attached to the
+graph. The narrower limit depends on the input: when `generate_alpha=True`,
+compute accepts the full range for U16 input but rejects values above 255 for
+U8 input before allocating the output.
+
+Bind every runtime-pool CUDA tensor producer to a deployment device, including
+Vision outputs. This is a general Holoscan 5 requirement: the compiler does not
+guess device zero, and compilation fails if a CUDA pool output has no resolved
+device:
+
+```cpp
+holoscan::CompileOptions options;
+options.deployment
+    .bind_tensor_output_device(holoscan::TensorOutputDevicePlacement{
+        .operator_path = "resize",
+        .output_port = "output",
+        .device = holoscan::DeviceId{0},
+    })
+    .bind_tensor_output_device(holoscan::TensorOutputDevicePlacement{
+        .operator_path = "crop",
+        .output_port = "output",
+        .device = holoscan::DeviceId{0},
+    })
+    .bind_tensor_output_device(holoscan::TensorOutputDevicePlacement{
+        .operator_path = "border",
+        .output_port = "output",
+        .device = holoscan::DeviceId{0},
+    });
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+```
+
+See [Graph composition in depth](/holoscan/sdk-user-guide/composing-applications/graph-composition)
+for complete graph wiring. The source tree includes a complete image-processing
+and detection example at
+[`modules/vision/examples/vision_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/modules/vision/examples/vision_pipeline/cpp).
+
+## Build, test, and consume
+
+Build and test through the SDK-level runner from the repository root:
+
+```bash
+./run build --config \
+  "-DHOLOSCAN_BUILD_VISION=ON -DHOLOSCAN_BUILD_EXAMPLES=ON -DHOLOSCAN_BUILD_TESTS=ON"
+./run test --options "-L vision"
+```
+
+The SDK development image provides CV-CUDA and NPP development files for
+shared builds. GPU tests report a CTest skip when no usable CUDA device is present.
+
+Installed CMake consumers use the exported `holoscan::vision` target:
+
+```cmake
+find_package(holoscan COMPONENTS vision REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::vision)
+```
+
+Standalone consumers can instead use:
+
+```cmake
+find_package(holoscan-vision REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::vision)
+```
+
+Set `holoscan-vision_DIR` to `<prefix>/lib/cmake/holoscan` when the SDK is outside CMake's
+default search locations. The Debian packages install it in
+`/usr/lib/<triplet>/cmake/holoscan`, which CMake searches by default.
+
+`HOLOSCAN_BUILD_VISION` defaults to `ON`. CPack Debian generation packages Vision
+as the `holoscan-vision` payload by default, which depends on the matching
+`holoscan-core` version. Set `HOLOSCAN_BUILD_VISION=OFF` to omit the module from
+a source build.
+
+Holoscan Vision uses CV-CUDA internally without exposing it in public headers.
+Published Vision Debian packages bundle the Vision shared library and the
+required CV-CUDA runtime libraries. To develop with CV-CUDA directly, install
+the matching Debian packages for your architecture and CUDA version from the
+[CV-CUDA release assets](https://github.com/CVCUDA/CV-CUDA/releases).
+
+Bayer demosaic also requires NPP, declared as a dependency of the Vision Debian
+package and Python wheel.
+
+## Recap
+
+- Holoscan Vision provides nine C++ operators backed by CV-CUDA and NPP
+  for Bayer demosaic, image transformation, normalization, format conversion, and NMS.
+- Image payloads carry validated descriptors and CUDA tensors. Work runs on
+  the HSDK runtime stream and outputs use bounded, plan-owned tensor pools.
+- The accepted layout, channel, dtype, pitch, and device rules are explicit;
+  validate producers against the tensor matrix before composing a pipeline.
+- `RemapOp` reuses a causal map by default; configure `map_max_age` for the
+  required freshness or select `kExact` for timestamp-paired maps.
+- Build through `./run`, or consume the installed `holoscan::vision`
+  CMake target through the `vision` component of the `holoscan` package.

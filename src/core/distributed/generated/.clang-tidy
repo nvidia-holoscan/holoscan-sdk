@@ -1,2 +1,0 @@
-# Disable clang-tidy for protobuf-generated files
-Checks: '-*'

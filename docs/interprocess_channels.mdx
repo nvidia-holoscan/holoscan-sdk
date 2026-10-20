@@ -1,0 +1,358 @@
+<Warning>
+  **Developer preview.** Cross-process channels currently support scalar, POD,
+  self-contained-schema, and Tensor payloads; cross-process Tensors may be
+  host-pageable, pinned-host, or CUDA-device backed (with bounded staging
+  where placement requires it) and always arrive read-only. A restart-capable
+  external import may accept at most one replacement producer incarnation,
+  including raw-Tensor and descriptor-backed Tensor schema imports, and there
+  is no author-facing launcher for multi-process worker isolation yet. The API
+  surface may evolve in upcoming releases — verify against the current headers
+  before relying on it.
+</Warning>
+
+Sometimes your pipeline does not end at the edge of one process. A sensor
+daemon runs as its own binary, a recorder outlives the graph it observes, or a
+deployment simply insists that producer and consumer never share an address
+space. Interprocess channels let a compiled Holoscan graph exchange samples
+with another operating-system process over the same `holomq://` topics you
+already use for [external topics](/holoscan/sdk-user-guide/composing-applications/external-topics)
+— the graph side stays declarative, and the peer process attaches from the
+outside as a standalone client.
+
+The whole mechanism rests on one idea: the two processes share **exactly one
+artifact** — a serialized endpoint catalog. Everything else in this page
+follows from that.
+
+<Note>
+  **You will learn**
+
+  - Why the serialized endpoint catalog is the *only* cross-process contract
+  - How the graph side binds automatically via `import_topic` / `export_topic`
+    while the standalone side attaches explicitly with `ChannelRuntime`
+  - The mandatory retry pattern for asynchronous attach (`kNotReady` /
+    `kBackpressured`)
+  - How generation-fenced producer restart works, and why the restart budget
+    ends in `kResourceExhausted`
+  - What cross-process Tensors can and cannot do today
+</Note>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+## The catalog is the whole contract
+
+When you `compile()` a graph that imports or exports `holomq://` topics, the
+accepted plan carries a `ChannelEndpointCatalog` describing every boundary
+endpoint: payload identity, queue policy, capacities, and process groups. That
+catalog is serializable — `save_json()` writes it on one side,
+`ChannelEndpointCatalog::load_json()` reads it on the other — and it is the
+**only** thing the two processes share:
+
+- The peer process inherits **nothing else** — no compiled plan, no in-memory
+  C++ objects, no transport handles. A differently built peer binary can
+  attach as long as it loads the same catalog bytes.
+- Either process may start first; the canonical catalog bytes round-trip
+  identically, so startup order does not matter.
+- "What crosses the boundary" becomes a single inspectable JSON artifact you
+  can check into deployment configuration, diff, and audit.
+
+Two consequences are worth internalizing. First, **locality is a compile
+decision**: each accepted cross-process edge gets one deterministic dedicated
+service, so the boundary is replay-stable and independent of which peer
+attaches first. Second, **a wrong or stale catalog fails at attach, not at
+compile** — if you change the boundary (payload type, endpoint name, queue
+policy), regenerate and re-share the catalog.
+
+<svg viewBox="0 0 760 330" role="img" aria-labelledby="ipc-catalog-handoff-title" aria-describedby="ipc-catalog-handoff-description" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="ipc-catalog-handoff-title">Catalog handoff: the graph process saves catalog.json, the peer process loads it and attaches with a retry loop</title>
+  <desc id="ipc-catalog-handoff-description">The graph process compiles a plan and saves its endpoint catalog as catalog.json. A peer process loads that catalog, creates a ChannelRuntime, and retries attachment on kNotReady or kBackpressured.</desc>
+  <defs>
+    <marker id="ipc-catalog-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="380" y="34" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Catalog handoff</text>
+
+  <rect x="24" y="64" width="224" height="240" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="24" y="64" width="224" height="240" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+  <text x="136" y="92" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Graph process</text>
+  <rect x="44" y="108" width="184" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="136" y="131" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compile()</text>
+  <line x1="136" y1="144" x2="136" y2="163" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#ipc-catalog-arrow)"/>
+  <rect x="44" y="168" width="184" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="136" y="191" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">plan</text>
+  <line x1="136" y1="204" x2="136" y2="223" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#ipc-catalog-arrow)"/>
+  <rect x="44" y="228" width="184" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="136" y="246" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">endpoint_catalog()</text>
+  <text x="136" y="262" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">.save_json()</text>
+
+  <line x1="252" y1="172" x2="338" y2="172" stroke="currentColor" strokeWidth="2" markerEnd="url(#ipc-catalog-arrow)"/>
+  <path d="M 348 130 h 46 l 18 18 v 66 h -64 z" fill="#76B900" fillOpacity="0.15" stroke="#76B900" strokeWidth="2"/>
+  <path d="M 394 130 v 18 h 18" fill="none" stroke="#76B900" strokeWidth="2"/>
+  <line x1="360" y1="164" x2="400" y2="164" stroke="#76B900" strokeWidth="1.5" opacity="0.55"/>
+  <line x1="360" y1="180" x2="400" y2="180" stroke="#76B900" strokeWidth="1.5" opacity="0.55"/>
+  <line x1="360" y1="196" x2="400" y2="196" stroke="#76B900" strokeWidth="1.5" opacity="0.55"/>
+  <text x="380" y="236" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">catalog.json</text>
+  <text x="380" y="254" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">the only cross-process contract</text>
+  <line x1="422" y1="172" x2="502" y2="172" stroke="currentColor" strokeWidth="2" markerEnd="url(#ipc-catalog-arrow)"/>
+
+  <rect x="512" y="64" width="224" height="240" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="512" y="64" width="224" height="240" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+  <text x="624" y="92" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Peer process</text>
+  <rect x="532" y="108" width="184" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="624" y="131" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">load_json()</text>
+  <line x1="624" y1="144" x2="624" y2="163" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#ipc-catalog-arrow)"/>
+  <rect x="532" y="168" width="184" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="624" y="191" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">ChannelRuntime</text>
+  <line x1="624" y1="204" x2="624" y2="223" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#ipc-catalog-arrow)"/>
+  <rect x="532" y="228" width="184" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="600" y="255" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">attach</text>
+  <path d="M 690 238 A 12 12 0 1 1 678 250" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#ipc-catalog-arrow)"/>
+  <text x="624" y="288" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">retry on kNotReady /</text>
+  <text x="624" y="303" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kBackpressured</text>
+</svg>
+
+## The graph side: automatic binding
+
+The graph never writes "channel" code. It declares the boundary with
+`import_topic` / `export_topic` exactly as on any external-topics page, then
+saves the plan's catalog for the peer:
+
+```cpp
+holoscan::Graph graph{"producer-graph"};
+
+holoscan::TopicOptions options;
+options.endpoint_name = "frames";  // deployment-stable name the peer will use
+const auto imported =
+    graph.import_topic<std::uint32_t>("holomq://frames", std::move(options));
+// ... wire imported.output() into your operators with add_flow() ...
+graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clk"));
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) { /* inspect plan.json() and stop */ }
+
+// Hand the boundary to the peer process — this JSON is the ONLY shared state:
+if (auto saved = plan.endpoint_catalog().save_json("/tmp/frames-catalog.json");
+    !saved) { /* handle the error */ }
+
+// Spawn or exec the peer, passing it the catalog path (argv, env, ...).
+holoscan::RunSession session = holoscan::run_async(plan);
+// The graph-side import binds automatically — no client code here.
+// ... later: session.request_stop(); session.wait();
+```
+
+This graph-side declaration is illustrative;
+`camera_imu_control` supplies the shipping graph-boundary use, while
+`external_clients` supplies the standalone peer loops.
+
+That is the entire graph-side story: declare the topic, compile, save the
+catalog, run. Binding, producer-restart fencing, and Tensor transport all
+happen under the hood.
+
+## The standalone side: explicit client, asynchronous attach
+
+The peer is an ordinary binary. It loads the catalog, creates a
+`ChannelRuntime`, and attaches a publisher or subscriber by endpoint name —
+the same client surface described on
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients):
+
+```cpp
+auto catalog = holoscan::ChannelEndpointCatalog::load_json(argv[1]);
+if (!catalog) { return 1; }
+auto runtime = holoscan::ChannelRuntime::create();
+if (!runtime) { return 1; }
+auto publisher = runtime->create_publisher<std::uint32_t>(*catalog, "frames");
+if (!publisher) { return 1; }
+```
+
+For a descriptor-backed schema, attach with
+`create_tensor_schema_publisher<Payload>()` or
+`create_tensor_schema_subscriber<Payload>()`; publish the FlatBuffer metadata
+and complete Tensor inventory together, and receive them with
+`receive_tensors()`. Descriptor-schema publishers support the same capture,
+frame, trace, and validity metadata as the scalar catalog surface, while the
+resolved sample or bundle exposes the received `sample_metadata`. The
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example contains both the Graph process and standalone process for this case.
+
+<Warning>
+  **Cross-process attach is asynchronous, and there is no "wait until
+  connected" helper.** `emit_captured()` returns `kNotReady` or
+  `kBackpressured` until the peer connects, and `receive_sample()` returns
+  `kNotReady` — the retry loop *is* how the connection is established. Code
+  that treats the first `kNotReady` as a hard failure will never connect.
+</Warning>
+
+Wrap every publish and receive in a deadline-bounded retry loop over the
+retryable codes, in the usual
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+style:
+
+```cpp
+const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+const auto try_emit = [&](std::uint32_t value, std::int64_t capture_ns) {
+  for (;;) {
+    auto emitted = publisher->emit_captured(value, capture_ns);
+    if (emitted) { return true; }
+    if (!emitted) {
+      const auto code = emitted.error().code;
+      const bool retryable = code == holoscan::ErrorCode::kNotReady ||
+                             code == holoscan::ErrorCode::kBackpressured;
+      if (!retryable) { return false; }  // handle this code outside the loop
+    }
+    if (std::chrono::steady_clock::now() >= deadline) { return false; }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+};
+```
+
+A subscriber is symmetric: `runtime->create_subscriber<T>(*catalog, name)`,
+then poll `receive_sample()` in the same deadline loop, retrying only on
+`kNotReady`. The `external_clients` example ships both halves — a
+`sensor_daemon` publisher and a `recorder` subscriber — each taking the
+catalog path and endpoint name on the command line.
+
+Endpoint shutdown is asymmetric by design. Publisher `close()` publishes
+ordered producer EOS. Subscriber `close()` only retires that process's local
+consumer endpoint: it sends no EOS, marks no graph port terminal, and supplies
+no natural-completion evidence. It may discard unread local samples, while
+already returned owning values keep their normal lifetime. Stop and join any
+thread using the subscriber before closing it; do not race close against a
+receive or wait. Later checked operations on the consumed facade return
+`kClosed`.
+
+For a finite input-driven graph, producer EOS propagates through each eligible
+Operator only after earlier accepted data and retained work drain. Graph
+exports then publish ordered terminal control, so a live standalone subscriber
+receives final data before remote `kClosed`. The `RunSession` becomes naturally
+`kCompleted` only when every contributing finite input path is terminal and no
+callback, selector claim, publication, Tensor loan, or qualified device use
+remains. Fan-in waits for every input required by its selector; fan-out closes
+each required arm independently. An independently triggered Operator treats
+its input as a side input, and an unrelated unbounded producer keeps the run
+live.
+
+A required external export subscriber must remain attached through remote
+`kClosed`. If it disappears after accepting data and terminal drain observes no
+peer, Runtime fails the run instead of treating local retirement as delivered
+EOS or retrying indefinitely. There is no reconnection grace inside terminal
+drain; any replacement must attach before that abandoned obligation is
+observed.
+
+An import admitted with `allow_external_restart` behaves differently: EOS
+fences one producer incarnation but does not close downstream outputs while a
+replacement incarnation remains available. Final EOS propagates after that
+finite replacement capacity is exhausted. Peer disappearance, silence,
+subscriber close, and timeout never substitute for this explicit protocol.
+
+<Tip>
+  Retry **only** `kNotReady` and `kBackpressured`. Leave the loop on any other
+  code and handle it according to that code's contract. In particular, never
+  retry `kPublicationPartial` or `kPublicationIndeterminate`: those outcomes
+  consume publication authority and may already have delivered the sample.
+</Tip>
+
+## Producer restart: generation-fenced rebind
+
+When an admitted reset or lifecycle restart touches an external import,
+Runtime may rebind it to a later producer incarnation. This includes scalar,
+POD, ordinary schema, raw-Tensor, and descriptor-backed Tensor schema imports.
+Before detaching
+the old binding, preflight requires both the **old incarnation's** accepted
+nonzero token and that same incarnation's explicit end-of-stream (the
+publisher's `close()`). A replacement producer need not already be present.
+After preflight succeeds, Runtime replaces the import's subscriber attachment
+so a later producer incarnation can attach through the same catalog. Peer
+absence alone is deliberately never enough: rebinding on silence would let old
+and new producer data silently mix. The incarnation token is transport/runtime
+evidence, not a public application type; applications observe only the typed
+retry and terminal outcomes below. There is no separate rebind API to call —
+rebind is part of the admitted reset or restart:
+
+- `kBackpressured` — the old peer (or a retained claim) is still live; keep
+  retrying.
+- `kNotSupported` — either the old incarnation's accepted token or its explicit
+  end-of-stream is missing, or the compiled import does not admit rebind (for
+  example, its admitted generation capacity is below two). Advisory absence is
+  insufficient by design.
+- `kResourceExhausted` — the bounded generation capacity is used up. This is
+  **terminal**.
+
+<Warning>
+  **The restart budget is one.** Restart-capable imports have generation
+  capacity two—one active producer plus one replacement—so a producer may
+  restart exactly once against a given boundary. Raw-Tensor and
+  descriptor-backed Tensor schema imports use the same budget and additionally
+  require all retained backing claims to quiesce before cutover. A further
+  rebind attempt returns `kResourceExhausted` **before** any destructive
+  mutation, and the slot is not reusable in that run; an in-graph lifecycle
+  restart that therefore cannot publish ends failed-stopped. Once an accepted
+  cutover's detach begins, a partial failure terminalizes the session rather
+  than exposing a half-rebound stream. Design supervision-and-relaunch
+  policies around these budgets; see
+  [Restart control](/holoscan/sdk-user-guide/advanced/restart-control) for the
+  in-graph counterpart.
+</Warning>
+
+Generation fencing applies to *external imports* only. Internal cross-process
+peers are fixed by the compiled plan and do not restart independently — that
+is a deliberate consequence of locality being a compile decision.
+
+## Tensors across processes
+
+Cross-process Tensor transport uses the same loan/write/commit/emit flow as
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth):
+the producer loans a slot, fills it, commits, and emits; the receiving process
+materializes a Core `Tensor` and keeps the exported buffer alive until the
+last claim retires. Three facts shape the surface today:
+
+- **Three memory kinds travel.** Host-pageable, pinned-host, and CUDA-device
+  Tensors cross the process boundary, with bounded staging where the declared
+  placement requires it.
+- **A CUDA device must be present.** Creating a catalog Tensor endpoint
+  requires an available CUDA device (virtual memory management) in the
+  process — even for host-pageable backing.
+- **The received Tensor is read-only.** A consumer that must mutate the data
+  has to copy it first.
+
+<Note>
+  **No author-facing multi-process launcher yet.** The runtime can isolate
+  process groups internally — `run_async()` fails closed on a plan that spans
+  multiple process groups rather than silently running them co-located — but
+  there is no application-author API to launch or orchestrate per-group
+  workers. That launcher is deployment infrastructure planned for a future
+  release. Today, write the far side of every process boundary as a
+  standalone client, exactly as shown above.
+</Note>
+
+## Recap
+
+- The serialized endpoint catalog (`save_json` / `load_json`) is the **only**
+  cross-process contract — the peer inherits no plan, objects, or handles.
+- The graph side is automatic (`import_topic` / `export_topic`); the
+  standalone side is explicit (`ChannelRuntime` + `create_publisher` /
+  `create_subscriber`). Never mix the two vocabularies.
+- Attach is asynchronous: wrap emit/receive in deadline retry loops over
+  `kNotReady` / `kBackpressured` — the loop *is* the connection handshake.
+- Producer restart for external imports is generation-fenced (the old
+  incarnation's accepted token plus that incarnation's explicit EOS) with a
+  budget of one. A missing fence fact or compiled no-rebind policy is
+  `kNotSupported`, a live peer or retained claim is `kBackpressured`, and a
+  spent generation budget is terminal `kResourceExhausted` before mutation.
+  Raw-Tensor and descriptor-backed Tensor schema imports share this behavior
+  and wait for retained backing claims to quiesce before cutover.
+- Cross-process Tensors may be host-pageable, pinned-host, or CUDA-device
+  backed, always arrive read-only, and need a CUDA device present to create
+  catalog Tensor endpoints; there is no author-facing multi-process worker
+  launcher yet.
+
+Next: [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+covers the external client API in full, including subscriber metadata and
+clean shutdown.

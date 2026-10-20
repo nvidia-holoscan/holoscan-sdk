@@ -1,0 +1,103 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#pragma once
+
+#include <cuda_runtime_api.h>
+
+#include <atomic>
+#include <memory>
+#include <string_view>
+
+#include <holoscan/core/activation.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/lifecycle.hpp>
+#include <holoscan/core/lifecycle_types.hpp>
+#include <holoscan/core/operator_ref.hpp>
+#include <holoscan/core/parameter_compute_control.hpp>
+#include <holoscan/core/parameter_schema_types.hpp>
+#include <holoscan/core/rate.hpp>
+#include <holoscan/core/tag.hpp>
+#include <holoscan/time/clock_registry.hpp>
+#include <holoscan/time/time_point.hpp>
+
+namespace holomq::cuda {
+class StreamLifetime;
+}  // namespace holomq::cuda
+
+namespace holoscan::detail {
+
+using RestartRequestFunction = expected<LifecycleRestartReceipt, Error> (*)(
+    void*, OperatorRef, LifecycleRestartOptions) noexcept;
+
+enum class TerminationRequest : std::uint8_t {
+  kNone = 0,
+  kCompletion = 1,
+  kStop = 2,
+};
+
+using TerminationRequestFunction = void (*)(void*, TerminationRequest) noexcept;
+using ExecutionPortRateResolver = expected<PortRateView, Error> (*)(void*, const void*,
+                                                                    bool) noexcept;
+
+/// @brief Couple every callback-visible Parameter fact in one immutable publication record.
+///
+/// Runtime pins this exact record before invoking a callback and retains its owning slot through
+/// callback return. The legacy scalar fields in `ExecutionContextState` remain only for focused
+/// synthetic fixtures until they migrate to the same production pin owner.
+struct PinnedParameterHeader {
+  const void* value{};             ///< Exact immutable aggregate address.
+  const void* local_type_token{};  ///< Process-local defining-module type token.
+  ParamGeneration generation{};    ///< Complete aggregate generation.
+  ParamSchemaHash schema_hash{};   ///< Declared contract hash, or zero for opaque mode.
+  std::uint32_t slot{};            ///< Bounded store slot, or zero for static `NoParams`.
+};
+
+[[nodiscard]] inline expected<void, Error> validate_restart_target(
+    const OperatorRef self, const OperatorRef target) noexcept {
+  if (!target.run_bound() || !self.run_bound() || target.plan_generation != self.plan_generation) {
+    return make_unexpected(Error{ErrorCode::kStaleOperatorRef});
+  }
+  if (target.run_generation != self.run_generation) {
+    return make_unexpected(Error{ErrorCode::kCrossSessionOperatorRef});
+  }
+  return {};
+}
+
+// Runtime and the private conformance fixture populate this bounded callback-lifetime record. The
+// public facade retains only its address. Process-local parameter type tokens never enter a plan,
+// diagnostic identity, schema, or transport record.
+struct ExecutionContextState {
+  Tag tag{};
+  TagTime tag_time{};
+  TimePoint activation_time{};
+  // Borrowed from the owner of the activation, which outlives this record. Copying a ClockRef
+  // would update the clock's shared reference count on every activation.
+  const ClockRef* clock{};
+  cudaStream_t cuda_stream{};
+  const std::shared_ptr<const holomq::cuda::StreamLifetime>* cuda_stream_lifetime{};
+  bool cuda_stream_capturing{};
+  TraceContext trace{};
+  ActivationStatus activation{ActivationReason::kNominal, OnViolation::kEmitWitness};
+  std::atomic_bool cancellation_requested{false};
+  const std::atomic_bool* cancellation_source{};
+  const void* params{};
+  const void* params_type{};
+  ParamGeneration params_generation{};
+  const PinnedParameterHeader* pinned_params{};
+  void* param_control_state{};
+  ParamComputeSubmitFunction submit_param_update{};
+  void* restart_state{};
+  RestartRequestFunction request_restart{};
+  void* termination_request_state{};
+  TerminationRequestFunction request_termination{};
+  OperatorRef self{};
+  std::string_view operator_path{};
+  void* rate_state{};
+  ExecutionPortRateResolver resolve_rate{};
+};
+
+}  // namespace holoscan::detail

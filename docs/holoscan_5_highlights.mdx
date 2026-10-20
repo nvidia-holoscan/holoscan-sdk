@@ -1,0 +1,266 @@
+<Note title="You will learn">
+  - Why Holoscan 5.0 redesigned the API instead of extending 4.x
+  - The six ideas behind the new API: readable timing, typed everything,
+    bounded memory, zero-copy movement, an inspectable compile step, and
+    agent-friendly surfaces
+  - What the compose → compile → run model looks like in code, next to the
+    4.x style it replaces
+  - Roughly what channel latency to expect, and where the full benchmark
+    provenance lives
+</Note>
+
+Holoscan 5.0 changes the API this much for one reason: in earlier releases,
+the properties that matter most in a sensor pipeline — timing, types, memory,
+and failure behavior — were *emergent*. You could not read an application and
+know whether it ran at 1 Hz or 10 kHz, because timing was synchronized to
+real hardware events rather than written down. Ports were matched by string
+name at runtime, so a typo compiled cleanly and failed on the bench. Queue
+depths and scheduling conditions were hand-tuned until the pipeline behaved,
+which meant correct behavior by coincidence rather than by specification.
+And because source operators needed real hardware attached, end-to-end
+verification required hardware in the loop.
+
+Holoscan 5.0 inverts this: everything that determines how your pipeline
+behaves is **declared in code, checked before anything runs, and inspectable
+as data**. The result is a smaller, stricter, statically typed C++ API that
+trades 4.x's flexibility for properties you can verify — by reading the
+source, by compiling the graph, and by unit-testing temporal behavior on any
+machine, with no sensors attached.
+
+<Warning title="API maturity">
+  Holoscan 5.0 provides a Stable source API core for basic in-process
+  graph/operator authoring, scalar ports, explicit Python port names, and
+  structured errors. Inferred defaults, temporal policies, Tensor APIs, and
+  plan inspection retain their own evolving classifications. See
+  [API stability](/holoscan/sdk-user-guide/introduction/api-stability) for
+  the Stable subset, separately classified surfaces, and compatibility boundaries.
+</Warning>
+
+## From implicit wiring to compose → compile → run
+
+One example tells most of the story. Below, the same camera source is
+sketched in the 4.x style and as an illustrative condensation using current
+5.x APIs. The complete shipping `camera_imu_control` implementation also
+declares Tensor layout and allocation bounds and uses the asynchronous
+reference harness.
+
+<Tabs>
+  <Tab title="Holoscan 4.x style (generic pseudocode)">
+    ```text
+    // Conceptual sketch of the pre-5.0 pattern — not literal 4.x code.
+    class MyApp : public Application {
+      void compose() override {
+        auto camera = make_operator<CameraOp>("camera",
+            make_condition<PeriodicCondition>("rate", 20ms));  // a hint, not a contract
+        auto fusion = make_operator<FusionOp>("fusion");
+        add_flow(camera, fusion, {{"output", "in"}});  // ports matched by string name
+      }
+    };
+
+    app.run();  // wiring, buffer sizing, and timing resolve here, at runtime;
+                // a misspelled port or an undersized queue surfaces as a
+                // runtime error or a silent stall — often only on real hardware
+    ```
+  </Tab>
+  <Tab title="Holoscan 5.0">
+    ```cpp
+    class CameraSource final : public holoscan::Operator<> {
+     public:
+      void setup(holoscan::OperatorSpec& spec) override {  // structure
+        spec.output(frame, "frame").max_emits_per_compute(1U);
+      }
+
+      [[nodiscard]] holoscan::Contract contract() const override {  // time
+        holoscan::Contract result;
+        result.trigger(holoscan::OnClock{.period = 20ms});  // the rate is in the code
+        return result;
+      }
+
+      [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+          holoscan::ExecutionContext& context) override {  // work
+        // ...borrow a tensor slot from the preallocated pool, fill, commit...
+        return frame.emit(std::move(*loan),
+                          holoscan::EmitOptions{.capture_time = context.activation_time()});
+      }
+
+      holoscan::Output<holoscan::Tensor> frame;  // a typed port, not a string
+    };
+
+    int main() {
+      CameraImuGraph graph;                                            // compose
+      const holoscan::ExecutionPlan plan = holoscan::compile(graph);   // compile
+      if (!plan.ok()) {
+        std::cerr << plan.json() << '\n';  // rejection is a value you can read
+        return 1;
+      }
+      return holoscan::run(plan);          // run fails closed
+    }
+    ```
+  </Tab>
+</Tabs>
+
+On Linux, that plain blocking call manages SIGINT/SIGTERM and requires either
+an adoptable early domain or exactly one live process task at both admission
+census reads. Embedding hosts with existing threads or signal ownership should
+use the explicit domain or caller-managed policy described in
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+Every difference visible in that pair is one of the six highlights below.
+For a guided walk through the migration itself, see
+[Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x).
+
+## Timing you can read
+
+Every operator is three declarations: `setup()` declares structure,
+`contract()` declares time, and `compute()` does the work. The temporal
+contract states what the runtime must satisfy *before* it invokes
+`compute()`: the **trigger** (what causes an activation), the **input
+selection** (which samples participate), and the **missing-data policy**
+(what happens when an input is absent or stale). A multi-rate fusion
+operator reads like this:
+
+```cpp
+result
+    .trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U})
+    .input(camera, holoscan::Exact{})
+    .input(imu, holoscan::BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 16U})
+    .on_missing(imu, holoscan::SafeDefault{});
+```
+
+Rates, maximum start delays, and synchronization behavior are no longer emergent
+properties you discover on hardware — they are visible in the source,
+validated when the graph compiles, and unit-testable with synthetic clocks
+on any development machine. `compute()` stays intentionally oblivious to
+temporal concerns: by the time it runs, its inputs are already selected.
+Start with [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+and [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+## Typed everything
+
+String-dispatched ports and untyped parameters are gone. Ports are typed
+members — `holoscan::Input<T>` and `holoscan::Output<T>` — wired with
+`add_flow()`, so connecting a `Tensor` output to a `std::uint32_t` input is
+rejected at graph-wiring time, not discovered mid-run. Parameters are plain
+C++ aggregates with a declared schema (`HOLOSCAN_PARAM_SCHEMA`), validated
+before the graph runs, and immutable during execution.
+
+The same discipline applies to failure: hot-path APIs return
+`holoscan::expected<T, Error>` values you branch on by `ErrorCode` (with
+`HOLOSCAN_TRY` for propagation) rather than throwing across the pipeline.
+See [Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters),
+[Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas),
+and [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+## Bounded by construction
+
+There is no heap allocation on the hot path. Tensors are not allocated per
+frame: `allocate_tensor()` **borrows** a slot from a pool that was sized and
+preallocated before execution. Queue geometry is explicit when pinned with
+`queue_depth`; otherwise compilation can derive it from exact nominal-rate and
+temporal-contract evidence. An explicit depth remains exact and is never
+silently inflated by the nominal recommendation. Both paths leave a reviewable
+plan record, so buffer sizing remains a design decision instead of a tuning
+accident. See
+[Rate-aware queue and pool sizing](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates).
+
+When a bound is reached, the failure is explicit and typed:
+`ErrorCode::kResourceExhausted` is the signature exhaustion failure, and
+your `compute()` decides what to do about it. Bounded memory is what makes
+latency predictable on embedded targets, and it is what makes the runtime a
+tractable substrate for safety-qualified software. The full model is in
+[Performance model](/holoscan/sdk-user-guide/performance/performance-model)
+and [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+Generated FlatBuffer schemas can also opt into reusable native storage with a
+`NATIVE_BOUNDS_FILE`. Prepared receive slots and `SchemaScratch<T>` retain their
+cold-created strings, vectors, and nested owners, while `emit_ref()` publishes an
+ordinary edited value without an owning native copy. Descriptor transforms use
+`DescriptorMetadataScratch<T>` with fresh Runtime Tensor loans. Oversize values
+fail before mutation or Tensor reservation; the runtime never switches to an
+unbounded allocation path. See
+[Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) and
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
+
+## Zero-copy data movement
+
+Samples move between operators without copies — in-process and
+cross-process use the same typed emit/receive surface over shared memory,
+so splitting a pipeline across processes does not change your operator
+code. Device tensors travel as descriptors into preallocated pools, and
+CUDA stream ordering is automatic: committing a write records readiness,
+and a received `Tensor` is already ordered on your compute stream.
+
+<Warning>
+  Never call `cudaStreamSynchronize` on the hot path. The runtime already
+  orders received tensors on your compute stream; a manual synchronize adds
+  a stall the scheduler cannot see.
+</Warning>
+
+<Note title="Controlled x86_64 transport results">
+  In one controlled interprocess 1:1 run, HoloMQ moved 64-byte inline values
+  at 1.323 million messages/s with 0.718 µs p50 latency, while typed Channel
+  POD delivery reached 1.183 million messages/s with 1.451 µs p50 latency.
+  Intraprocess Channel POD delivery reached 1.124 million messages/s with
+  1.496 µs p50 latency. A device `Tensor` through interprocess Channel
+  reached 700,028 messages/s with 2.280 µs p50 latency. Running-Graph
+  measurements include wake-up, controller, channel-pump, and
+  operator-activation work, and therefore cost more. These figures are
+  evidence from one machine, not performance guarantees.
+</Note>
+
+Full methodology and provenance live in
+[Channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks);
+Graph transport coverage is described in
+[Core runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks);
+the cross-process programming model is covered in
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).
+
+## An inspectable compile step
+
+Failure has three deliberately different styles, one per phase. During
+**compose**, authoring mistakes throw immediately — a mis-wired port fails
+at the line that wired it. **`compile()` never throws**: it returns an
+`ExecutionPlan`, and a rejected plan is a value — check `plan.ok()`, read
+`plan.json()`, store it, and diff it against yesterday's plan to see exactly
+which check failed and why. At **run** time the pipeline fails closed:
+`run()` refuses to limp along in a degraded mode you did not declare.
+
+Because the plan is data, it is also an artifact: you can emit it with a
+content digest and track plan changes in review alongside code changes. See
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check),
+[Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling), and
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+## Designed for AI-assisted development
+
+The same properties that make the API verifiable for you make it usable by
+coding agents. Ports, parameter schemas, trigger types, and error codes are
+enumerable, declarative surfaces — an agent can discover what exists instead
+of guessing operator names or port strings. And because temporal behavior
+compiles and unit-tests without hardware, an agent gets ground-truth
+feedback from the compile step: a rejected plan tells it precisely what to
+fix, on whatever machine it is running on.
+
+This is not a side effect; treating agents as first-class users shaped the
+API. How to set up and get the most out of agent-assisted Holoscan
+development is covered in
+[AI coding agents](/holoscan/sdk-user-guide/resources/ai-coding-agents).
+
+## Recap
+
+- Holoscan 5.0 replaces emergent behavior with declared behavior: timing,
+  types, memory bounds, and failure semantics are written in code and
+  checked before the pipeline runs — no hardware in the loop needed.
+- An operator is three declarations: `setup()` = structure, `contract()` =
+  time, `compute()` = work.
+- Typed ports and schema-validated parameters move whole error classes from
+  runtime to graph-wiring and compile time.
+- Memory is bounded by construction: preallocated pools, explicit queue
+  depths, and `kResourceExhausted` instead of hidden allocation.
+- Tensor backing moves zero-copy in-process and cross-process, with automatic
+  CUDA stream ordering; raw HoloMQ inline POD p50 was sub-microsecond on the
+  measured configuration.
+- The compile step is inspectable: authoring throws, `compile()` returns
+  plans you can read and diff, and run fails closed.
+
+Next: [Relevant technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies).

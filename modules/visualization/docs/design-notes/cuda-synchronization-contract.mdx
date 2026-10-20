@@ -1,0 +1,96 @@
+# CUDA synchronization contract
+
+*This is implemented: `holoviz/external_semaphore.hpp` on the API side,
+`vk_external_semaphore.cpp` underneath, exercised end-to-end by
+`examples/core/cuda_interop_benchmark/`.*
+
+Every `CUstream` used anywhere in this contract must be bound to the
+`holoviz::Device`'s `CUcontext` — the one supplied at init, or the one the device
+creates for itself when none is given.
+
+All synchronization is expressed as timeline values, in both directions across
+the CUDA/graphics boundary:
+
+- Every `Device::submit()` advances the internal device timeline and returns a
+  `SubmitSyncToken` — the value that completes with the batch.
+- An `ExternalSemaphore` is created from a `CUstream`
+  (`Device::create_external_semaphore`) and wraps an exportable timeline
+  semaphore imported into CUDA. It carries ordering both ways:
+  - `wait(SubmitSyncToken)` enqueues a wait on the stream, so CUDA work queued
+    after it observes finished rendering output;
+  - `signal()` enqueues a signal on the stream and returns an
+    `ExternalSyncToken`, which a submit waits on via
+    `SubmitDesc::wait_external_sync_tokens`.
+
+```text
+producer stream A ── semaphore A.signal() ──> token A ─┐
+producer stream B ── semaphore B.signal() ──> token B ─┼─> submit(wait: A,B,C) ──> draw
+producer stream C ── semaphore C.signal() ──> token C ─┘
+```
+
+## Where the join happens is the caller's choice
+
+An earlier draft of this contract required **exactly one CUDA convergence
+stream per frame**, with the caller joining every producer stream onto it
+before drawing. That restriction is gone: `SubmitDesc` takes a span of external
+sync tokens, so a submit can wait on any number of stream-bound semaphores
+directly.
+
+Both join strategies are therefore available, and choosing one is scheduling
+policy — which stays outside the renderer:
+
+- **Join in CUDA**: producers record events onto one stream (the established
+  5.x pattern — core `Tensor`'s `synchronize_for_consumer_stream()`,
+  `CudaEventPool`, HoloMQ's `enqueue_ready_wait`), and the frame uses one
+  semaphore and one token. This is ordinary CUDA stream/event dependency
+  tracking — nothing HoloViz-specific until the final signal:
+
+  ```mermaid
+  flowchart LR
+      subgraph CUDA["caller's CUDA graph"]
+          A[producer stream A] -->|cudaEventRecord| eA((event A))
+          B[producer stream B] -->|cudaEventRecord| eB((event B))
+          C[producer stream C] -->|cudaEventRecord| eC((event C))
+          eA -->|cudaStreamWaitEvent| J[join stream]
+          eB -->|cudaStreamWaitEvent| J
+          eC -->|cudaStreamWaitEvent| J
+      end
+      J -->|semaphore.signal| tok[["ExternalSyncToken (one)"]]
+      tok -->|wait_external_sync_tokens| S[Device::submit] --> D[draw]
+  ```
+
+- **Join in the submit**: each producer stream gets its own `ExternalSemaphore`
+  and the submit waits on all of the tokens — no CUDA-side join stream at all;
+  HoloViz does the fan-in:
+
+  ```mermaid
+  flowchart LR
+      A[producer stream A] -->|semaphore A.signal| tokA[["token A"]]
+      B[producer stream B] -->|semaphore B.signal| tokB[["token B"]]
+      C[producer stream C] -->|semaphore C.signal| tokC[["token C"]]
+      tokA --> S["Device::submit(wait: A,B,C)"]
+      tokB --> S
+      tokC --> S
+      S --> D[draw]
+  ```
+
+Either way the module never enumerates streams behind the caller's back and
+never inserts synchronization the caller did not ask for: the renderer supplies
+mechanism, the operator supplies policy.
+
+## The rest of the HoloViz shape it leans on
+
+- Timeline values are the only synchronization vocabulary (`SubmitSyncToken` /
+  `ExternalSyncToken` in `holoviz/common.hpp`) — no fences, no binary semaphores in
+  the API; the swapchain gates confine the presentation engine's
+  binary-semaphore special case to one file.
+- Images live in a pinned home state (`holoviz/image.hpp`) precisely so an external
+  observer — a CUDA importer at a fence boundary — always finds a known layout.
+- The CUDA context relationship is owned at device creation
+  (`DeviceDesc::cuda_context_mode`): an externally supplied or primary context
+  by default (`kExternal`), with implemented CUDA-in-Graphics (CiG) modes
+  (`kCigRequired`/`kCigPreferred`, via `VK_NV_external_compute_queue`) for
+  sharing the graphics hardware queue. Every `CUstream` used to create an
+  `ExternalSemaphore` on a given `holoviz::Device` must be bound to that device's
+  `CUcontext` — the one supplied at init, or the one the device created for
+  itself when none was given.

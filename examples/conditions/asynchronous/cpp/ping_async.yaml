@@ -1,9 +1,0 @@
-%YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
----
-
-async_receive: true
-async_transmit: false
-
-scheduler: event_based  # multi_thread, event_based or greedy

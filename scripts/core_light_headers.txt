@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Light and heavy Core headers, checked by check_light_headers.py. No header listed under [light]
+# may reach a header listed under [heavy] through its Holoscan includes, directly or transitively.
+# Paths are relative to include/holoscan/. Headers not listed here are not checked.
+#
+# To keep a header light, include the vocabulary leaf that declares the names it uses instead of
+# the header that aggregates them. List a new vocabulary leaf here when it replaces a heavy include.
+
+[light]
+# Vocabulary leaves.
+core/execution_plan_ids.hpp
+core/external_topic_types.hpp
+core/graph_ids.hpp
+core/graph_records.hpp
+core/lifecycle_types.hpp
+core/memory_kind.hpp
+core/operator_types.hpp
+core/parameter_schema_types.hpp
+core/port_ref.hpp
+core/port_types.hpp
+core/temporal_contract_types.hpp
+core/tensor_contract_types.hpp
+memory/tensor_shape.hpp
+
+# Headers that use only vocabulary from the authoring stack.
+core/diagnostic.hpp
+core/execution_context.hpp
+core/execution_plan.hpp
+core/lifecycle.hpp
+core/parameter_catalog.hpp
+core/parameter_provenance.hpp
+core/parameter_snapshot.hpp
+core/payload_options.hpp
+core/port.hpp
+core/predicate_input_view.hpp
+core/rate_generation.hpp
+core/run_session.hpp
+core/sample.hpp
+core/temporal_contract_records.hpp
+core/temporal_plan.hpp
+core/tensor_field.hpp
+core/tensor_output_loan.hpp
+core/tensor_schema_output_loan.hpp
+channel/descriptor_endpoints.hpp
+channel/endpoint_catalog.hpp
+channel/endpoint_concepts.hpp
+channel/tensor_loan.hpp
+channel/types.hpp
+
+[heavy]
+# Graph and Operator authoring, and the Parameter Schema and Tensor Contract DSLs.
+core/compile.hpp
+core/graph.hpp
+core/operator.hpp
+core/operator_spec.hpp
+core/parameter_schema.hpp
+core/port.hpp
+core/tensor_contract.hpp
+# Tensor storage, which brings memory_buffer.hpp, the logger, and fmt.
+logger/logger.hpp
+memory/tensor_storage.hpp

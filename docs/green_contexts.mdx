@@ -1,0 +1,309 @@
+<Warning>
+  **Developer preview.** CUDA Green Context placement is an experimental,
+  explicit deployment control. Its C++ authoring and plan-evidence surface is
+  available for qualified CUDA 13 targets, but it is not a whole-GPU QoS,
+  scheduling, or safety-isolation guarantee. Pin the SDK, CUDA driver, and
+  target GPU used to qualify a deployment.
+</Warning>
+
+CUDA Green Contexts let you assign an exact, manually authored execution
+partition to a driver-structured set of streaming multiprocessors (SMs). The
+SDK declares the split during compilation, realizes it before `kArm`, and
+hands each operator its assigned stream through
+`ExecutionContext::cuda_stream()`. Graph partitioning may automatically form
+an execution remainder, but dedicated Green Context size and assignment are
+never inferred from topology or assigned automatically.
+
+This page covers the complete phase-1 workflow and the limits of the native
+CUDA guarantee. Start with [Tensors in Depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+if you are not yet familiar with the HSDK 5 stream and Tensor lifetime model.
+
+<Note title="You will learn">
+  - How to query one target and author an exact manual partition binding
+  - How a named Green Context anchor composes with an automatic partition remainder
+  - Why `sm_count` is target-specific and a capability query is not a reservation
+  - How a single binding opts all HSDK CUDA work on that process/device into the pool
+  - Which streams and GPU resources are inside and outside the guarantee
+  - When compilation or cold Runtime materialization fails
+  - How Green Context placement interacts with multiple devices and processes
+</Note>
+
+For an isolated operator test using the same placement rules, see
+[operator testing deployment](/holoscan/sdk-user-guide/debugging-and-testing/testing#graph-configuration-and-deployment)
+and its installed grouped-CUDA-input example.
+
+## Query the execution target
+
+Always query an explicit CUDA ordinal on the deployment target:
+
+```cpp
+#include <cstdint>
+#include <iostream>
+
+#include <holoscan/core/compile.hpp>
+
+const holoscan::DeviceId device{0};
+const auto capability = holoscan::query_cuda_green_context_capability(device);
+if (!capability) {
+  std::cerr << holoscan::runtime_error_message(capability.error()) << '\n';
+  return 1;
+}
+
+std::cout << "device=" << capability->deployment_device_id
+          << " total_sms=" << capability->total_sm_count
+          << " quantum=" << capability->structured_sm_quantum
+          << " max_contexts=" << capability->max_structured_context_count
+          << '\n';
+```
+
+`CudaGreenContextCapability` reports the device UUID/PCI identity, total SM
+count, driver minimum partition size, co-scheduling alignment, their least
+common multiple (`structured_sm_quantum`), and the maximum number of
+minimum-sized structured units reported by a read-only driver split simulation.
+That maximum can be lower than `total_sm_count / structured_sm_quantum` when
+the GPU's cluster topology imposes additional constraints. The usable
+structured SM capacity is therefore `max_structured_context_count *
+structured_sm_quantum`; any remaining SMs stay outside HSDK work.
+
+The query is read-only discovery. It does **not** reserve SMs, create a CUDA
+context, claim the device, or guarantee that a later compile/run will succeed.
+An `sm_count` that is valid on one GPU, driver, or MIG configuration can be
+invalid on another. Deployment compilation joins the supplied target evidence,
+and Runtime re-queries the actual execution target before `kArm`; either stage
+can reject evidence that differs from the authoring machine.
+
+## Bind an exact manual partition
+
+Create the execution partitions first, then bind a partition name through the
+deep-owning `DeploymentBinding`. In this fragment, `decode`, `infer`, and
+`status` are operator handles returned while composing the graph:
+
+```cpp
+#include <utility>
+
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/graph.hpp>
+
+graph.partition("vision").add(decode).add(infer);
+graph.partition("status").add(status);  // CPU-only in this example
+
+const std::uint32_t vision_sms = capability->structured_sm_quantum;
+
+holoscan::CompileOptions options;
+options.deployment.bind_cuda_green_context(
+    "vision",
+    holoscan::CudaGreenContextPlacement{
+        .device = device,
+        .sm_count = vision_sms,
+    });
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+if (!plan.ok()) {
+  for (const auto& diagnostic : plan.diagnostics()) {
+    std::cerr << diagnostic.token << '\n';
+  }
+  return 1;
+}
+```
+
+To preserve one exact deployment anchor while allowing the compiler to cover
+the rest of the graph, author the anchor and request the explicit automatic
+remainder. The named partition does not grow, and the automatic partitions do
+not acquire a Green Context binding or an invented lookup name:
+
+```cpp
+graph.partition("vision").add(decode).add(infer);
+graph.auto_partition_remaining();
+
+const auto quantum = capability->structured_sm_quantum;
+holoscan::CompileOptions options;
+options.deployment.bind_cuda_green_context(
+    "vision",
+    holoscan::CudaGreenContextPlacement{.device = device, .sm_count = quantum});
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+const auto partitions = plan.partitions();
+const auto vision = partitions.lookup_named("vision");
+```
+
+The accepted plan is `kConstrainedAutomatic`: `vision` is an exact authored
+anchor and the remaining Operators are compiler-owned. Querying
+`partitions()` is a cold inspection operation; callbacks use the retained
+compiled bindings and do not look up partition names, paths, or Green Context
+resources on the recurring execution path. Automatic Green Context sizing or
+assignment remains outside this release's contract.
+
+The partition name and placement are copied by the binding. The request must
+name an exact root-Graph manual partition, use an explicit nonnegative device,
+and request a positive multiple of `structured_sm_quantum`. Duplicate,
+conflicting, unknown, unsupported, or overcommitted requests fail rather than
+being repaired. An omitted device is not interpreted as device zero.
+
+The plan exposes the accepted request, pool, resource, assignment, compute
+stream, and target-probe records through its read-only Green Context accessors.
+Those records contain stable plan identities and portable target evidence, not
+native CUDA handles.
+
+Green Context placement is admitted under the `kStandard`, `kResearch`, and
+`kRealTime` profiles after the same target and ownership checks. `kStandard`
+remains the default profile. Under `kRealTime`, the Green Context guarantee is
+the preallocated steady-state path: Runtime creates and verifies resources
+before `kArm`, and callback dispatch uses cached stream bindings. It is not a
+bounded-shutdown or defective-kernel recovery guarantee.
+
+## Understand complete device-local opt-in
+
+One accepted binding opts the complete `(process group, device)` into Green
+Context execution. The SDK does not leave its unassigned CUDA work on the
+ordinary primary-context stream:
+
+- explicitly bound CUDA partitions use their dedicated structured resources;
+- other HSDK CUDA partitions and compiler-owned transfer services use the
+  structured residual context;
+- a driver-reported irregular tail that cannot form a structured group is
+  excluded from HSDK work; and
+- every assigned partition, including one without a Tensor allocation, gets a
+  planned and verified stream before callbacks can begin.
+
+This explicit placement is stronger than
+`CompileOptions::cuda_execution.compute_stream_policy`. The compiler first
+forms ordinary partition/device or shared process/device bindings, then replaces
+the opted-in device's final bindings with dedicated or residual Green Context
+streams. Fence fusion is decided only afterward and requires exact final stream
+ID equality. Selecting `kSharedProcessDevice` therefore does not collapse two
+partitions whose accepted Green Context placement gives them different streams.
+
+The split can consume the complete structured device when the graph needs no
+residual CUDA work. Otherwise, compilation must retain sufficient residual
+capacity. An explicit request never degrades to an ordinary CUDA stream.
+
+Inside `compute()`, direct all CUDA work to the stream supplied by the Runtime:
+
+```cpp
+holoscan::expected<void, holoscan::Error>
+compute(holoscan::ExecutionContext& context) override {
+  cudaStream_t stream = context.cuda_stream().get();
+  if (stream == nullptr) {
+    return holoscan::make_unexpected(
+        holoscan::Error{holoscan::ErrorCode::kFailure, "missing CUDA stream"});
+  }
+  // Launch kernels and asynchronous copies on stream.
+  return {};
+}
+```
+
+Only work submitted through `ExecutionContext::cuda_stream()`—or framework
+Tensor/Channel operations explicitly ordered onto their planned service
+stream—is covered. CUDA's legacy/default stream, an application-created
+stream, a library's hidden stream, or a stream obtained outside the execution
+context is outside the HSDK guarantee. The SDK cannot redirect such work into
+the assigned Green Context.
+
+Staging a pinned-host field of a descriptor-backed Tensor schema is a host
+copy and receives no CUDA service stream. The field's producing and consuming
+operators still receive compute streams, which a Green Context partition
+supplies like any other; this is a general Tensor rule, not a Green Context
+exception. See
+[Pinned-host readiness follows the writer](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#pinned-host-readiness-follows-the-writer)
+for the producer and consumer implications.
+
+## Know the native guarantee limits
+
+Green Context placement controls a driver-documented structured SM set. It
+does not partition device memory, memory bandwidth, L2/cache capacity,
+copy engines, PCIe/NVLink bandwidth, clocks, power, or thermal headroom.
+
+The following CUDA limitations remain observable:
+
+- Green Contexts on one device context share its work queues; phase 1 does not
+  request balanced work queues or a nonzero concurrency-limit policy.
+- Disjoint structured resources do not promise concurrent execution, fair
+  scheduling, latency, throughput, or forward progress.
+- CUDA documents cases where work can use additional SMs, including MPS
+  active-thread-percentage behavior and dynamic parallelism on applicable
+  compute-capability 9.x devices. HSDK therefore advertises the
+  driver-documented SM-set guarantee, not a strict no-superset guarantee.
+- Child kernels launched through CUDA Dynamic Parallelism inherit native CUDA
+  behavior; they do not strengthen the HSDK isolation claim.
+
+Phase 1 permits at most one Green-Context-owning Runtime process on a physical
+GPU, and the coordinated deployment must not place another HSDK process using
+an ordinary CUDA context on that opted-in GPU. The process-local claim rejects
+overlapping HSDK sessions, but it cannot police unrelated CUDA applications.
+MPS may be a useful cross-process deployment mechanism, but it is not part of
+this delivered ownership model and does not turn the phase-1 contract into
+whole-GPU coverage.
+
+## Diagnose cold rejection
+
+Green Context failures happen before user callbacks whenever the SDK can
+detect them. The capability query may fail before compilation. Compilation
+then validates authoring, topology, profile, backend, target, and complete
+split evidence. Runtime finally re-probes the device, acquires the owner claim,
+creates native resources, and verifies each stream's Green Context before
+`kArm`. Partial startup is rolled back in dependency order.
+
+Native pool, context, and stream construction adds cold startup cost. On one
+qualified RTX A6000 target, median `run_async()`-to-first-callback time was
+1.674 ms without a binding and 7.459 ms with two dedicated Green Contexts.
+These measurements are target-specific observations, not a latency bound;
+measure startup again for deployments that create sessions frequently.
+
+The stable diagnostic families are:
+
+| Family | Meaning |
+|---|---|
+| `CUDA_GREEN_CONTEXT_UNKNOWN_OR_DUPLICATE` | Unknown partition or duplicate binding authority |
+| `CUDA_GREEN_CONTEXT_INVALID_PLACEMENT` | Invalid device/count/request shape |
+| `CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE` | One execution partition resolves to multiple CUDA devices |
+| `CUDA_GREEN_CONTEXT_DEVICE_CONFLICT` | Green Context and final Tensor/operator device evidence disagree |
+| `CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY` | Count violates the driver-reported structured quantum |
+| `CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED` | Requested structured groups exceed the device evidence |
+| `CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED` | Required toolkit, driver symbol, profile, or device capability is unavailable |
+| `CUDA_GREEN_CONTEXT_GPU_BACKEND_CONFLICT` | Another admitted GPU backend conflicts with the requested execution model |
+| `CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN` | Complete single-process ownership cannot be established |
+| `CUDA_GREEN_CONTEXT_INACTIVE_RESERVATION` | A reserved resource has no admitted HSDK CUDA owner |
+| `CUDA_GREEN_CONTEXT_PLAN_INVALID` | Runtime received malformed or inconsistent plan records |
+| `CUDA_GREEN_CONTEXT_ACTIVE_OWNER_CONFLICT` | Another active/quiescing HSDK session owns the physical GPU |
+| `CUDA_GREEN_CONTEXT_CAPABILITY_DRIFT` | Runtime device identity or capability differs from admitted evidence |
+| `CUDA_GREEN_CONTEXT_MATERIALIZATION_FAILED` | Native pool, context, stream, or synchronization creation failed |
+| `CUDA_GREEN_CONTEXT_STREAM_MISMATCH` | A stream is null, ordinary, wrong-device, or bound to the wrong Green Context |
+
+Native CUDA detail is retained after the token when available. Cleanup errors
+remain diagnostics and do not replace the already determined execution
+outcome. `RunSession::wait()` includes terminal synchronization of all
+Runtime-owned CUDA streams; a non-terminating kernel can therefore make the
+wait unbounded under every profile, including `kRealTime`. Applications that
+need terminal progress must ensure their CUDA work eventually completes; phase
+1 does not abandon live native resources or force-kill GPU work after a
+timeout.
+
+## Place work across multiple devices
+
+One execution partition can resolve to only one CUDA device. Adjacent
+operators assigned to different GPUs therefore require separate manual
+execution partitions and separate device-local Green Context pools. Phase 1
+does not insert a cross-device copy between them; the boundary must use an
+explicit, admitted transfer design. See the current
+[device-placement and cross-device limits](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#preview-limitations)
+before splitting an edge across GPUs.
+
+This is independent from compiler-owned same-device process-local or
+cross-process Tensor staging, which uses a planned residual service stream.
+Cross-process Green Context ownership does not coordinate non-overlapping SM
+splits across multiple processes on one GPU.
+
+## Recap
+
+- Query the exact deployment device, then bind exact `sm_count` values to
+  manually authored execution partitions.
+- Treat the query as target evidence, never as a reservation or portable size.
+- One binding opts all HSDK CUDA work in that process/device into dedicated or
+  residual Green Context streams before `kArm`.
+- Launch application CUDA work only through `ExecutionContext::cuda_stream()`.
+- Expect structured SM attribution—not whole-GPU QoS, concurrency, forward
+  progress, balanced work queues, or strict no-superset isolation.
+- Use separate partitions for separate devices and provide an explicit
+  cross-device transfer boundary.
+- Automatic assignment, weights/percentages, Python authoring, balanced
+  workqueues, and strict whole-GPU QoS are not delivered in phase 1.

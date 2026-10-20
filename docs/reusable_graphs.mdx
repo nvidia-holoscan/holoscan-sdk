@@ -1,0 +1,558 @@
+Once a pipeline stage proves itself — a sensor-fusion block, a preprocessing
+chain, a control loop — you will want to reuse it in other applications, or
+instantiate it several times inside one. Holoscan lets you package a subgraph
+as a **typed reusable component**: a `Graph` subtype with a small public
+interface of `Input<T>`/`Output<T>` ports and a private `compose()` body.
+Parents drop named instances into their own graph with `embed<G>()` and wire
+to the child's interface with the same compile-checked `add_flow()` they use
+for ordinary operators.
+
+Think of a reusable graph as a *function for pipelines*: one definition, many
+independent instances, and a typed signature that the compiler enforces at
+every call site.
+
+**Complete C++ example:** [`examples/reusable_graphs/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/reusable_graphs/cpp)
+
+The Python tabs below provide the reusable-graph authoring walkthrough; a
+standalone Python application is not yet shipped with this example.
+
+<Note title="You will learn">
+- How to derive a reusable `Graph` subtype with public `Input<T>`/`Output<T>`
+  interface members and a `compose()` body that exports them
+- How `embed<G>("name", args...)` creates a named child instance and returns a
+  `GraphHandle<G>`
+- The lifetime rules of the weak, nullable `GraphHandle` — and why stale
+  handles throw instead of returning garbage
+- What embedding actually costs (per-instance construction and flattening) and
+  why publication is transactional
+- How nesting, re-export, `GraphInstancePath`, and parent-applied policy work
+  across the embedding boundary
+- How Python defines reusable graphs and embeds graph types registered by a C++
+  provider
+</Note>
+
+## Defining a reusable graph
+
+A reusable component derives from `Graph`. Its **public interface** is a set
+of input/output members, and its **body** is authored in a `compose()` override
+using the ordinary composition verbs. Exports bind the public interface to
+internal operator ports:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    class FusionGraph final : public holoscan::Graph {
+     public:
+      holoscan::Input<std::uint32_t> camera{"camera"};
+      holoscan::Input<std::uint32_t> imu{"imu"};
+      holoscan::Output<std::uint32_t> fused{"fused"};
+
+     protected:
+      void compose() override {
+        auto fusion = op<FusionOperator>("fusion");
+        export_input(camera, fusion->camera);
+        export_input(imu, fusion->imu);
+        export_output(fused, fusion->fused);
+      }
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import WindowFusion
+
+    class FusionGraph(hs.Graph):
+        camera = hs.Input("camera", hs.payload.TensorType)
+        imu = hs.Input("imu", hs.payload.uint32)
+        control = hs.Output("control", hs.payload.uint32)
+
+        def compose(self) -> None:
+            fusion = self.op(WindowFusion, "fusion")
+            self.export_input(self.camera, fusion.camera)
+            self.export_input(self.imu, fusion.imu)
+            self.export_output(self.control, fusion.control)
+    ```
+  </Tab>
+</Tabs>
+
+There is no separate interface schema or descriptor file: **the type's public
+class surface is its interface boundary**. You declare root ports and
+`export_*` them; the graph handle exposes only that declared interface.
+Anything you do not export fails closed — internal operator ports are simply
+not reachable from outside, so refactoring the body never breaks a parent as
+long as the exported interface holds.
+
+An export is an *interface alias*, not a data edge: it declares that the
+public port and the internal port are the same connection point. No queue is
+created by the export itself; the queue materializes when a parent wires a
+flow to the exported port. Payload type and direction must match exactly, and
+a mismatch throws during authoring — the same fail-fast style as the rest of
+[graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition).
+
+The body may use everything a top-level graph can, including regions and
+clocks. A reusable graph can even ship its own policy as part of its
+definition:
+
+```cpp
+void compose() override {
+  auto fusion = op<FusionOperator>("fusion");
+  export_input(camera, fusion->camera);
+  export_input(imu,    fusion->imu);
+  export_output(fused, fusion->fused);
+  region("fusion-critical").add(fusion)
+      .constrain(holoscan::RegionConstraint::bounded_memory());
+}
+```
+
+## Embedding registered C++ graph types from Python
+
+A C++ library can register a reusable graph type just as it registers an
+operator type. After the provider is imported, Python exposes unambiguous graph
+names through `holoscan.graphs` and lists every registered graph through
+`hs.registry.graph_types()`. This example uses an illustrative independently
+installed provider:
+
+```python
+import holoscan as hs
+import custom_holoscan
+from holoscan.graphs import ScalePairGraph
+from custom_holoscan.operators import CounterSource, PrintSink
+
+graph = hs.Graph("registered-reusable-graph")
+source = CounterSource(graph, "source", limit=4)
+scale = ScalePairGraph(graph, "scale-pair", factor=3)
+sink = PrintSink(graph, "sink")
+
+graph.add_flow(source.out, scale.input, queue_depth=4)
+graph.add_flow(scale.output, sink.in_, queue_depth=4)
+clock = graph.add_clock(hs.RealtimeClock, "runtime-clock")
+graph.set_default_clock(clock)
+graph.bind_clock(scale, scale.imported_clock("timeline"), clock)
+```
+
+The imported `ScalePairGraph` proxy is the preferred typed spelling.
+`graph.embed()` also accepts the fully qualified name, for example
+`"holoscan.examples.reusable_graphs.ScalePairGraph"`, for dynamic builders. Use
+`hs.registry.resolve(name)` when a data-driven builder needs the immutable
+`GraphType` metadata before embedding. The returned root `hs.GraphHandle`
+exposes the child's exported ports by name as attributes, through indexing, or
+through its `ports` mapping; it never exposes the child's internal operators.
+
+Constructor keyword arguments are validated from the registered C++ parameter
+schema. Unknown names, invalid arguments, recursive embedding, and stale
+handles therefore retain the same Core validation and stable error tokens as
+typed C++ `embed<G>()`. Graph-type discovery is explicit and process-local: a
+separately shipped provider must be imported before its graph proxy can be
+resolved.
+
+## Clock imports
+
+A reusable graph does not inherit an ancestor's default clock. Declare the
+clock dependency in the child, select that import as its local default, and
+expose the key so the immediate parent can bind it:
+
+```cpp
+class TimedFusionGraph final : public holoscan::Graph {
+ public:
+  [[nodiscard]] holoscan::ClockKey clock_import() const noexcept {
+    return clock_import_;
+  }
+
+ protected:
+  void compose() override {
+    clock_import_ = import_clock("timeline");
+    set_default_clock(clock_import_);
+    // Author the child operators and flows here.
+  }
+
+ private:
+  holoscan::ClockKey clock_import_;
+};
+```
+
+The embedding parent resolves that exact child import to one of its concrete
+clocks:
+
+```cpp
+const auto runtime_clock = add_clock<holoscan::RealtimeClock>("runtime-clock");
+set_default_clock(runtime_clock);
+const auto fusion = embed<TimedFusionGraph>("fusion");
+bind_clock(fusion, fusion->clock_import(), runtime_clock);
+```
+
+Python uses the same explicit boundary through the weak child handle:
+
+```python
+import custom_holoscan
+import holoscan as hs
+from holoscan.graphs import TimedFusionGraph
+
+graph = hs.Graph("timed-parent")
+runtime_clock = graph.add_clock(hs.RealtimeClock, "runtime-clock")
+graph.set_default_clock(runtime_clock)
+fusion = graph.embed(TimedFusionGraph, "fusion")
+graph.bind_clock(fusion, fusion.imported_clock("timeline"), runtime_clock)
+```
+
+Every nested boundary is explicit: a wrapper that embeds another reusable
+graph binds the inner import to its own import before the root binds the
+wrapper. Compilation rejects an unresolved dependency with
+`CLOCK_IMPORT_UNBOUND`; it never guesses or inherits an ancestor clock.
+
+## Embedding an instance
+
+Inside a parent's `compose()`, `embed<G>("name", args...)` constructs one
+child instance, runs its `compose()`, and publishes it into the parent. It
+returns a `GraphHandle<G>` — a typed handle through which you reach the
+child's *exported* interface members and wire them like any other ports. This
+is an illustrative bidirectional embedding pattern:
+
+```cpp
+class SensorPipeline final : public holoscan::Graph {
+ public:
+  SensorPipeline() : Graph("sensor-pipeline") {}
+
+ protected:
+  void compose() override {
+    auto camera = op<SensorSource>("camera");
+    auto imu    = op<SensorSource>("imu");
+    auto fusion = embed<FusionGraph>("fusion-stage");   // GraphHandle<FusionGraph>
+    auto sink   = op<FusedSink>("sink");
+
+    (void)add_flow(camera->output, fusion->camera);     // parent -> child input
+    (void)add_flow(imu->output,    fusion->imu);
+    (void)add_flow(fusion->fused,  sink->input);        // child output -> parent
+  }
+};
+```
+
+For compiled nested re-export, repeated-instance, and replay evidence, see the
+shipping `reusable_graphs` example.
+
+The picture the parent ends up with looks like this: two plain operators, one
+embedded instance whose *exported interface ports* sit on its boundary, and
+`add_flow` edges that cross the boundary only through those ports:
+
+<svg viewBox="0 0 760 360" role="img" aria-labelledby="rg-embed-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="rg-embed-title">Graph embedding: a parent graph containing two operators and an embedded reusable graph wired through its exported interface ports</title>
+  <defs>
+    <marker id="rg-embed-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* parent graph panel */}
+  <rect x="20" y="36" width="720" height="290" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="2"/>
+  <text x="40" y="64" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="16" fontWeight="600" fill="currentColor">SensorPipeline</text>
+  <text x="164" y="64" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor" opacity="0.55">parent Graph</text>
+  {/* plain operators */}
+  <rect x="50" y="100" width="130" height="44" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="2"/>
+  <text x="115" y="127" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor">camera</text>
+  <rect x="50" y="200" width="130" height="44" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="2"/>
+  <text x="115" y="227" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor">imu</text>
+  {/* embedded reusable graph panel */}
+  <rect x="290" y="80" width="250" height="210" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="2"/>
+  <text x="415" y="106" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fontWeight="600" fill="currentColor">fusion-stage</text>
+  <text x="415" y="122" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor" opacity="0.55">embed&lt;FusionGraph&gt;()</text>
+  {/* internal operator */}
+  <rect x="350" y="160" width="130" height="44" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" opacity="0.75"/>
+  <text x="415" y="187" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor" opacity="0.75">FusionOp</text>
+  {/* internal alias links from interface ports to internal operator */}
+  <path d="M 304 145 L 330 145 L 330 172 L 350 172" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55"/>
+  <path d="M 304 235 L 330 235 L 330 192 L 350 192" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55"/>
+  <path d="M 480 182 L 532 182" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55"/>
+  {/* exported interface ports on the boundary (green accent) */}
+  <rect x="283" y="138" width="14" height="14" rx="3" fill="#76B900"/>
+  <text x="304" y="135" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">camera</text>
+  <rect x="283" y="228" width="14" height="14" rx="3" fill="#76B900"/>
+  <text x="304" y="258" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">imu</text>
+  <rect x="533" y="175" width="14" height="14" rx="3" fill="#76B900"/>
+  <text x="526" y="170" textAnchor="end" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">fused</text>
+  {/* add_flow edges crossing the boundary only through ports */}
+  <line x1="180" y1="122" x2="278" y2="139" stroke="currentColor" strokeWidth="2" markerEnd="url(#rg-embed-arrow)"/>
+  <line x1="180" y1="222" x2="278" y2="237" stroke="currentColor" strokeWidth="2" markerEnd="url(#rg-embed-arrow)"/>
+  <line x1="551" y1="182" x2="604" y2="182" stroke="currentColor" strokeWidth="2" markerEnd="url(#rg-embed-arrow)"/>
+  {/* sink operator */}
+  <rect x="610" y="160" width="100" height="44" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="2"/>
+  <text x="660" y="187" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor">sink</text>
+  {/* annotation */}
+  <text x="415" y="312" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor" opacity="0.55">embedding flattens per instance</text>
+</svg>
+
+Two things to notice:
+
+- **The wiring is compile-checked.** `fusion->camera` is the child's typed
+  `Input<std::uint32_t>`, so a payload or direction mismatch is a build error,
+  not a runtime surprise.
+- **Extra arguments forward once to the child's constructor.** Unlike an
+  operator factory, `embed<G>()` does not replay the child constructor, so it
+  can accept move-only ownership such as `std::unique_ptr<T>`. String views and
+  literals still normalize to owned strings. The same shallow checks reject
+  obvious top-level borrows and Graph authoring handles. Nested borrows cannot
+  be inspected: their referents must outlive every child or reconstructed
+  operator that uses them. A child remains independently owned by its parent
+  after construction.
+
+<Warning>
+  **Embedding is not a cheap reference.** Each `embed<G>()` fully constructs
+  its own child object, runs its `compose()`, and flattens the result into the
+  parent. Each instance has its own Graph object and operator prototypes, but
+  captured application state follows ordinary C++ copy semantics. Passing the
+  same `std::shared_ptr<T>` to two children deliberately shares its pointee;
+  separate Graph ownership does not imply independent captured state. The
+  [capture lifetime rules](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+  also apply when children pass shared state into operator factories.
+
+  A large reusable body pays its full construction and flattening cost at
+  every instance and every nesting level. Reach for `embed` to reuse graph
+  structure with distinct child objects, and choose constructor captures to
+  express the intended application-state ownership.
+</Warning>
+
+### Transactional publication
+
+Publication into the parent is atomic. If the child's construction,
+`compose()`, validation, or allocation fails, `embed` throws and the parent
+is left **exactly as it was** — no half-registered instance, no dangling
+ports. This matters for generated or programmatic authoring: you can catch,
+adjust, and retry an embed without rebuilding the parent. There is no
+`try_embed` variant; embedding is exception-only and eager, so establish an
+exception boundary around authoring code that composes speculatively.
+
+## Handles and lifetime
+
+`GraphHandle<G>` reads like a smart pointer (`handle->member`) but it is a
+**weak, read-only** view. The parent owns the child; the handle does not
+extend the child's lifetime, and it never grants authoring authority over the
+child's internals.
+
+<Warning>
+  **A retained handle can go stale.** After the parent retires, the handle is
+  invalid — and dereferencing it **throws** an error tagged
+  `GRAPH_HANDLE_INVALID` rather than returning garbage. Before dereferencing
+  any handle you kept around past the `embed()` call, check
+  `handle.graph_valid()` or the equivalent `explicit operator bool()`:
+
+  ```cpp
+  if (fusion) {                      // operator bool() == graph_valid()
+    use(fusion->fused);              // safe: parent still owns this child
+  }
+  ```
+
+  For anything you persist, compare, or display, take a durable `GraphView`
+  snapshot from the parent instead of holding handles — a view deep-owns
+  immutable records and stays valid after the parent and all handles retire.
+</Warning>
+
+Treat the handle like a `std::weak_ptr` you must validate, not a
+`shared_ptr`. Within the same `compose()` body that called `embed`, using the
+fresh handle immediately is always safe; the validity dance is for handles
+you *retain*.
+
+Python `GraphHandle` objects follow the same weak rule. Check
+`handle.graph_valid` before retained access. Once the parent is gone,
+`handle.path` becomes `None`, port handles report `graph_valid == False`, and
+normal attribute probes fail with `AttributeError` rather than reviving the
+child.
+
+## Instance identity: `GraphInstancePath`
+
+Every embedded instance has a structured identity. Instance names are
+**literal path segments**, not `/`-split strings: a name like `"camera/left"`
+is one segment containing a slash, and the segments `"."`, `".."`, and
+`"_root"` are reserved. Use `GraphInstancePath` — which exposes its
+`segments()` — to render and compare identities; never split a rendered path
+on `/`.
+
+`handle.path()` returns `std::optional<GraphInstancePath>` **relative to the
+direct parent** (for the example above, the single segment
+`"fusion-stage"`). Once a graph is itself embedded in an outer graph, the
+root-qualified paths live in the `GraphView` records — the view is the source
+of truth for globally unique identity; `handle.path()` is a local
+convenience.
+
+## Nesting and re-export
+
+Reusable graphs compose recursively: a reusable graph may itself `embed`
+other reusable graphs, and a parent may embed the same type more than once —
+distinct names produce distinct, fully independent instances with distinct
+instance paths.
+
+Visibility across levels follows one rule: **only ports exported at each
+level are reachable from further out.** A nested child's interface is visible
+to an outer graph only if every intermediate reusable graph re-exports it —
+bind the inner instance's exported port to your own public port with the same
+`export_input()`/`export_output()` verbs. Unexported nested ports fail
+closed, exactly like unexported internal operator ports.
+
+In Python, the wrapper declares its own `Input` and `Output` descriptors and
+uses the same export methods on the nested handle:
+
+```python
+class WrappedFusionGraph(hs.Graph):
+    input = hs.Input("input", hs.payload.TensorType)
+    output = hs.Output("output", hs.payload.uint32)
+
+    def compose(self) -> None:
+        inner = self.embed(FusionGraph, "inner")
+        self.export_input(self.input, inner.camera)
+        self.export_output(self.output, inner.control)
+```
+
+## Assigning an instance to one thread partition
+
+Use the embedded handle directly to give an instance one serial execution owner:
+
+```cpp
+graph.partition("fusion-owner").add(fusion);
+graph.auto_partition_remaining();
+
+const auto plan = holoscan::compile(graph);
+if (plan.ok()) {
+  const auto owner = plan.partitions().lookup_named("fusion-owner");
+  // owner->graph_members(): selected instance roots, in the plan Graph's ID space.
+  // owner->operator_paths(): all resolved descendant Operators.
+}
+```
+
+Selecting `fusion` includes every Operator in its nested graph tree. Multiple
+independent sources share that owner and may progress independently. Chain
+`.add(other_instance)` or `.add(direct_operator)` to place additional work on
+the same owner. Use the accepted partition name with
+`CompileOptions::deployment.bind_thread_placement(...)` for CPU placement.
+
+The handle must name a live direct child of the partition's Graph. The selected
+subtree must contain Operators and must have no internal partition declarations,
+including empty declarations. Duplicate assignment, foreign or stale handles,
+and conflicts with `include_all()` reject atomically. A failed call preserves
+the previous membership and Graph identity; separate fluent calls are separate
+transactions.
+
+Without `auto_partition_remaining()`, named partitions must cover all Operators.
+The compiler preserves each selected Operator set exactly and still validates
+process, domain, readiness and topology constraints. Partitions containing only
+direct Operator handles retain their existing single-root restriction. Interface
+ports and existing external-topic attachment rules are preserved.
+
+The device-domain check applies to the whole selected partition, including any
+sibling instances and direct Operators added to it. Conflicting Tensor device
+bindings or a conflicting named Green Context placement reject with
+`PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE` in both complete-manual and
+automatic-remainder mode. Separate partitions can use different devices.
+`include_all()` retains its separate whole-application contract.
+
+`graph_members()` retains the explicitly selected roots; `members()` and
+`operator_paths()` show resolved executable membership. Match the selected IDs
+to `plan.graph().graphs()` for canonical instance paths. Retained partition views
+remain valid after the authoring Graph and original plan are destroyed.
+
+### Locating a rejected or unassigned instance
+
+An internal declaration rejection starts with
+`GRAPH_PARTITION_INTERNAL_DECLARATION` and includes the offending owner path and
+partition name. Path segments and names are percent-encoded; long fields end in
+`...`. The first declaration is selected by owner path and then partition name,
+independently of authoring order.
+
+To inspect complete names, retain a `GraphView` and join each partition's
+`graph` ID to `view.graphs()`. This helper prints paths as quoted segments, so a
+literal `/` in a name remains unambiguous:
+
+```cpp
+#include <algorithm>
+#include <iomanip>
+#include <ostream>
+#include <holoscan/core/graph.hpp>
+
+void print_partition_declarations(const holoscan::GraphView& view, std::ostream& out) {
+  for (const auto& declaration : view.partitions()) {
+    const auto owner =
+        std::ranges::find(view.graphs(), declaration.graph, &holoscan::GraphRecord::id);
+    if (owner == view.graphs().end())
+      continue;
+    out << "owner=[";
+    const auto& path = owner->path;
+    if (path) {
+      for (const auto& segment : path->segments())
+        out << std::quoted(segment) << ' ';
+    }
+    out << "] partition=" << std::quoted(declaration.name) << '\n';
+  }
+}
+```
+
+Call this helper with `graph.view()` **outside `compose()`**, after embedding
+the child and before attempting the selection, or after catching a failed
+selection made outside `compose()`. Do not observe a Graph during its active
+`compose()`. If selection failed inside `compose()`, composition is terminally
+failed; reproduce the embedding in a separate diagnostic Graph and inspect it
+before selecting the instance. An empty owner array denotes the root Graph.
+
+A complete manual cover that omits an embedded descendant reports
+`PARTITION_EMBEDDED_INSTANCE_UNASSIGNED`. Its `Diagnostic::source.graph` and
+`source.vertex` identify the first uncovered descendant in the canonical
+`plan.graph()` inventory. Assign its instance to a partition, or call
+`auto_partition_remaining()` to cover remaining Operators automatically. The
+older `PARTITION_MANUAL_EMBEDDED_GRAPH_UNSUPPORTED` token is historical;
+embedded instance selection is supported.
+
+## Parent-applied policy across the boundary
+
+A parent can apply topology-level policy to an embedded child *as a whole*
+using the child handle. `region(name).add(handle)` adds **every
+flattened operator** of the embedded instance to a parent-authored region:
+
+```cpp
+region("critical").add(fusion)
+    .constrain(holoscan::RegionConstraint::bounded_memory());
+```
+
+Python applies the same whole-child region policy:
+
+```python
+graph.region("critical").add(fusion).constrain(
+    hs.execution.RegionConstraint.bounded_memory()
+)
+```
+
+<Warning>
+  **CUDA Graph regions are an exception.** A region created with
+  `add(GraphHandle)` cannot use `RegionConstraint::cuda_graph()`. CUDA Graph
+  regions currently must be declared in the root graph and may contain only
+  directly listed operators owned by that root graph. Regions declared inside
+  an embedded graph are also rejected. Capturing operators across reusable
+  graph boundaries is not supported in this release.
+</Warning>
+
+Lifecycle ordering across the boundary uses the same
+`lifecycle().before(a, b, holoscan::LifecycleStage::...)` vocabulary as
+ordinary operators, over `OperatorHandle`s that the reusable type *chooses*
+to expose (for example, via public const getters). Exposing an internal
+operator handle for lifecycle policy does **not** make its data ports
+wireable — data reachability and policy reachability are separate doors. See
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+for the lifecycle stages themselves.
+
+## Recap
+
+- A reusable component derives from `Graph`, declares public
+  `Input<T>`/`Output<T>` interface members, and binds them to internal ports
+  with `export_input()`/`export_output()` inside `compose()`; the C++ public
+  surface *is* the interface boundary.
+- `embed<G>("name", args...)` constructs, composes, and flattens one
+  independent child per call and returns a typed `GraphHandle<G>`; it is not
+  a cheap reference to a shared definition.
+- Publication is transactional — a failed embed throws and leaves the parent
+  unchanged.
+- `GraphHandle` is weak and nullable: check `graph_valid()`/`operator bool()`
+  on any retained handle, expect `GRAPH_HANDLE_INVALID` on stale dereference,
+  and prefer a durable `GraphView` for anything you keep.
+- Instances have structured identities: `handle.path()` is a parent-relative
+  `GraphInstancePath`; root-qualified paths come from the `GraphView`.
+- Nesting works level by level (re-export to widen visibility), and parents
+  apply compatible regions and lifecycle ordering across the boundary through
+  the handle. CUDA Graph regions are currently restricted to directly listed
+  operators in the root graph.
+
+Next: connect your graph to the world outside the process with
+[external topics](/holoscan/sdk-user-guide/composing-applications/external-topics).

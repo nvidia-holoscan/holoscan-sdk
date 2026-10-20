@@ -1,0 +1,4 @@
+# Nanobind native classes use nanobind.nb_type, which stubtest cannot model.
+holoscan_vision._vision.ResizeOpParams
+# Nanobind exposes private enum implementation metadata outside the public stub surface.
+holoscan_vision._vision.InterpolationMode.__nb_enum__

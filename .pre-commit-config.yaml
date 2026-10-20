@@ -8,14 +8,10 @@
 default_language_version:
   python: python3
 
-# Skip all hooks for skills/ - files in this directory are verbatim upstream
-# copies intended to match the source byte-for-byte. Modifying them in transit
-# (line endings, trailing whitespace, codespell auto-fixes, copyright year
-# bumps, etc.) breaks that byte-for-byte property and invalidates the detached
-# signature (`skill.oms.sig`) that ships alongside each skill - once the
-# signature is attached, any in-place modification fails verification against
-# the trust anchor.
-exclude: ^skills/
+# Published skill packages must remain byte-identical to their signed source.
+# Formatting, whitespace, spelling, or copyright fixes invalidate skill.oms.sig.
+# Exclude skill package subdirectories while linting top-level documentation.
+exclude: ^skills/[^/]+/
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -29,11 +25,18 @@ repos:
         # Exclude .clang-format file because check-yaml do not support multi-document file
         exclude: ^.*\.patch|\.clang-format$
       - id: check-json
-        exclude: ^\.vscode/|^\.devcontainer/|.*\.patch$
-      - id: check-added-large-files
         exclude: ^.*\.patch$
+      - id: check-added-large-files
+        exclude: ^.*\.patch$|^ci/abi/holomq\.exports\.baseline\.txt$
 
-  # Copyright header check (NVIDIA SPDX)
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: "0.26"
+    hooks:
+      - id: validate-pyproject
+        # Include nested module and metawheel projects, not only the root file.
+        files: (^|/)pyproject\.toml$
+
+  # Repository-local validation and regression hooks
   - repo: local
     hooks:
       - id: check-copyright
@@ -44,29 +47,30 @@ repos:
         entry: python3 scripts/check_copyright.py
         args:
           - --reject-nvidia-proprietary-path
-          - ^
+          - ^.*
           - --exclude
           - CodeCoverage.cmake
           - --exclude
           - common-debian.sh
           # Paths are rooted at the repository layout represented by this config.
           - --exclude
-          - \.cache
+          - ^\.cache
           - --exclude
-          - build
+          - ^build
           - --exclude
-          - install
+          - ^install
           - --exclude
-          - build-*
+          - ^build-*
           - --exclude
-          - install-*
+          - ^install-*
           - --exclude
-          - modules/holoviz/thirdparty/
+          - ^modules/holoviz/thirdparty/
           - --exclude
           - .*\.patch$
-          # Fern bundled dist/ output (generated files, no NVIDIA copyright header).
           - --exclude
           - docs/fern/dist/
+          - --exclude
+          - ^ci/abi/holomq\.exports\.baseline\.txt$
           - --update-current-year
         language: system
         pass_filenames: true
@@ -80,22 +84,47 @@ repos:
         pass_filenames: false
         files: ^scripts/(check_copyright|test_check_copyright)\.py$
 
+      # run is a bootstrap entry point used before CMake/CTest exists.
+      # Use the host Python, Bash, and Git; the test has no third-party Python dependencies.
+      - id: test-run-script
+        name: Test run script git integration
+        entry: python3 scripts/test_run_script.py
+        language: system
+        pass_filenames: false
+        files: ^(run|scripts/test_run_script\.py)$
+
+      - id: test-git-environment
+        name: Test Git environment isolation
+        entry: python3 scripts/test_git_environment.py
+        language: system
+        pass_filenames: false
+        files: ^scripts/(_git_environment|test_git_environment)\.py$
+
+      - id: test-build-analysis
+        name: Test build analysis failure reporting
+        entry: pytest scripts/test_build_analysis.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(build_analysis|test_build_analysis)\.py$
+
+      - id: test-install-pytorch
+        name: Test PyTorch install helper
+        entry: pytest scripts/test_install_pytorch.py
+        language: python
+        additional_dependencies:
+          - packaging
+          - pytest
+        pass_filenames: false
+        files: ^(Dockerfile|scripts/(install-pytorch|test_install_pytorch)\.py)$
+
       - id: check-doc-source-links
         name: Check documentation source links
         entry: python3 docs/scripts/render_source_links.py --docs-root docs --write
         language: system
         pass_filenames: true
         files: ^docs/.*\.mdx?$
-
-      - id: test-gxf-entity-codec
-        name: Test GXF entity codec
-        entry: pytest scripts/test_gxf_entity_codec.py
-        language: python
-        additional_dependencies:
-          - numpy
-          - pytest
-        pass_filenames: false
-        files: ^scripts/(convert_gxf_entities_to_video|convert_video_to_gxf_entities|gxf_entity_codec|test_gxf_entity_codec)\.py$
 
       - id: check-doc-links
         name: Check documentation links
@@ -109,8 +138,15 @@ repos:
         entry: python3 docs/scripts/check_doc_links.py --local-files-only
         language: system
         pass_filenames: false
-        always_run: true
         files: ^
+
+      # Ruff recognizes `context` as the intentional unused Operator.compute argument. Forbid
+      # deleting an abbreviated alias merely to silence the unused-argument check.
+      - id: check-python-callback-dummy-style
+        name: Check Python callback dummy style
+        entry: '^\s*del\s+ctx\s*$'
+        language: pygrep
+        files: ^.*\.py$
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
@@ -137,14 +173,15 @@ repos:
 
   # Codespell
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         additional_dependencies:
           - tomli>=2.0.1,<3.0; python_version<'3.11'
         files: ^
+        exclude: ^docs/fern/dist/
         args:
-          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*docs/fern/dist*
+          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*ci/abi/holomq.exports.baseline.txt
           - --ignore-regex=.*codespell-ignore$
           - --toml=.codespell.toml
           - --write-changes
@@ -170,7 +207,7 @@ repos:
           - --exclude=examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu
           - --filter=-whitespace/indent_namespace,-build/c++17,-build/include_order
         files: ^.*\.(cpp|cu|cuh|h|hpp|cc|cxx)$
-        # Paths are rooted at the repository layout represented by this config.
+        # Paths are rooted at the internal source tree's export directory
         exclude: |
           (?x)^(
             \.cache|
@@ -200,6 +237,122 @@ repos:
         files: ^.*(CMakeLists\.txt|\.cmake)$
         exclude: ^(build|install|build-|install-|\.cache)/
 
+  # Include style, header guards, and ABI/export policy
+  - repo: local
+    hooks:
+      - id: check-stable-identity-names
+        name: Check stable identity ownership names
+        entry: python3 scripts/check_stable_identity_names.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: test-stable-identity-names
+        name: Test stable identity ownership checks
+        entry: pytest tests/scripts/test_stable_identity_names.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/check_stable_identity_names\.py$|^tests/scripts/test_stable_identity_names\.py$|^scripts/stable_identity_exceptions\.json$
+
+      - id: check-include-style
+        name: Check SDK and dependency include style
+        entry: python3 scripts/check_include_style.py
+        language: system
+        pass_filenames: true
+        files: ^.*\.(c|cc|cpp|cxx|cu|h|hh|hpp|hxx|cuh)$
+
+      - id: test-include-style
+        name: Test include style checker
+        entry: pytest scripts/test_include_style.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check|test)_include_style\.py$
+
+      - id: check-header-guards
+        name: Check header guards
+        entry: python3 scripts/check_header_guards.py
+        language: system
+        pass_filenames: true
+        files: ^.*\.(h|hh|hpp|hxx|cuh)$
+
+      - id: check-export-macros
+        name: Check export macro policy
+        entry: python3 scripts/check_export_macros.py
+        language: system
+        pass_filenames: true
+        files: ^.*(\.(h|hh|hpp|hxx|cuh|c|cc|cpp|cxx|cu|cmake|txt)|CMakeLists\.txt|Dockerfile)$
+
+      - id: check-export-macro-semantics
+        name: Check export macro semantics
+        entry: python3 scripts/check_export_macro_semantics.py --root .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: check-core-light-headers
+        name: Check light Core headers
+        entry: python3 scripts/check_light_headers.py --root .
+        language: system
+        pass_filenames: false
+        files: ^(include/holoscan/.*\.(h|hpp)|scripts/(check_light_headers\.py|core_light_headers\.txt))$
+
+      - id: test-header-export-checkers
+        name: Test header and export checkers
+        entry: python3 scripts/test_header_export_checks.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Behavioral tests cannot prove this repository-wide negative source invariant. Keep the
+      # structural guard in lint, but run it only when its checked boundary or checker changes.
+      - id: check-subscriber-close-boundaries
+        name: Check external subscriber close boundaries
+        entry: python3 scripts/check_subscriber_close_boundaries.py --root .
+        language: system
+        pass_filenames: false
+        files: |
+          (?x)^(
+            src/runtime/.*\.(cpp|cu|cuh|hpp)|
+            include/holoscan/channel/(endpoint_interfaces|inline_endpoints|tensor_schema_endpoints)\.hpp|
+            src/channel/channel_tensor\.cpp|
+            scripts/check_subscriber_close_boundaries\.py
+          )$
+
+      - id: test-subscriber-close-boundaries
+        name: Test external subscriber close checker
+        entry: pytest scripts/test_subscriber_close_boundaries.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check|test)_subscriber_close_boundaries\.py$
+
+  # Core Module metadata.json schema, naming, and SDK-version alignment
+  - repo: local
+    hooks:
+      - id: check-module-metadata
+        name: Check Core Module metadata
+        entry: python3 scripts/check_module_metadata.py
+        language: python
+        additional_dependencies: ["jsonschema>=4.18,<5", "rfc3986-validator>=0.1.1"]
+        pass_filenames: false
+        files: ^(VERSION|modules/.*|scripts/check_module_metadata\.py)$
+
+      - id: test-module-metadata
+        name: Test Core Module metadata checker
+        entry: pytest scripts/test_check_module_metadata.py
+        language: python
+        additional_dependencies:
+          - "jsonschema>=4.18,<5"
+          - "rfc3986-validator>=0.1.1"
+          - pytest
+        pass_filenames: false
+        files: ^(modules/metadata\.schema\.json|scripts/(test_)?check_module_metadata\.py)$
+
   # markdownlint
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.47.0
@@ -208,10 +361,15 @@ repos:
         args: [--fix, --config, .markdownlint.yaml]
         files: ^.*\.mdx?$
         types_or: [markdown, mdx]
-        exclude: ^swipat/summary\.md$
+        exclude: |
+          (?x)^(
+            design_requirements/.*\.mdx?|
+            swipat/summary\.md
+          )$
 
   # clang-format
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
     hooks:
       - id: clang-format
+        exclude: ^docs/fern/dist/

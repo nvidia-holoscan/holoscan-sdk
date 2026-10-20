@@ -28,19 +28,19 @@ endif()
 if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
     message(STATUS "Using native CUDA architecture detection.")
 else()
+    string(REPLACE ";" "," _requested_archs "${CMAKE_CUDA_ARCHITECTURES}")
+
     # Get the CUDA architectures from the script
-    set(_script_command
-        "${CMAKE_SOURCE_DIR}/scripts/get_cmake_cuda_archs.py"
-        "${CMAKE_CUDA_ARCHITECTURES}"
+    execute_process(COMMAND
+        "${holoscan_SOURCE_DIR}/scripts/get_cmake_cuda_archs.py"
+        "${_requested_archs}"
         "--nvcc-path" "${CMAKE_CUDA_COMPILER}"
         "--min-arch" "70" # Holoscan requirement
         "--verbose"       # Enable debug logging from script
-    )
-    execute_process(COMMAND ${_script_command}
-                    OUTPUT_VARIABLE _script_output
-                    ERROR_VARIABLE _script_error
-                    RESULT_VARIABLE _script_result
-                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+        OUTPUT_VARIABLE _script_output
+        ERROR_VARIABLE _script_error
+        RESULT_VARIABLE _script_result
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
     if(NOT _script_result EQUAL 0)
         message(FATAL_ERROR "get_cuda_archs.py script failed (${_script_result}):\n${_script_error}")
     else()

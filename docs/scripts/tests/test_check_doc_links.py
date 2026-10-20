@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import re
 import sys
 from argparse import Namespace
 from contextlib import redirect_stdout
@@ -18,34 +17,83 @@ from build_holoscan_docs import _should_check_doc_links  # noqa: E402
 from check_doc_links import (  # noqa: E402
     _generated_pages,
     _link_targets,
+    _load_nav,
+    _load_redirects,
     _strip_code,
+    _walk_nav,
     check,
     check_local_file_links,
 )
 
 
 class CheckDocLinksTestCase(TestCase):
-    def test_local_link_hooks_always_run_for_target_only_deletions(self) -> None:
-        public_root = SCRIPT_DIR.parents[1]
-        configs = [public_root / ".pre-commit-config.yaml"]
-
-        # Internal checkouts also have a repository-level configuration. The
-        # Fern job intentionally copies only selected top-level files, so that
-        # configuration is not present in its validation workspace.
-        repository_config = public_root.parent / ".pre-commit-config.yaml"
-        if repository_config.is_file():
-            configs.append(repository_config)
-
-        for config in configs:
-            content = config.read_text(encoding="utf-8")
-            hook = re.search(
-                r"(?ms)^      - id: check-local-markdown-links\n"
-                r"(?P<body>(?:^        .*\n|^\s*$)*)",
-                content,
+    def test_corrects_filename_derived_4x_redirect_sources(self) -> None:
+        site = "/holoscan/sdk-user-guide"
+        # Fern generated these 4.x routes from navigation titles and explicit
+        # slugs. They therefore do not necessarily match their MDX filenames.
+        expected = {
+            f"{site}/{source}": f"{site}/{destination}"
+            for source, destination in (
+                ("faq/faq", "resources/faq"),
+                ("holo-hub/holo-hub-overview", "resources/holohub"),
+                ("operators/operators-and-extensions", "resources/faq"),
+                (
+                    "operators/video-i-o-vendor-implementation-guide",
+                    "resources/holohub",
+                ),
+                ("performance/gxf-job-statistics", "introduction/migrating-from-4x"),
+                ("setup/additional-setup/enable-g-sync", "setup/additional-setup/gsync"),
+                (
+                    "setup/additional-setup/enabling-gpu-direct-rdma",
+                    "setup/additional-setup/gpudirect-rdma",
+                ),
+                (
+                    "setup/additional-setup/optimizing-jet-pack",
+                    "setup/additional-setup/jetpack",
+                ),
+                (
+                    "setup/additional-setup/use-i-gpu-with-d-gpu",
+                    "setup/additional-setup/igpu-dgpu",
+                ),
+                ("using-the-sdk/create-a-condition", "building-operators/temporal-contracts"),
+                (
+                    "using-the-sdk/create-a-distributed-application",
+                    "advanced/interprocess-channels",
+                ),
+                ("using-the-sdk/create-an-application", "getting-started/composing-a-graph"),
+                ("using-the-sdk/create-an-operator", "getting-started/first-operator"),
+                (
+                    "using-the-sdk/create-an-operator-via-decorator",
+                    "getting-started/first-operator",
+                ),
+                ("using-the-sdk/cuda-stream-handling", "data-and-payloads/tensors-in-depth"),
+                ("using-the-sdk/data-logging", "debugging-and-testing/logging"),
+                ("using-the-sdk/debugging", "debugging-and-testing/understanding-failures"),
+                (
+                    "using-the-sdk/dynamic-flow-control",
+                    "building-operators/temporal-contracts",
+                ),
+                ("using-the-sdk/gpu-resident-execution", "introduction/api-stability"),
+                ("using-the-sdk/logging", "debugging-and-testing/logging"),
+                ("using-the-sdk/python-operator-bindings", "introduction/api-stability"),
             )
-            assert hook is not None
-            assert "\n        pass_filenames: false\n" in hook.group(0)
-            assert "\n        always_run: true\n" in hook.group(0)
+        }
+        redirects = dict(_load_redirects(SCRIPT_DIR.parent / "fern" / "docs.yml"))
+
+        for source, destination in expected.items():
+            assert redirects.get(source) == destination
+
+    def test_omits_unpublished_4x_fern_redirect_sources(self) -> None:
+        site = "/holoscan/sdk-user-guide"
+        unpublished = {
+            f"{site}/introduction/holoscan-sdk-overview",
+            f"{site}/performance/end-to-end-benchmarks",
+            f"{site}/setup/third-party-hardware-setup/aja-setup",
+            f"{site}/setup/third-party-hardware-setup/emergent-setup",
+        }
+        redirects = dict(_load_redirects(SCRIPT_DIR.parent / "fern" / "docs.yml"))
+
+        assert unpublished.isdisjoint(redirects)
 
     def test_finds_multiline_markdown_link(self) -> None:
         lines = [
@@ -222,6 +270,36 @@ class CheckDocLinksTestCase(TestCase):
             assert paths[page.resolve()].endswith("/instancehandle")
             assert "/api-reference/holoscan/namespaces/viz" in generated
 
+    def test_requires_generated_navigation_folder_only_when_requested(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            missing = Path(temporary_directory) / "holoscan"
+            folders = [("/api-reference/holoscan", missing)]
+            assert _generated_pages(folders)[1] == ["/api-reference/holoscan"]
+            for create_directory in (False, True):
+                if create_directory:
+                    missing.mkdir()
+                with self.assertRaisesRegex(ValueError, "has no MDX pages"):  # noqa: PT027
+                    _generated_pages(folders, require_generated=True)
+
+    def test_accepts_python_library_package_layout(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "python"
+            package = output / "holoscan-python" / "holoscan"
+            package.mkdir(parents=True)
+            (package / "index.mdx").write_text("Python API\n", encoding="utf-8")
+            # A populated output root does not establish that navigation's
+            # package directory exists; this is the preview failure we missed.
+            with self.assertRaisesRegex(ValueError, "has no MDX pages"):  # noqa: PT027
+                _generated_pages(
+                    [("/api-reference/holoscan", output / "holoscan")],
+                    require_generated=True,
+                )
+            generated, unchecked, _ = _generated_pages(
+                [("/api-reference/holoscan", package)], require_generated=True
+            )
+            assert not unchecked
+            assert "/api-reference/holoscan/index" in generated
+
     def test_ignores_parameterized_redirect_destination(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             docs_root = Path(temporary_directory)
@@ -284,20 +362,6 @@ class CheckDocLinksTestCase(TestCase):
             assert findings[0].line == 1
             assert findings[0].message == "missing local target: docs/faq.md"
 
-    def test_accepts_nested_relative_mdx_target(self) -> None:
-        with TemporaryDirectory() as temporary_directory:
-            public_root = Path(temporary_directory)
-            docs_root = public_root / "docs"
-            nested_root = public_root / "cmake" / "modules" / "cpack"
-            docs_root.mkdir()
-            nested_root.mkdir(parents=True)
-            (docs_root / "faq.mdx").write_text("# FAQ\n", encoding="utf-8")
-            (nested_root / "README.md").write_text(
-                "[FAQ](../../../docs/faq.mdx)\n", encoding="utf-8"
-            )
-
-            assert check_local_file_links(public_root) == []
-
     def test_accepts_local_external_and_site_targets(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             public_root = Path(temporary_directory)
@@ -334,6 +398,147 @@ class CheckDocLinksTestCase(TestCase):
                 "missing local target: ../../docs/PUBLIC_API.md",
                 "local link escapes the public tree: ../../../internal.md",
             ]
+
+
+class PythonReferenceRoutesTestCase(TestCase):
+    site = "/holoscan/sdk-user-guide"
+
+    def test_python_api_has_one_home_and_a_shared_reference_shortcut(self):
+        fern_dir = SCRIPT_DIR.parent / "fern"
+        navigation = _load_nav(fern_dir / "index.yml")
+        python = next(node for node in navigation if node.get("section") == "Python")
+        reference = next(node for node in navigation if node.get("section") == "API reference")
+        folders = []
+        _walk_nav(navigation, self.site, fern_dir, {}, folders)
+        python_folder = (fern_dir / "generated/api-reference/python/holoscan").resolve()
+        route = f"{self.site}/python/api-reference/holoscan"
+        assert [(slug, path) for slug, path in folders if path == python_folder] == [
+            (route, python_folder)
+        ]
+        assert any(node.get("title") == "API reference" for node in python["contents"])
+        shortcut = next(node for node in reference["contents"] if node.get("link") == "Python API")
+        assert shortcut["href"] == route
+        assert shortcut["target"] == "_self"
+
+    def _check_reference_links(self, body: str, *, generated: bool = True):
+        with TemporaryDirectory() as temporary_directory:
+            docs_root = Path(temporary_directory)
+            fern_dir = docs_root / "fern"
+            fern_dir.mkdir()
+            (fern_dir / "docs.yml").write_text(
+                "instances:\n"
+                "  - url: nvidia-holoscan.docs.buildwithfern.com"
+                "/holoscan/sdk-user-guide\n",
+                encoding="utf-8",
+            )
+            (fern_dir / "index.yml").write_text(
+                "navigation:\n"
+                "  - page: Guide\n"
+                "    path: ../guide.mdx\n"
+                "    slug: guide\n"
+                "  - section: API reference\n"
+                "    skip-slug: true\n"
+                "    contents:\n"
+                "      - folder: ./generated/api-reference/cpp/holoscan\n"
+                "        title: C++ API\n"
+                "        slug: api-reference/holoscan\n"
+                "  - section: Python\n"
+                "    slug: python\n"
+                "    contents:\n"
+                "      - folder: ./generated/api-reference/python/holoscan\n"
+                "        title: API reference\n"
+                "        slug: api-reference/holoscan\n",
+                encoding="utf-8",
+            )
+            (docs_root / "guide.mdx").write_text(body, encoding="utf-8")
+
+            if generated:
+                pages = {
+                    "cpp/holoscan/Allocator.mdx": (
+                        "---\n"
+                        "title: holoscan::Allocator\n"
+                        "slug: api-reference/holoscan/allocator\n"
+                        "---\nAllocator.\n"
+                    ),
+                    # The explicit route, not the MDX filename, identifies this page.
+                    "python/holoscan/module-page.mdx": (
+                        "---\n"
+                        "title: holoscan.errors\n"
+                        "slug: python/api-reference/holoscan/errors\n"
+                        "---\nPython errors.\n"
+                    ),
+                }
+                for relative_path, text in pages.items():
+                    page = fern_dir / "generated/api-reference" / relative_path
+                    page.parent.mkdir(parents=True, exist_ok=True)
+                    page.write_text(text, encoding="utf-8")
+
+            return check(
+                docs_root,
+                fern_dir,
+                require_generated=generated,
+            )
+
+    def test_accepts_normalized_python_api_route(self):
+        findings = self._check_reference_links(
+            f"[Python errors]({self.site}/python/api-reference/holoscan/errors)\n"
+        )
+        assert not findings, "\n".join(str(finding) for finding in findings)
+
+    def test_rejects_python_page_under_cpp_route_namespace(self):
+        wrong_route = f"{self.site}/api-reference/holoscan/errors"
+        findings = self._check_reference_links(f"[Python errors]({wrong_route})\n")
+        assert len(findings) == 1
+        assert findings[0].message == f"no such page: {wrong_route}"
+
+    def test_preserves_cpp_api_route(self):
+        findings = self._check_reference_links(
+            f"[Allocator]({self.site}/api-reference/holoscan/allocator)\n"
+        )
+        assert not findings, "\n".join(str(finding) for finding in findings)
+
+    def test_source_only_allows_unchecked_python_api_route(self):
+        findings = self._check_reference_links(
+            f"[Python errors]({self.site}/python/api-reference/holoscan/errors)\n",
+            generated=False,
+        )
+        assert not findings, "\n".join(str(finding) for finding in findings)
+
+    def test_source_only_preserves_explicit_cpp_folder_route(self):
+        findings = self._check_reference_links(
+            f"[Allocator]({self.site}/api-reference/holoscan/allocator)\n",
+            generated=False,
+        )
+        assert not findings, "\n".join(str(finding) for finding in findings)
+
+    def test_url_less_group_does_not_duplicate_cpp_prefix(self):
+        wrong_route = f"{self.site}/api-reference/api-reference/holoscan/allocator"
+        findings = self._check_reference_links(f"[Allocator]({wrong_route})\n", generated=False)
+        assert [finding.message for finding in findings] == [f"no such page: {wrong_route}"]
+
+    def test_rejects_unknown_page_when_python_output_is_present(self):
+        missing_route = f"{self.site}/python/api-reference/holoscan/missing"
+        findings = self._check_reference_links(f"[Missing]({missing_route})\n")
+        assert [finding.message for finding in findings] == [f"no such page: {missing_route}"]
+
+    def test_generated_slug_preserves_archive_prefix(self):
+        with TemporaryDirectory() as temporary_directory:
+            library = Path(temporary_directory)
+            page = library / "errors.mdx"
+            page.write_text(
+                "---\nslug: 'python/api-reference/holoscan/errors'\n---\nErrors.\n",
+                encoding="utf-8",
+            )
+            prefix = f"{self.site}/4-5"
+            generated, unchecked, paths = _generated_pages(
+                [(f"{prefix}/python/api-reference/holoscan", library)],
+                site_prefix=prefix,
+                require_generated=True,
+            )
+            assert not unchecked
+            assert paths[page.resolve()] == f"{prefix}/python/api-reference/holoscan/errors"
+            assert f"{prefix}/python/api-reference/holoscan/errors" in generated
+            assert f"{self.site}/python/api-reference/holoscan/errors" not in generated
 
 
 if __name__ == "__main__":

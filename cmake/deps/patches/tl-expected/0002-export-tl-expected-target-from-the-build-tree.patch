@@ -1,0 +1,26 @@
+From 71f9bb7f3d1c460e9e3e6bc0f3022580aefb76fd Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Mon, 2 Mar 2026 08:46:11 -0800
+Subject: [PATCH] build: export tl-expected target from build tree
+
+Holoscan registers tl-expected in its build export set while consuming
+it as a subproject. Export the interface target so generated package
+configuration can resolve it before installation.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4d0a4a8d..a04345e5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -62,6 +62,10 @@ install(FILES
+ 
+ install(DIRECTORY "include/" TYPE INCLUDE)
+ 
++export(TARGETS expected
++  NAMESPACE tl::
++  FILE ${PROJECT_NAME}-targets.cmake)
++
+ if(EXPECTED_BUILD_TESTS)
+   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+   set(CATCH_INSTALL_HELPERS OFF)

@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+table NestedValue {
+  value: uint (id: 0);
+}
+
+table ObjectVector {
+  tensor: holoscan.schema.Tensor (id: 0);
+  nested: [NestedValue] (id: 1);
+}
+
+root_type ObjectVector;
+file_identifier "DOV1";

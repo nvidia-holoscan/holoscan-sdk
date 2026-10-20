@@ -1,141 +1,189 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-cmake_minimum_required(VERSION 3.20)
-project(Holoscan-examples NONE)
 
-# If we build outside of the SDK main build we set the default value to true
-if(NOT DEFINED HOLOSCAN_BUILD_PYTHON)
-  set(HOLOSCAN_BUILD_PYTHON ON)
+cmake_minimum_required(VERSION 4.0)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND "$ENV{CUDAARCHS}" STREQUAL "")
+    set(CMAKE_CUDA_ARCHITECTURES "native")
 endif()
 
-option(HOLOSCAN_CPP_EXAMPLES "Build C++ examples" ON)
-option(HOLOSCAN_PYTHON_EXAMPLES "Build Python examples" ${HOLOSCAN_BUILD_PYTHON})
+project(holoscan_examples LANGUAGES CXX CUDA)
 
-# Check if the data target exists otherwise define it
-if(NOT TARGET racerx_data)
-  # RacerX sample data
-  add_library(racerx_data INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/../data/racerx/racerx-small.mp4")
+if(NOT TARGET holoscan::core)
+    find_package(holoscan REQUIRED)
+endif()
 
-  # Setup the installation rule
-  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/racerx DESTINATION data COMPONENT holoscan-data)
-
-  # Download the datasets
-  list(APPEND CMAKE_PROGRAM_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../scripts)
-  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/modules/HoloscanDownloadData.cmake)
-
-  set(RACERX_DATA_VERSION "20231009")
-  set(RACERX_DATA_MD5 "b67492afea29610105995c4c27bd5a05")
-
-  # Download the racerX sample data
-  holoscan_download_data(racerx
-      URL https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/data/racerx/racerx_${RACERX_DATA_VERSION}.zip
-      URL_MD5 ${RACERX_DATA_MD5}
-      DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../data
-      BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/../data/racerx/racerx-small.mp4"
+if(PROJECT_IS_TOP_LEVEL)
+    set(_holoscan_build_python_examples_default OFF)
+    if(holoscan_PYTHON_PACKAGE_DIR)
+        set(_holoscan_build_python_examples_default ON)
+    endif()
+    option(HOLOSCAN_BUILD_PYTHON_EXAMPLES
+        "Build the Python examples"
+        "${_holoscan_build_python_examples_default}"
     )
-
-  # Add dependency to force the download
-  add_dependencies(racerx_data racerx_download)
+    unset(_holoscan_build_python_examples_default)
+    set(HOLOSCAN_EXAMPLES_IN_SDK_BUILD OFF)
+else()
+    set(HOLOSCAN_BUILD_PYTHON_EXAMPLES "${HOLOSCAN_BUILD_PYTHON}")
+    set(HOLOSCAN_EXAMPLES_IN_SDK_BUILD ON)
 endif()
 
-# Enable testing
+include(GNUInstallDirs)
 include(CTest)
 
-# C++ only examples
-if(HOLOSCAN_CPP_EXAMPLES)
-  add_subdirectory(benchmark_deadline_priority)
-  add_subdirectory(benchmark_message_passing)
-  add_subdirectory(benchmark_scheduler_throughput)
-  add_subdirectory(gpu_resident_dag)
-  add_subdirectory(gpu_resident_example)
-  add_subdirectory(gpu_resident_multi_io)
-  add_subdirectory(gpu_resident_input)
-  add_subdirectory(matx)
-  add_subdirectory(ping_any)
-  add_subdirectory(ping_conditional)
-  add_subdirectory(ping_cycle)
-  add_subdirectory(gpu_resident_inference_example)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/HoloscanExampleInstall.cmake")
+
+set(HOLOSCAN_EXAMPLES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+if(WIN32)
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}/holoscan/examples")
+else()
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/holoscan/examples")
 endif()
 
-# Python Only examples
-
-if(HOLOSCAN_PYTHON_EXAMPLES)
-  add_subdirectory(cupy_native)
-  add_subdirectory(numpy_native)
-  add_subdirectory(pytorch_native)
-  add_subdirectory(python_decorator)
+if(NOT COMMAND holoscan_add_graph_artifacts)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../cmake/HoloscanGraphArtifacts.cmake")
+        include("${CMAKE_CURRENT_LIST_DIR}/../cmake/HoloscanGraphArtifacts.cmake")
+    endif()
 endif()
 
-# C++ and Python examples
-add_subdirectory(activation_map)
-add_subdirectory(bring_your_own_model)
-add_subdirectory(cli_packager)
-add_subdirectory(conditions)
-add_subdirectory(execution_control)
-add_subdirectory(flow_control)
-add_subdirectory(flow_tracker)
-add_subdirectory(fragment_service)
+if(HOLOSCAN_BUILD_PYTHON_EXAMPLES)
+    find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+    if(HOLOSCAN_EXAMPLES_IN_SDK_BUILD)
+        set(HOLOSCAN_PYTHON_EXAMPLE_PACKAGE_DIR "${holoscan_BINARY_DIR}/python/lib")
+    elseif(holoscan_PYTHON_PACKAGE_DIR)
+        set(HOLOSCAN_PYTHON_EXAMPLE_PACKAGE_DIR "${holoscan_PYTHON_PACKAGE_DIR}")
+    else()
+        message(FATAL_ERROR
+            "The selected Holoscan SDK package does not provide Python bindings")
+    endif()
+endif()
+
+# Installed source packages do not inherit the SDK's cache options. Enable optional examples only
+# when their corresponding exported target is present; SDK builds may provide an explicit value
+# from the top-level configuration.
+if(NOT DEFINED HOLOSCAN_BUILD_INFERENCE)
+    if(TARGET holoscan::op_inference)
+        set(HOLOSCAN_BUILD_INFERENCE ON)
+    else()
+        set(HOLOSCAN_BUILD_INFERENCE OFF)
+    endif()
+endif()
+
+# Shipped examples opt into the SDK configuration matrix even when built from an installed source
+# package. Ordinary consumers keep the logger header default unless they choose their own policy.
+if(NOT COMMAND holoscan_apply_logging_policy)
+    include("${holoscan_DIR}/HoloscanLoggingPolicy.cmake")
+endif()
+
+find_package(CUDAToolkit REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/setup_dependencies.cmake")
+
+# CUDA ships CCCL's CMake config in a layout-dependent cmake dir; point at the
+# candidates directly because CMake does not auto-search lib64 when
+# CMAKE_LIBRARY_ARCHITECTURE is set. MatX's find_dependency(CCCL) reuses
+# CMAKE_PREFIX_PATH (extended by holoscan-config.cmake), so CCCL must resolve
+# before MatX.
+find_package(CCCL 3.3.3 CONFIG REQUIRED
+    PATHS
+        "${CUDAToolkit_TARGET_DIR}/lib/cmake"
+        "${CUDAToolkit_TARGET_DIR}/lib64/cmake"
+        "${CUDAToolkit_LIBRARY_DIR}/cmake"
+        "${CUDAToolkit_LIBRARY_ROOT}/lib64/cmake"
+        "${CUDAToolkit_LIBRARY_ROOT}/lib/cmake"
+        /usr/local/cuda/lib64/cmake
+)
+find_package(matx CONFIG REQUIRED)
+
 add_subdirectory(hello_world)
-add_subdirectory(holoviz)
-add_subdirectory(import_gxf_components)
-add_subdirectory(multithread)
-add_subdirectory(multi_branch_pipeline)
-add_subdirectory(ping_simple)
-add_subdirectory(ping_simple_async_buffer)
-add_subdirectory(ping_simple_run_async)
-add_subdirectory(ping_custom_op)
-add_subdirectory(ping_multi_port)
-add_subdirectory(ping_periodic_async_buffer)
-add_subdirectory(ping_distributed)
-add_subdirectory(ping_vector)
-add_subdirectory(pose_tree)
-add_subdirectory(pubsub)
-add_subdirectory(resources)
-add_subdirectory(round_robin_parallel)
-add_subdirectory(subgraph)
-add_subdirectory(tensor_interop)
-add_subdirectory(v4l2_camera)
-add_subdirectory(v4l2_imx274)
-add_subdirectory(video_replayer)
-add_subdirectory(video_replayer_distributed)
-add_subdirectory(custom_cuda_kernel_1d_sample)
-add_subdirectory(custom_cuda_kernel_multi_sample)
+add_subdirectory(hello_core)
+add_subdirectory(hello_logger)
+add_subdirectory(hello_tensor)
+add_subdirectory(hello_schema)
+add_subdirectory(hello_matx)
+add_subdirectory(hello_cccl)
+add_subdirectory(slow_fast_fusion)
+add_subdirectory(camera_imu_control)
+add_subdirectory(external_clients)
+add_subdirectory(first_pipeline)
+add_subdirectory(cupy_pipeline)
+add_subdirectory(first_operator)
+add_subdirectory(tensors_101)
+add_subdirectory(typed_parameters)
+add_subdirectory(temporal_contracts)
+add_subdirectory(errors_as_values)
+add_subdirectory(time_and_clocks)
+add_subdirectory(compile_and_check)
+if(TARGET holoscan::testing AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing")
+    add_subdirectory(operator_testing)
+endif()
+add_subdirectory(derived_tensor_pool_capacity)
+add_subdirectory(borrowed_image_transform)
+add_subdirectory(rate_aware_ports)
+add_subdirectory(green_context)
+add_subdirectory(running_and_stopping)
+add_subdirectory(retained_tensor_compositor)
+add_subdirectory(embedded_device_tensor)
+add_subdirectory(notification_bridge)
+add_subdirectory(operator_anatomy)
+add_subdirectory(parameter_schemas)
+add_subdirectory(lifecycle_callbacks)
+add_subdirectory(graph_composition)
+add_subdirectory(automatic_partitioning)
+add_subdirectory(cuda_graph_region)
+add_subdirectory(reusable_graphs)
+add_subdirectory(schema_payloads)
+add_subdirectory(tensors_in_depth)
+add_subdirectory(flatbuffer_schemas)
+add_subdirectory(essential)
+add_subdirectory(experimental)
+add_subdirectory(holomq)
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
+        DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
+        COMPONENT holoscan-core-examples
+        FILES_MATCHING
+            PATTERN "CMakeLists.txt"
+            PATTERN "CMakeLists.min.txt"
+            PATTERN "*.cmake"
+            PATTERN "*.cpp"
+            PATTERN "*.cu"
+            PATTERN "*.hpp"
+            PATTERN "*.fbs"
+            PATTERN "*.json"
+            PATTERN "*.yaml"
+            PATTERN "*.sh"
+            PATTERN "*.md"
+        PATTERN "operator_testing" EXCLUDE
+        PATTERN "__pycache__" EXCLUDE
+        PATTERN "build" EXCLUDE
+        PATTERN "build-*" EXCLUDE
+        PATTERN "CMakeFiles" EXCLUDE
+        PATTERN "_deps" EXCLUDE
+    )
 
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.min.txt"
-        RENAME "CMakeLists.txt"
-        DESTINATION examples
-        COMPONENT holoscan-examples
-)
+    if(TARGET holoscan::testing AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing")
+        install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing/"
+            DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/operator_testing"
+            COMPONENT holoscan-testing-examples
+            FILES_MATCHING
+                PATTERN "CMakeLists.txt"
+                PATTERN "CMakeLists.min.txt"
+                PATTERN "*.cpp"
+                PATTERN "*.hpp"
+                PATTERN "*.fbs"
+                PATTERN "*.md"
+            PATTERN "build" EXCLUDE
+            PATTERN "build-*" EXCLUDE
+            PATTERN "CMakeFiles" EXCLUDE
+            PATTERN "_deps" EXCLUDE
+        )
+    endif()
 
-install(FILES README.md
-        DESTINATION examples
-        COMPONENT holoscan-examples
-)
-
-# Install CMake script to download example data from NGC
-install(FILES ${CMAKE_SOURCE_DIR}/scripts/download_example_data
-        DESTINATION examples
-        PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-        COMPONENT holoscan-examples
-)
-
-# Files for testing
-install(FILES testing/run_example_tests
-        DESTINATION examples/testing
-        COMPONENT holoscan-examples
-        PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-)
-
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/data/validation_frames
-        DESTINATION examples/testing
-        COMPONENT holoscan-examples
-)
-
-install(FILES ${CMAKE_SOURCE_DIR}/tests/recorder.hpp
-        DESTINATION examples/testing
-        COMPONENT holoscan-examples
-)
-
+    install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/testing/run_example_tests"
+        DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/testing"
+        COMPONENT holoscan-core-examples
+    )
 endif()

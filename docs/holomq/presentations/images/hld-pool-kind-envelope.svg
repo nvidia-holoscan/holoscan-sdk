@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="320" viewBox="0 0 920 320" role="img" aria-labelledby="title desc">
+  <title id="title">holomq pool and buffer relationship</title>
+  <desc id="desc">One BufferPool and one Buffer type; three ways to create the pool, each yielding a slot lease.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#666"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#76b900"/>
+    </marker>
+    <style>
+      .col { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 600; fill: #555; }
+      .name { font-family: Consolas, Menlo, monospace; font-size: 13px; fill: #1a1a1a; font-weight: 600; }
+      .label { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; fill: #1a1a1a; }
+      .dim { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 10.5px; fill: #666; }
+      .env { fill: #eef7e8; stroke: #76b900; stroke-width: 1.5; }
+      .pool { fill: #eef6fc; stroke: #7eb8e0; stroke-width: 1.5; }
+      .lease { fill: #fafbfc; stroke: #c8d1dc; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="64" y="26" text-anchor="middle" class="col">Your pool</text>
+  <text x="290" y="26" text-anchor="middle" class="col">Pool kind (pick one)</text>
+  <text x="530" y="26" text-anchor="middle" class="col">One slot in the pool</text>
+  <text x="800" y="26" text-anchor="middle" class="col">Your buffer</text>
+
+  <!-- BufferPool -->
+  <rect x="8" y="48" width="112" height="216" rx="8" class="env"/>
+  <text x="64" y="142" text-anchor="middle" class="name">BufferPool</text>
+  <text x="64" y="162" text-anchor="middle" class="dim">fixed slots you</text>
+  <text x="64" y="176" text-anchor="middle" class="dim">allocate up front</text>
+  <text x="64" y="248" text-anchor="middle" class="dim">acquire</text>
+
+  <!-- Buffer -->
+  <rect x="744" y="48" width="112" height="216" rx="8" class="env"/>
+  <text x="800" y="148" text-anchor="middle" class="name">Buffer</text>
+  <text x="800" y="168" text-anchor="middle" class="dim">one slot while</text>
+  <text x="800" y="182" text-anchor="middle" class="dim">you fill or share it</text>
+
+  <!-- Row 1 Device -->
+  <rect x="148" y="48" width="284" height="64" rx="6" class="pool"/>
+  <text x="290" y="74" text-anchor="middle" class="label">Device GPU pool</text>
+  <text x="290" y="92" text-anchor="middle" class="dim">memory stays on the GPU</text>
+
+  <rect x="468" y="48" width="244" height="64" rx="6" class="lease"/>
+  <text x="590" y="76" text-anchor="middle" class="label">GPU device slot</text>
+  <text x="590" y="94" text-anchor="middle" class="dim">for kernels &amp; export</text>
+
+  <!-- Row 2 Host pageable -->
+  <rect x="148" y="124" width="284" height="64" rx="6" class="pool"/>
+  <text x="290" y="150" text-anchor="middle" class="label">Pageable host pool</text>
+  <text x="290" y="168" text-anchor="middle" class="dim">shared host memory + sync sidecar</text>
+
+  <rect x="468" y="124" width="244" height="64" rx="6" class="lease"/>
+  <text x="590" y="152" text-anchor="middle" class="label">Pageable host slot</text>
+  <text x="590" y="170" text-anchor="middle" class="dim">may be copied for GPU access</text>
+
+  <!-- Row 3 Host pinned -->
+  <rect x="148" y="200" width="284" height="64" rx="6" class="pool"/>
+  <text x="290" y="226" text-anchor="middle" class="label">Pinned host pool</text>
+  <text x="290" y="244" text-anchor="middle" class="dim">locked host memory, GPU-friendly</text>
+
+  <rect x="468" y="200" width="244" height="64" rx="6" class="lease"/>
+  <text x="590" y="228" text-anchor="middle" class="label">Pinned host slot</text>
+  <text x="590" y="246" text-anchor="middle" class="dim">direct GPU access when configured</text>
+
+  <!-- Arrows -->
+  <line x1="120" y1="80" x2="142" y2="80" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="432" y1="80" x2="462" y2="80" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="712" y1="80" x2="738" y2="80" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <line x1="120" y1="156" x2="142" y2="156" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="432" y1="156" x2="462" y2="156" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="712" y1="156" x2="738" y2="156" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <line x1="120" y1="232" x2="142" y2="232" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="432" y1="232" x2="462" y2="232" stroke="#666" stroke-width="1.3" marker-end="url(#arrow)"/>
+  <line x1="712" y1="232" x2="738" y2="232" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <text x="460" y="296" text-anchor="middle" class="dim">Same BufferPool and Buffer types — you choose the row when the pool is created</text>
+</svg>

@@ -1,0 +1,705 @@
+From ad78325a586981d9e9b80673958e8d723a32eab0 Mon Sep 17 00:00:00 2001
+From: "Gregory R. Lee" <grelee@nvidia.com>
+Date: Sat, 20 Jun 2026 07:57:19 -0400
+Subject: [PATCH] Report samples replaced by safe overflow
+
+Add an optional publisher callback for each unread sample replaced by a
+safe-overflow send. Report the service, publisher, and affected
+subscriber identifiers together with borrowed views of the replaced
+sample's user header and payload before its reference is released.
+
+Expose the callback consistently through the Rust, C FFI, and C++
+publisher builders so applications can attribute data loss to an exact
+receiver instead of observing only an aggregate delivery count.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
+diff --git a/iceoryx2-cxx/include/iox2/iceoryx2.hpp b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
+index 3ce8bf8c..853da908 100644
+--- a/iceoryx2-cxx/include/iox2/iceoryx2.hpp
++++ b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
+@@ -90,6 +90,7 @@
+ #include "iox2/sample_mut.hpp"
+ #include "iox2/sample_mut_uninit.hpp"
+ #include "iox2/sample_released_handler.hpp"
++#include "iox2/sample_replaced_handler.hpp"
+ #include "iox2/server.hpp"
+ #include "iox2/server_details.hpp"
+ #include "iox2/server_error.hpp"
+diff --git a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
+index 29001d23..b885149d 100644
+--- a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
++++ b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
+@@ -24,6 +24,7 @@
+ #include "iox2/internal/iceoryx2.hpp"
+ #include "iox2/publisher.hpp"
+ #include "iox2/sample_released_handler.hpp"
++#include "iox2/sample_replaced_handler.hpp"
+ #include "iox2/service_type.hpp"
+ 
+ #include <cstdint>
+@@ -107,6 +108,12 @@ class PortFactoryPublisher {
+     /// thread-safe.
+     auto set_sample_released_handler(SampleReleasedHandler handler) && -> PortFactoryPublisher&&;
+ 
++    /// Sets a [`SampleReplacedHandler`] invoked when safe overflow replaces an unread sample for
++    /// one receiver with a newer sample. The handler is moved into the builder and owned by the
++    /// created [`Publisher`]. If the [`Publisher`], including send/loan paths, is used from
++    /// multiple threads, the handler must be thread-safe.
++    auto set_sample_replaced_handler(SampleReplacedHandler handler) && -> PortFactoryPublisher&&;
++
+     /// Creates a new [`Publisher`] or returns a [`PublisherCreateError`] on failure.
+     auto create() && -> bb::Expected<Publisher<S, Payload, UserHeader>, PublisherCreateError>;
+ 
+@@ -123,6 +130,7 @@ class PortFactoryPublisher {
+     bb::Optional<DegradationHandler* const> m_degradation_handler;
+     bb::Optional<BackpressureHandler* const> m_backpressure_handler;
+     bb::Optional<SampleReleasedHandler> m_sample_released_handler;
++    bb::Optional<SampleReplacedHandler> m_sample_replaced_handler;
+ };
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+@@ -174,6 +182,13 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_sample_released_ha
+     return std::move(*this);
+ }
+ 
++template <ServiceType S, typename Payload, typename UserHeader>
++inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_sample_replaced_handler(
++    SampleReplacedHandler handler) && -> PortFactoryPublisher&& {
++    m_sample_replaced_handler.emplace(std::move(handler));
++    return std::move(*this);
++}
++
+ template <ServiceType S, typename Payload, typename UserHeader>
+ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Expected<Publisher<S, Payload, UserHeader>,
+                                                                                       PublisherCreateError> {
+@@ -214,6 +229,16 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+             static_cast<void*>(owned_sample_released_handler.get()));
+     }
+ 
++    std::unique_ptr<SampleReplacedHandler> owned_sample_replaced_handler;
++    if (m_sample_replaced_handler.has_value()) {
++        owned_sample_replaced_handler =
++            std::make_unique<SampleReplacedHandler>(std::move(m_sample_replaced_handler.value()));
++        iox2_port_factory_publisher_builder_set_sample_replaced_handler(
++            &m_handle,
++            detail::sample_replaced_handler_delegate,
++            static_cast<void*>(owned_sample_replaced_handler.get()));
++    }
++
+     if (m_override_preallocation_callback.has_value()) {
+         // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) must be a raw pointer - crosses FFI boundary
+         auto* callback = new OverridePreallocationCallback(m_override_preallocation_callback.value());
+@@ -229,7 +254,8 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+     auto result = iox2_port_factory_publisher_builder_create(m_handle, nullptr, &pub_handle);
+ 
+     if (result == IOX2_OK) {
+-        return Publisher<S, Payload, UserHeader>(pub_handle, std::move(owned_sample_released_handler));
++        return Publisher<S, Payload, UserHeader>(
++            pub_handle, std::move(owned_sample_released_handler), std::move(owned_sample_replaced_handler));
+     }
+ 
+     return bb::err(bb::into<PublisherCreateError>(result));
+diff --git a/iceoryx2-cxx/include/iox2/publisher.hpp b/iceoryx2-cxx/include/iox2/publisher.hpp
+index 39494d7b..06f7a5ac 100644
+--- a/iceoryx2-cxx/include/iox2/publisher.hpp
++++ b/iceoryx2-cxx/include/iox2/publisher.hpp
+@@ -23,6 +23,7 @@
+ #include "iox2/sample_mut.hpp"
+ #include "iox2/sample_mut_uninit.hpp"
+ #include "iox2/sample_released_handler.hpp"
++#include "iox2/sample_replaced_handler.hpp"
+ #include "iox2/service_type.hpp"
+ #include "iox2/unique_port_id.hpp"
+ 
+@@ -108,18 +109,22 @@ class Publisher {
+     friend class PortFactoryPublisher;
+ 
+     explicit Publisher(iox2_publisher_h handle,
+-                       std::unique_ptr<SampleReleasedHandler> sample_released_handler = nullptr);
++                       std::unique_ptr<SampleReleasedHandler> sample_released_handler = nullptr,
++                       std::unique_ptr<SampleReplacedHandler> sample_replaced_handler = nullptr);
+     void drop();
+ 
+     iox2_publisher_h m_handle = nullptr;
+     std::unique_ptr<SampleReleasedHandler> m_sample_released_handler_owned;
++    std::unique_ptr<SampleReplacedHandler> m_sample_replaced_handler_owned;
+ };
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+ inline Publisher<S, Payload, UserHeader>::Publisher(iox2_publisher_h handle,
+-                                                    std::unique_ptr<SampleReleasedHandler> sample_released_handler)
++                                                    std::unique_ptr<SampleReleasedHandler> sample_released_handler,
++                                                    std::unique_ptr<SampleReplacedHandler> sample_replaced_handler)
+     : m_handle { handle }
+-    , m_sample_released_handler_owned(std::move(sample_released_handler)) {
++    , m_sample_released_handler_owned(std::move(sample_released_handler))
++    , m_sample_replaced_handler_owned(std::move(sample_replaced_handler)) {
+ }
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+@@ -141,6 +146,7 @@ inline auto Publisher<S, Payload, UserHeader>::operator=(Publisher&& rhs) noexce
+         drop();
+         m_handle = rhs.m_handle;
+         m_sample_released_handler_owned = std::move(rhs.m_sample_released_handler_owned);
++        m_sample_replaced_handler_owned = std::move(rhs.m_sample_replaced_handler_owned);
+         rhs.m_handle = nullptr;
+     }
+ 
+diff --git a/iceoryx2-cxx/include/iox2/sample_replaced_handler.hpp b/iceoryx2-cxx/include/iox2/sample_replaced_handler.hpp
+new file mode 100644
+index 00000000..9401f89d
+--- /dev/null
++++ b/iceoryx2-cxx/include/iox2/sample_replaced_handler.hpp
+@@ -0,0 +1,86 @@
++// Copyright (c) 2026 Contributors to the Eclipse Foundation
++//
++// See the NOTICE file(s) distributed with this work for additional
++// information regarding copyright ownership.
++//
++// This program and the accompanying materials are made available under the
++// terms of the Apache Software License 2.0 which is available at
++// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
++// which is available at https://opensource.org/licenses/MIT.
++//
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++#ifndef IOX2_SAMPLE_REPLACED_HANDLER_HPP
++#define IOX2_SAMPLE_REPLACED_HANDLER_HPP
++
++#include "iox2/bb/static_function.hpp"
++#include "iox2/internal/callback_context.hpp"
++#include "iox2/internal/iceoryx2.hpp"
++#include "iox2/unique_port_id.hpp"
++
++#include <cstdint>
++
++namespace iox2 {
++namespace detail {
++inline void sample_replaced_handler_delegate(const iox2_sample_replaced_info_t* info_handle,
++                                             iox2_callback_context callback_cxt);
++} // namespace detail
++
++/// Read-only view of a sample replaced by safe overflow for one receiver.
++/// Pointers are valid only for the duration of the [`SampleReplacedHandler`] call.
++class SampleReplacedInfo {
++  private:
++    const iox2_sample_replaced_info_t* m_info;
++
++    explicit SampleReplacedInfo(const iox2_sample_replaced_info_t* info)
++        : m_info(info) {
++    }
++
++    friend void iox2::detail::sample_replaced_handler_delegate(const iox2_sample_replaced_info_t* info_handle,
++                                                               iox2_callback_context callback_cxt);
++
++  public:
++    [[nodiscard]] auto service_id() const -> RawIdType {
++        return RawIdType::from_range_unchecked(m_info->service_id.data).value();
++    }
++
++    [[nodiscard]] auto sender_port_id() const -> RawIdType {
++        return RawIdType::from_range_unchecked(m_info->sender_port_id.data).value();
++    }
++
++    [[nodiscard]] auto receiver_port_id() const -> RawIdType {
++        return RawIdType::from_range_unchecked(m_info->receiver_port_id.data).value();
++    }
++
++    [[nodiscard]] auto user_header_ptr() const -> const uint8_t* {
++        return m_info->user_header_ptr;
++    }
++
++    [[nodiscard]] auto user_header_len() const -> std::size_t {
++        return m_info->user_header_len;
++    }
++
++    [[nodiscard]] auto payload_ptr() const -> const uint8_t* {
++        return m_info->payload_ptr;
++    }
++
++    [[nodiscard]] auto payload_len() const -> std::size_t {
++        return m_info->payload_len;
++    }
++};
++
++/// Invoked when safe overflow replaces an unread sample for one receiver.
++using SampleReplacedHandler = iox2::bb::StaticFunction<void(const SampleReplacedInfo&)>;
++
++namespace detail {
++inline void sample_replaced_handler_delegate(const iox2_sample_replaced_info_t* info_handle,
++                                             iox2_callback_context callback_cxt) {
++    auto* callback = static_cast<SampleReplacedHandler*>(callback_cxt);
++    auto info = SampleReplacedInfo(info_handle);
++    (*callback)(info);
++}
++} // namespace detail
++
++} // namespace iox2
++
++#endif // IOX2_SAMPLE_REPLACED_HANDLER_HPP
+diff --git a/iceoryx2-ffi/c/src/api/mod.rs b/iceoryx2-ffi/c/src/api/mod.rs
+index 3f8c41d1..28d8d4e6 100644
+--- a/iceoryx2-ffi/c/src/api/mod.rs
++++ b/iceoryx2-ffi/c/src/api/mod.rs
+@@ -73,6 +73,7 @@ mod response_mut;
+ mod sample;
+ mod sample_mut;
+ mod sample_released_handler;
++mod sample_replaced_handler;
+ mod server;
+ mod server_details;
+ mod service;
+@@ -159,6 +160,7 @@ pub use response_mut::*;
+ pub use sample::*;
+ pub use sample_mut::*;
+ pub use sample_released_handler::*;
++pub use sample_replaced_handler::*;
+ pub use server::*;
+ pub use server_details::*;
+ pub use service::*;
+diff --git a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
+index 06862b50..b5814070 100644
+--- a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
++++ b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
+@@ -15,12 +15,14 @@
+ use crate::api::{
+     AssertNonNullHandle, HandleToType, IOX2_OK, IntoCInt, PayloadFfi, PublisherUnion,
+     UnsafeCallbackContextSendWorkaround, UserHeaderFfi, backpressure_info_cast, c_size_t,
+-    degradation_info_cast, iox2_backpressure_handler, iox2_callback_context,
+-    iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t,
+-    iox2_sample_released_handler, iox2_sample_released_info_t, iox2_service_type_e,
++    degradation_info_cast, iox2_backpressure_handler, iox2_buffer_16_align_4_t,
++    iox2_callback_context, iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t,
++    iox2_sample_released_handler,
++    iox2_sample_released_info_t, iox2_sample_replaced_handler, iox2_sample_replaced_info_t,
++    iox2_service_type_e,
+ };
+ 
+-use iceoryx2::port::SampleReleasedInfo;
++use iceoryx2::port::{SampleReleasedInfo, SampleReplacedInfo};
+ 
+ use iceoryx2::port::publisher::PublisherCreateError;
+ use iceoryx2::prelude::*;
+@@ -31,7 +33,7 @@ use iceoryx2_ffi_macros::CStrRepr;
+ use iceoryx2_ffi_macros::iceoryx2_ffi;
+ 
+ use core::ffi::{c_char, c_int};
+-use core::mem::ManuallyDrop;
++use core::mem::{ManuallyDrop, MaybeUninit};
+ 
+ // BEGIN types definition
+ 
+@@ -123,6 +125,14 @@ impl IntoCInt for PublisherCreateError {
+     }
+ }
+ 
++fn id_to_ffi_buffer(value: u128) -> iox2_buffer_16_align_4_t {
++    let mut buffer = MaybeUninit::<iox2_buffer_16_align_4_t>::uninit();
++    unsafe {
++        iox2_buffer_16_align_4_t::write(buffer.as_mut_ptr(), value.to_ne_bytes());
++        buffer.assume_init()
++    }
++}
++
+ pub(super) union PortFactoryPublisherBuilderUnion {
+     ipc: ManuallyDrop<PortFactoryPublisher<'static, crate::IpcService, PayloadFfi, UserHeaderFfi>>,
+     local:
+@@ -146,13 +156,13 @@ impl PortFactoryPublisherBuilderUnion {
+     }
+ }
+ 
+-const _: [(); 272] =
++const _: [(); 336] =
+     [(); core::mem::size_of::<Option<PortFactoryPublisherBuilderUnion>>()];
+ 
+ #[repr(C)]
+ #[repr(align(16))] // alignment of Option<PortFactoryPublisherBuilderUnion>
+ pub struct iox2_port_factory_publisher_builder_storage_t {
+-    internal: [u8; 272], // guarded by the compile-time size assertion above
++    internal: [u8; 336], // guarded by the compile-time size assertion above
+ }
+ 
+ #[repr(C)]
+@@ -505,6 +515,72 @@ pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_sample_released
+     }
+ }
+ 
++/// Sets a callback invoked when safe overflow replaces one receiver's unread sample with a newer
++/// sample.
++///
++/// # Safety
++///
++/// * `port_factory_handle` must be valid
++/// * `ctx` must point to a [`iox2::SampleReplacedHandler`] that outlives the created publisher
++///   port. When using the iceoryx2-cxx API, the handler is heap-allocated and owned by
++///   [`iox2::Publisher`].
++/// * if the publisher is used from multiple threads, `ctx` must be thread-safe
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_sample_replaced_handler(
++    port_factory_handle: iox2_port_factory_publisher_builder_h_ref,
++    handler: iox2_sample_replaced_handler,
++    ctx: iox2_callback_context,
++) {
++    port_factory_handle.assert_non_null();
++
++    let ctx = UnsafeCallbackContextSendWorkaround { ctx };
++
++    unsafe {
++        let port_factory_struct = &mut *port_factory_handle.as_type();
++        match port_factory_struct.service_type {
++            iox2_service_type_e::IPC => {
++                let port_factory = ManuallyDrop::take(&mut port_factory_struct.value.as_mut().ipc);
++
++                port_factory_struct.set(PortFactoryPublisherBuilderUnion::new_ipc(
++                    port_factory.set_sample_replaced_handler(move |info: &SampleReplacedInfo| {
++                        let ffi_info = iox2_sample_replaced_info_t {
++                            service_id: id_to_ffi_buffer(info.service_id),
++                            sender_port_id: id_to_ffi_buffer(info.sender_port_id),
++                            receiver_port_id: id_to_ffi_buffer(info.receiver_port_id),
++                            user_header_ptr: info.user_header_ptr,
++                            user_header_len: info.user_header_len,
++                            payload_ptr: info.payload_ptr,
++                            payload_len: info.payload_len,
++                        };
++                        let ctx = ctx;
++                        handler(&ffi_info, ctx.ctx);
++                    }),
++                ));
++            }
++            iox2_service_type_e::LOCAL => {
++                let port_factory =
++                    ManuallyDrop::take(&mut port_factory_struct.value.as_mut().local);
++
++                port_factory_struct.set(PortFactoryPublisherBuilderUnion::new_local(
++                    port_factory.set_sample_replaced_handler(move |info: &SampleReplacedInfo| {
++                        let ffi_info = iox2_sample_replaced_info_t {
++                            service_id: id_to_ffi_buffer(info.service_id),
++                            sender_port_id: id_to_ffi_buffer(info.sender_port_id),
++                            receiver_port_id: id_to_ffi_buffer(info.receiver_port_id),
++                            user_header_ptr: info.user_header_ptr,
++                            user_header_len: info.user_header_len,
++                            payload_ptr: info.payload_ptr,
++                            payload_len: info.payload_len,
++                        };
++                        let ctx = ctx;
++                        handler(&ffi_info, ctx.ctx);
++                    }),
++                ));
++            }
++        }
++    }
++}
++
+ /// Sets the max slice length for the publisher
+ ///
+ /// # Arguments
+diff --git a/iceoryx2-ffi/c/src/api/sample_replaced_handler.rs b/iceoryx2-ffi/c/src/api/sample_replaced_handler.rs
+new file mode 100644
+index 00000000..0bc8be56
+--- /dev/null
++++ b/iceoryx2-ffi/c/src/api/sample_replaced_handler.rs
+@@ -0,0 +1,41 @@
++// Copyright (c) 2026 Contributors to the Eclipse Foundation
++//
++// See the NOTICE file(s) distributed with this work for additional
++// information regarding copyright ownership.
++//
++// This program and the accompanying materials are made available under the
++// terms of the Apache Software License 2.0 which is available at
++// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
++// which is available at https://opensource.org/licenses/MIT.
++//
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++use crate::api::{iox2_buffer_16_align_4_t, iox2_callback_context};
++
++/// Read-only pointers into a publisher sample replaced by safe overflow for one receiver.
++///
++/// Valid only for the duration of the [`iox2_sample_replaced_handler`] call.
++#[repr(C)]
++pub struct iox2_sample_replaced_info_t {
++    pub service_id: iox2_buffer_16_align_4_t,
++    pub sender_port_id: iox2_buffer_16_align_4_t,
++    pub receiver_port_id: iox2_buffer_16_align_4_t,
++    pub user_header_ptr: *const u8,
++    pub user_header_len: usize,
++    pub payload_ptr: *const u8,
++    pub payload_len: usize,
++}
++
++/// Callback invoked when safe overflow replaces an unread sample for one receiver.
++///
++/// # Arguments
++///
++/// * `info` — const pointer to [`iox2_sample_replaced_info_t`]; valid only during the call
++/// * `ctx` — user [`iox2_callback_context`](crate::iox2_callback_context)
++///
++/// # Safety
++///
++/// * `ctx` may be stored and invoked from the publisher's internal paths; if the publisher is used
++///   from multiple threads, `ctx` must be thread-safe.
++pub type iox2_sample_replaced_handler =
++    extern "C" fn(*const iox2_sample_replaced_info_t, iox2_callback_context);
+diff --git a/iceoryx2/src/port/client.rs b/iceoryx2/src/port/client.rs
+index c09e480f..7173ab25 100644
+--- a/iceoryx2/src/port/client.rs
++++ b/iceoryx2/src/port/client.rs
+@@ -481,6 +481,7 @@ impl<
+             degradation_handler: client_factory.request_degradation_handler,
+             backpressure_handler: client_factory.backpressure_handler,
+             sample_released_handler: None,
++            sample_replaced_handler: None,
+             number_of_samples: number_of_requests,
+             max_number_of_segments,
+             service_state: service.clone(),
+diff --git a/iceoryx2/src/port/details/sender.rs b/iceoryx2/src/port/details/sender.rs
+index e7f65891..ffeecbc5 100644
+--- a/iceoryx2/src/port/details/sender.rs
++++ b/iceoryx2/src/port/details/sender.rs
+@@ -34,7 +34,8 @@ use iceoryx2_log::{error, fail, fatal_panic, warn};
+ use crate::node::SharedNode;
+ use crate::port::{
+     BackpressureHandler, BackpressureInfo, DegradationAction, DegradationCause, DegradationHandler,
+-    DegradationInfo, LoanError, SampleReleasedHandler, SampleReleasedInfo, SendError,
++    SampleReleasedHandler, SampleReleasedInfo, SampleReplacedHandler, SampleReplacedInfo,
++    DegradationInfo, LoanError, SendError,
+ };
+ use crate::prelude::BackpressureStrategy;
+ use crate::service::config_scheme::connection_config;
+@@ -134,6 +135,7 @@ pub(crate) struct Sender<Service: service::Service> {
+     pub(crate) degradation_handler: DegradationHandler<'static>,
+     pub(crate) backpressure_handler: Option<BackpressureHandler<'static>>,
+     pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
++    pub(crate) sample_replaced_handler: Option<SampleReplacedHandler<'static>>,
+     pub(crate) service_state: SharedServiceState<Service, NoResource>,
+     pub(crate) tagger: CyclicTagger,
+     pub(crate) loan_counter: AtomicUsize,
+@@ -312,6 +314,7 @@ impl<Service: service::Service> Sender<Service> {
+                     number_of_recipients += 1;
+ 
+                     if let Some(old) = overflow {
++                        self.notify_sample_replaced(old, connection.receiver_port_id);
+                         self.release_sample(old)
+                     }
+                 }
+@@ -516,21 +519,8 @@ impl<Service: service::Service> Sender<Service> {
+             == 1
+         {
+             if let Some(ref handler) = self.sample_released_handler {
+-                let header_ptr = self.data_segment.bucket_chunk_header_ptr(offset);
+-                let user_header_ptr = self
+-                    .message_type_details
+-                    .user_header_ptr_from_header(header_ptr);
+-                let payload_ptr = self
+-                    .message_type_details
+-                    .payload_ptr_from_header(header_ptr);
+-                let user_header_len = self.message_type_details.user_header.size();
+-                let header = unsafe { &*(header_ptr as *const PublishSubscribeHeader) };
+-                let payload_len = match self.message_type_details.payload.variant() {
+-                    TypeVariant::Dynamic => {
+-                        header.number_of_elements() as usize * self.message_type_details.payload.size()
+-                    }
+-                    TypeVariant::FixedSize => self.message_type_details.payload.size(),
+-                };
++                let (user_header_ptr, user_header_len, payload_ptr, payload_len) =
++                    self.sample_pointers(offset);
+                 let info = SampleReleasedInfo {
+                     user_header_ptr,
+                     user_header_len,
+@@ -545,6 +535,44 @@ impl<Service: service::Service> Sender<Service> {
+         }
+     }
+ 
++    fn notify_sample_replaced(&self, offset: PointerOffset, receiver_port_id: u128) {
++        if let Some(ref handler) = self.sample_replaced_handler {
++            let (user_header_ptr, user_header_len, payload_ptr, payload_len) =
++                self.sample_pointers(offset);
++            let info = SampleReplacedInfo {
++                service_id: self
++                    .service_state
++                    .static_config()
++                    .unique_service_id()
++                    .value(),
++                sender_port_id: self.sender_port_id,
++                receiver_port_id,
++                user_header_ptr,
++                user_header_len,
++                payload_ptr,
++                payload_len,
++            };
++            handler.call(&info);
++        }
++    }
++
++    fn sample_pointers(&self, offset: PointerOffset) -> (*const u8, usize, *const u8, usize) {
++        let header_ptr = self.data_segment.bucket_chunk_header_ptr(offset);
++        let user_header_ptr = self
++            .message_type_details
++            .user_header_ptr_from_header(header_ptr);
++        let payload_ptr = self.message_type_details.payload_ptr_from_header(header_ptr);
++        let user_header_len = self.message_type_details.user_header.size();
++        let header = unsafe { &*(header_ptr as *const PublishSubscribeHeader) };
++        let payload_len = match self.message_type_details.payload.variant() {
++            TypeVariant::Dynamic => {
++                header.number_of_elements() as usize * self.message_type_details.payload.size()
++            }
++            TypeVariant::FixedSize => self.message_type_details.payload.size(),
++        };
++        (user_header_ptr, user_header_len, payload_ptr, payload_len)
++    }
++
+     fn remove_connection(&self, i: usize) {
+         if let Some(connection) = self.get(i) {
+             // # SAFETY: the receiver no longer exist, therefore we can
+diff --git a/iceoryx2/src/port/mod.rs b/iceoryx2/src/port/mod.rs
+index 63cba064..3b1c1a19 100644
+--- a/iceoryx2/src/port/mod.rs
++++ b/iceoryx2/src/port/mod.rs
+@@ -168,6 +168,47 @@ impl core::fmt::Debug for SampleReleasedHandler<'_> {
+     }
+ }
+ 
++/// Read-only view of a sample that was superseded by safe overflow for one receiver.
++///
++/// Invoked on the publisher when a sender with safe overflow enabled replaces a receiver's
++/// previously unread sample with a newer sample. Pointers must not be used after the handler
++/// returns.
++#[derive(Debug)]
++pub struct SampleReplacedInfo {
++    /// Unique service id involved in the replacement.
++    pub service_id: u128,
++    /// Unique publisher port id involved in the replacement.
++    pub sender_port_id: u128,
++    /// Unique subscriber port id whose unread sample was replaced.
++    pub receiver_port_id: u128,
++    /// Start of the replaced sample's user header bytes in shared memory.
++    pub user_header_ptr: *const u8,
++    /// Length of the replaced sample's user header in bytes.
++    pub user_header_len: usize,
++    /// Start of the replaced sample's payload bytes in shared memory.
++    pub payload_ptr: *const u8,
++    /// Length of the replaced sample's payload bytes.
++    pub payload_len: usize,
++}
++
++/// Callback invoked when safe overflow replaces a receiver's unread sample.
++pub trait SampleReplacedFn: Fn(&SampleReplacedInfo) + Send {}
++
++impl<F: Fn(&SampleReplacedInfo) + Send> SampleReplacedFn for F {}
++
++tiny_fn! {
++    /// Handler invoked when safe overflow replaces an unread sample for one receiver.
++    pub struct SampleReplacedHandler = Fn(info: &SampleReplacedInfo);
++}
++
++unsafe impl Send for SampleReplacedHandler<'_> {}
++
++impl core::fmt::Debug for SampleReplacedHandler<'_> {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        write!(f, "SampleReplacedHandler")
++    }
++}
++
+ /// Defines the action that shall be take when an degradation is detected. This can happen when
+ /// data cannot be delivered, or when the system is corrupted and files are modified by
+ /// non-iceoryx2 instances. Is used as return value of the [`DegradationHandler`] to define a
+diff --git a/iceoryx2/src/port/publisher.rs b/iceoryx2/src/port/publisher.rs
+index 449a2aff..2df7c7fb 100644
+--- a/iceoryx2/src/port/publisher.rs
++++ b/iceoryx2/src/port/publisher.rs
+@@ -511,6 +511,7 @@ impl<
+                     degradation_handler: publisher_factory.degradation_handler,
+                     backpressure_handler: publisher_factory.backpressure_handler,
+                     sample_released_handler: publisher_factory.sample_released_handler,
++                    sample_replaced_handler: publisher_factory.sample_replaced_handler,
+                     service_state: service.clone(),
+                     tagger: CyclicTagger::new(),
+                     loan_counter: AtomicUsize::new(0),
+diff --git a/iceoryx2/src/port/server.rs b/iceoryx2/src/port/server.rs
+index 7d472d41..c1c2a243 100644
+--- a/iceoryx2/src/port/server.rs
++++ b/iceoryx2/src/port/server.rs
+@@ -462,6 +462,7 @@ impl<
+             degradation_handler: server_factory.response_degradation_handler,
+             backpressure_handler: server_factory.backpressure_handler,
+             sample_released_handler: None,
++            sample_replaced_handler: None,
+             service_state: service.clone(),
+             tagger: CyclicTagger::new(),
+             loan_counter: AtomicUsize::new(0),
+diff --git a/iceoryx2/src/prelude.rs b/iceoryx2/src/prelude.rs
+index 5958db2f..4b75ee08 100644
+--- a/iceoryx2/src/prelude.rs
++++ b/iceoryx2/src/prelude.rs
+@@ -13,8 +13,8 @@
+ pub use crate::config::Config;
+ pub use crate::node::{Node, NodeBuilder, NodeState, node_name::NodeName};
+ pub use crate::port::{
+-    SampleReleasedHandler, SampleReleasedInfo, backpressure_strategy::BackpressureStrategy,
+-    event_id::EventId,
++    SampleReleasedHandler, SampleReleasedInfo, SampleReplacedHandler, SampleReplacedInfo,
++    backpressure_strategy::BackpressureStrategy, event_id::EventId,
+ };
+ pub use crate::service::messaging_pattern::MessagingPattern;
+ pub use crate::service::{
+diff --git a/iceoryx2/src/service/port_factory/publisher.rs b/iceoryx2/src/service/port_factory/publisher.rs
+index 6b519578..ef9865ab 100644
+--- a/iceoryx2/src/service/port_factory/publisher.rs
++++ b/iceoryx2/src/service/port_factory/publisher.rs
+@@ -57,7 +57,8 @@
+ use crate::{
+     port::{
+         BackpressureFn, BackpressureHandler, DegradationAction, DegradationFn, DegradationHandler,
+-        SampleReleasedFn, SampleReleasedHandler, backpressure_strategy::BackpressureStrategy,
++        SampleReleasedFn, SampleReleasedHandler, SampleReplacedFn, SampleReplacedHandler,
++        backpressure_strategy::BackpressureStrategy,
+         publisher::{Publisher, PublisherCreateError},
+     },
+     service,
+@@ -115,6 +116,7 @@ pub struct PortFactoryPublisher<
+     pub(crate) degradation_handler: DegradationHandler<'static>,
+     pub(crate) backpressure_handler: Option<BackpressureHandler<'static>>,
+     pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
++    pub(crate) sample_replaced_handler: Option<SampleReplacedHandler<'static>>,
+     pub(crate) preallocate_number_of_samples_override: PreallocatedSamplesOverride<'static>,
+     pub(crate) factory: &'factory PortFactory<Service, Payload, UserHeader>,
+ }
+@@ -143,8 +145,8 @@ impl<
+             factory: self.factory,
+             degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
+             backpressure_handler: None,
+-            backpressure_handler: None,
+             sample_released_handler: None,
++            sample_replaced_handler: None,
+             preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
+         }
+     }
+@@ -174,8 +176,8 @@ impl<
+             },
+             degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
+             backpressure_handler: None,
+-            backpressure_handler: None,
+             sample_released_handler: None,
++            sample_replaced_handler: None,
+             preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
+             factory,
+         }
+@@ -249,6 +251,17 @@ impl<
+         self
+     }
+ 
++    /// Sets a callback that is invoked when safe overflow replaces a receiver's unread sample with
++    /// a newer sample.
++    ///
++    /// The [`crate::port::SampleReplacedInfo`] pointers are valid only for the duration of the
++    /// callback. The callback is only invoked for services created with safe overflow enabled.
++    pub fn set_sample_replaced_handler<F: SampleReplacedFn + 'static>(mut self, handler: F) -> Self {
++        self.sample_replaced_handler = Some(SampleReplacedHandler::new(handler));
++
++        self
++    }
++
+     /// Creates a new [`Publisher`] or returns a [`PublisherCreateError`] on failure.
+     pub fn create(self) -> Result<Publisher<Service, Payload, UserHeader>, PublisherCreateError> {
+         let origin = format!("{self:?}");

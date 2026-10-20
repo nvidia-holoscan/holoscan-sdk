@@ -9,8 +9,8 @@ function(holoscan_download_data dataname)
     return()
   endif()
 
-  cmake_parse_arguments(DATA "GENERATE_GXF_ENTITIES;ALL"
-                             "URL;URL_MD5;DOWNLOAD_DIR;GXF_ENTITIES_WIDTH;GXF_ENTITIES_HEIGHT;GXF_ENTITIES_CHANNELS;GXF_ENTITIES_FRAMERATE"
+  cmake_parse_arguments(DATA "ALL"
+                             "URL;URL_MD5;DOWNLOAD_DIR"
                              "BYPRODUCTS" ${ARGN})
 
   if(NOT DATA_URL)
@@ -25,28 +25,15 @@ function(holoscan_download_data dataname)
     list(APPEND extra_data_options --md5 ${DATA_URL_MD5})
   endif()
 
-  if(DATA_GENERATE_GXF_ENTITIES)
-     list(APPEND extra_data_options --generate_gxf_entities)
-  endif()
-
-  if(DATA_GXF_ENTITIES_WIDTH)
-    list(APPEND extra_data_options --gxf_entities_width ${DATA_GXF_ENTITIES_WIDTH})
-  endif()
-
-  if(DATA_GXF_ENTITIES_HEIGHT)
-    list(APPEND extra_data_options --gxf_entities_height ${DATA_GXF_ENTITIES_HEIGHT})
-  endif()
-
-  if(DATA_GXF_ENTITIES_CHANNELS)
-    list(APPEND extra_data_options --gxf_entities_channels ${DATA_GXF_ENTITIES_CHANNELS})
-  endif()
-
-  if(DATA_GXF_ENTITIES_FRAMERATE)
-    list(APPEND extra_data_options --gxf_entities_framerate ${DATA_GXF_ENTITIES_FRAMERATE})
-  endif()
-
-  # Find the download_ngc_data script
-  find_program(DOWNLOAD_NGC_DATA_SCRIPT download_ngc_data ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/scripts NO_CMAKE_FIND_ROOT_PATH)
+  # Find the script beside this module (legacy install layout), in the current
+  # install bin directory, or relative to this module in the source tree.
+  find_program(DOWNLOAD_NGC_DATA_SCRIPT download_ngc_data
+    HINTS
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../bin"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../scripts"
+    NO_CMAKE_FIND_ROOT_PATH
+  )
   if(NOT DOWNLOAD_NGC_DATA_SCRIPT)
     message(FATAL_ERROR "download_ngc_data not found")
   endif()

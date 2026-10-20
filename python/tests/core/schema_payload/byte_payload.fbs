@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace holoscan.test;
+
+enum ByteMode: ubyte { Zero = 0, High = 128 }
+enum ByteFlags: ubyte (bit_flags) { First = 0, Last = 7 }
+struct ByteArray { values: [ubyte:4]; }
+table ByteNested { blob: [ubyte] (id: 0); }
+table BytePayload {
+  blob: [ubyte] (id: 0);
+  nested: ByteNested (id: 1);
+  signed_values: [byte] (id: 2);
+  modes: [ByteMode] (id: 3);
+  flags: [ByteFlags] (id: 4);
+  fixed: ByteArray (id: 5);
+  numbers: [uint] (id: 6);
+  labels: [string] (id: 7);
+}
+root_type BytePayload;
+file_identifier "HSBP";

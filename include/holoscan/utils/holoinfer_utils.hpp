@@ -3,277 +3,107 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP
-#define HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP
+#pragma once
+
+#include <cuda_runtime.h>
 
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <holoscan/core/io_context.hpp>
-#include <holoscan/utils/cuda_stream_handler.hpp>
+#include <holoscan/holoscan_core_export.h>
 
-#include <holoinfer_buffer.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/port.hpp>
 
-#include "gxf/core/entity.hpp"
-#include "gxf/core/expected.hpp"
+#include <holoinfer/holoinfer_buffer.hpp>
 
-namespace HoloInfer = holoscan::inference;
-
+// Glue layer between InferenceOp's `holoscan::Input<Tensor>`/`holoscan::Output<Tensor>` ports and
+// HoloInfer's DataBuffer-based backend. Each model input/output tensor is bound to its own stable
+// port, declared dynamically in InferenceOp::setup() from the operator's compile-time-authored
+// parameter aggregate (input_map / output_map). HoloInfer-side DataBuffer allocations are reused
+// across calls (allocated once, resized only if a shape grows). `ExecutionContext::cuda_stream()`
+// supplies the single Runtime-owned stream used per activation.
+//
+// Note: this header intentionally does not alias `holoscan::inference` to `HoloInfer` (that
+// alias must not live in a public header — see inference.hpp). Callers that want the short form
+// declare their own `namespace HoloInfer = holoscan::inference;` at file scope in their .cpp.
 namespace holoscan::utils {
 
 /**
- * Persistent cache for output message and tensor allocations used by the cached variant of
- * transmit_data_per_model. Holds a reusable GXF entity and per-tensor metadata to minimise
- * per-frame overhead. Three cases are handled each frame:
- *   1. First use or buffer too small: full reshape (reallocate + update shape).
- *   2. Incoming fits in existing allocation but dims changed: wrapMemory to update shape
- *      metadata only — no free/alloc of the underlying buffer.
- *   3. Same dims as last frame: fast path, no tensor mutation at all.
+ * @brief Convert a HoloInfer element datatype to its DLPack equivalent.
+ * @return The matching DLDataType, or DLDataType{} (code/bits/lanes all zero) when unsupported.
  */
-struct TensorTransmitCache {
-  /// Persistent output entity. Invalid until the first call to transmit_data_per_model.
-  nvidia::gxf::Expected<nvidia::gxf::Entity> out_message{
-      nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE}};
-  /// Maximum element count that has been allocated for each output tensor.
-  std::map<std::string, size_t> allocated_sizes;
-  /// Dimension vector from the most recent frame for each output tensor, used to detect shape
-  /// changes that require a wrapMemory call even when the element count has not grown.
-  std::map<std::string, std::vector<int64_t>> last_dims;
-  struct ResolvedOutput {
-    std::string key_name;                          // model key in tensor_out_dims_map
-    unsigned int tensor_index = 0;                 // index into model_to_tensor_map[key_name]
-    HoloInfer::DataBuffer* data_buffer = nullptr;  // direct pointer; aliases input_data_map entry
-    HoloInfer::holoinfer_datatype dtype = HoloInfer::holoinfer_datatype::h_Float32;
-  };
-  std::vector<ResolvedOutput> resolved_outputs;
-  /// True once `resolved_outputs` has been populated by the first call and matches `out_tensors`.
-  /// Reset implicitly when `out_tensors` size changes.
-  bool resolved_valid = false;
-};
+[[nodiscard]] HOLOSCAN_CORE_EXPORT DLDataType
+holoinfer_dtype_to_dlpack(holoscan::inference::holoinfer_datatype dtype) noexcept;
 
 /**
- * Persistent cache for the input-side counterpart of TensorTransmitCache.
+ * @brief Convert a DLPack dtype to its closest HoloInfer element datatype.
+ * @return The matching holoinfer_datatype, or h_Unsupported when no exact match exists.
  */
-struct TensorExtractCache {
-  /// Becomes true after the first successful get_data_per_model() call has populated the
-  /// per-input-tensor metadata below.
-  bool valid = false;
-
-  /// For each entry in `in_tensors` (same order as the operator's `model_inputs_` vector),
-  /// the index of the GXF message that produced that tensor on the first compute() call. On
-  /// subsequent compute() calls we look in this message FIRST before falling back to a full search.
-  std::vector<size_t> message_index;
-
-  /// Cached HoloInfer datatype per input tensor
-  std::vector<int> dtype_code;
-
-  /// Cached dims per input tensor name.
-  std::map<std::string, std::vector<int>> dims_per_tensor;
-
-  /// Resolved DataBuffer pointer per input tensor
-  std::vector<HoloInfer::DataBuffer*> data_buffer_ptrs;
-};
+[[nodiscard]] HOLOSCAN_CORE_EXPORT holoscan::inference::holoinfer_datatype
+dlpack_dtype_to_holoinfer(DLDataType dtype) noexcept;
 
 /**
- * Buffer wrapping a GXF tensor
+ * @brief Extract input tensor data from a set of named Input<Tensor> ports into HoloInfer's
+ * per-tensor device/host buffers.
+ *
+ * For each `(name, port)` pair in `ports`, the tensor is received and its data copied
+ * (device-to-device, or device-to-host when `input_on_cuda` is false) into
+ * `data_per_tensor[name]`. The backing HoloInfer DataBuffer is allocated on first use (or resized
+ * if a later frame is larger) using the received tensor's own shape.
+ *
+ * @param ports Map of input tensor name to its bound Input<Tensor> port.
+ * @param data_per_tensor HoloInfer input DataMap to populate (InferenceSpecs::data_per_tensor_).
+ * @param dims_per_tensor Map updated with the received dimensions of each input tensor.
+ * @param input_on_cuda Whether the extracted buffer should be device-resident.
+ * @param module Caller name used in error messages.
+ * @param stream CUDA stream used for the extraction copies.
+ * @return Success, or a typed error.
  */
-class GxfTensorBuffer : public HoloInfer::Buffer {
- public:
-  /**
-   * @brief Constructor
-   *
-   * @param entity GXF entity holding the tensor
-   * @param tensor GXF tensor
-   */
-  explicit GxfTensorBuffer(const holoscan::gxf::Entity& entity,
-                           const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor);
-  GxfTensorBuffer() = delete;
-
-  /// Buffer class virtual members implemented by this class
-  ///@{
-  void* data() override;
-  size_t size() const override;
-  size_t get_bytes() const override;
-  void resize(size_t number_of_elements) override;
-  ///@}
-
- private:
-  holoscan::gxf::Entity entity_;
-  nvidia::gxf::Handle<nvidia::gxf::Tensor> tensor_;
-};
-
-// shim around HoloInfer::report_error to return gxf_result_t enum instead of int
-gxf_result_t report_error(const std::string& module, const std::string& submodule);
+[[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> get_data_per_model(
+    const std::map<std::string, Input<Tensor>*>& ports,
+    holoscan::inference::DataMap& data_per_tensor,
+    std::map<std::string, std::vector<int>>& dims_per_tensor, bool input_on_cuda,
+    const std::string& module, cudaStream_t stream);
 
 /**
- * Extracts data from GXF Receivers.
+ * @brief Transmit HoloInfer per-model output buffers through their bound Output<Tensor> ports.
  *
- * This version of get_data_per_model uses the legacy CudaStreamHandler utility. Use the variant
- * without a cuda_stream_handler argument to use the built-in CudaObjectHandler instead.
+ * For each model in `model_to_tensor_map`, each of its output tensor names is looked up in
+ * `output_per_tensor` (keyed by tensor name), loaned from the port's runtime pool, filled by
+ * an async CUDA copy on the compute stream, committed (which records the readiness event so
+ * downstream consumers are correctly ordered w.r.t. the copy), and emitted.
  *
- * @param op_input Input context
- * @param in_tensors Input tensor names
- * @param data_per_input_tensor Map is updated with output tensor name as key mapped to data
- * buffer
- * @param dims_per_tensor Map is updated with tensor name as key mapped to dimension of input tensor
- * @param cuda_buffer_out Flag defining the location of output memory (Device or Host)
- * @param module Module that called for data extraction
- * @param context GXF execution context
- * @param cuda_stream_handler Cuda stream handler
- * @return GXF result code
+ * The runtime-pool grant is declared by `InferenceOp::setup()`; this path never calls a
+ * general-purpose allocator on the steady-state hot path (see performance_model.mdx).
+ *
+ * A tensor name with no entry in `ports` is treated as an internal/chained tensor (produced by
+ * one model and consumed by another within this same InferenceOp) rather than an error: it is
+ * silently skipped, since InferenceOp only declares an `Output<Tensor>` port for its *external*
+ * outputs (see `InferenceOp::setup()`).
+ *
+ * @param model_to_tensor_map Map of model name to its ordered list of output tensor names.
+ * @param ports Map of output tensor name to its bound Output<Tensor> port.
+ * @param output_per_tensor HoloInfer output DataMap (InferenceSpecs::output_per_model_), keyed by
+ * tensor name.
+ * @param model_dims Output tensor dimensions, keyed by model name; each entry holds one dims
+ * vector per tensor name of that model, in the same order as `model_to_tensor_map`.
+ * @param output_on_cuda Whether HoloInfer's own output buffer is device-resident.
+ * @param transmit_on_cuda Whether the emitted Tensor should be device-resident.
+ * @param module Caller name used in error messages.
+ * @param context ExecutionContext supplying the CUDA compute stream and activation-time stamp.
+ * @return Success, or a typed error.
  */
-gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::string>& in_tensors,
-                                HoloInfer::DataMap& data_per_input_tensor,
-                                std::map<std::string, std::vector<int>>& dims_per_tensor,
-                                bool cuda_buffer_out, const std::string& module,
-                                gxf_context_t& context, CudaStreamHandler& cuda_stream_handler);
+[[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> transmit_data_per_model(
+    const holoscan::inference::MultiMappings& model_to_tensor_map,
+    const std::map<std::string, Output<Tensor>*>& ports,
+    holoscan::inference::DataMap& output_per_tensor, const holoscan::inference::DimType& model_dims,
+    bool output_on_cuda, bool transmit_on_cuda, const std::string& module,
+    holoscan::ExecutionContext& context);
 
-/**
- * Extracts data from GXF Receivers.
- *
- * @param op_input Input context
- * @param in_tensors Input tensor names
- * @param data_per_input_tensor Map is updated with output tensor name as key mapped to data
- * buffer
- * @param dims_per_tensor Map is updated with tensor name as key mapped to dimension of input tensor
- * @param cuda_buffer_out Flag defining the location of output memory (Device or Host)
- * @param module Module that called for data extraction
- * @param cuda_stream_out Any stream used from the input port will be stored here.
- * @return GXF result code
- */
-gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::string>& in_tensors,
-                                HoloInfer::DataMap& data_per_input_tensor,
-                                std::map<std::string, std::vector<int>>& dims_per_tensor,
-                                bool cuda_buffer_out, const std::string& module,
-                                cudaStream_t& cuda_stream_out);
-
-/**
- * Cached variant of get_data_per_model.
- *
- * @param op_input Input context
- * @param in_tensors Input tensor names
- * @param data_per_input_tensor Map is updated with output tensor name as key mapped to data
- * buffer
- * @param dims_per_tensor Map is updated with tensor name as key mapped to dimension of input tensor
- * @param cuda_buffer_out Flag defining the location of output memory (Device or Host)
- * @param module Module that called for data extraction
- * @param cuda_stream_out Any stream used from the input port will be stored here.
- * @param cache Cache for the input-side counterpart of TensorTransmitCache.
- * @return GXF result code
- */
-gxf_result_t get_data_per_model_cached(InputContext& op_input,
-                                       const std::vector<std::string>& in_tensors,
-                                       HoloInfer::DataMap& data_per_input_tensor,
-                                       std::map<std::string, std::vector<int>>& dims_per_tensor,
-                                       bool cuda_buffer_out, const std::string& module,
-                                       cudaStream_t& cuda_stream_out, TensorExtractCache& cache);
-
-/**
- * Transmits multiple buffers via GXF Transmitters.
- *
- * This version of transmit_data_per_model uses the legacy CudaStreamHandler utility. Use the
- * variant without a cuda_stream_handler argument to use the built-in CudaObjectHandler instead.
- *
- * @param cont GXF context for transmission
- * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
- * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
- * @param op_output Output context. Assume that the output port's name is "transmitter".
- * @param out_tensors Output tensor names
- * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
- *                          output tensor as a vector
- * @param cuda_buffer_in Flag to demonstrate if memory storage of input buffers is on CUDA
- * @param cuda_buffer_out Flag to demonstrate if memory storage of output message is on CUDA
- * @param allocator_ GXF Memory allocator
- * @param module Module that called for data transmission
- * @param cuda_stream_handler Cuda stream handler
- * @return GXF result code
- */
-gxf_result_t transmit_data_per_model(gxf_context_t& cont,
-                                     const HoloInfer::MultiMappings& model_to_tensor_map,
-                                     HoloInfer::DataMap& input_data_map, OutputContext& op_output,
-                                     std::vector<std::string>& out_tensors,
-                                     HoloInfer::DimType& tensor_out_dims_map, bool cuda_buffer_in,
-                                     bool cuda_buffer_out,
-                                     const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
-                                     const std::string& module,
-                                     CudaStreamHandler& cuda_stream_handler);
-
-/**
- * Transmits multiple buffers via GXF Transmitters.
- *
- * @param cont GXF context for transmission
- * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
- * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
- * @param op_output Output context. Assume that the output port's name is "transmitter".
- * @param out_tensors Output tensor names
- * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
- *                          output tensor as a vector
- * @param cuda_buffer_in Flag to demonstrate if memory storage of input buffers is on CUDA
- * @param cuda_buffer_out Flag to demonstrate if memory storage of output message is on CUDA
- * @param allocator_ GXF Memory allocator
- * @param module Module that called for data transmission
- * @param cstream The CUDA stream to use for async memory copies.
- * @return GXF result code
- */
-gxf_result_t transmit_data_per_model(gxf_context_t& cont,
-                                     const HoloInfer::MultiMappings& model_to_tensor_map,
-                                     HoloInfer::DataMap& input_data_map, OutputContext& op_output,
-                                     std::vector<std::string>& out_tensors,
-                                     HoloInfer::DimType& tensor_out_dims_map, bool cuda_buffer_in,
-                                     bool cuda_buffer_out,
-                                     const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
-                                     const std::string& module, const cudaStream_t& cstream);
-
-/**
- * Transmits multiple buffers via GXF Transmitters with persistent message caching.
- *
- * Unlike the other overloads, this variant allocates the output GXF entity and inserts tensor
- * components only once (on the first call). On subsequent calls the pre-allocated tensor buffers
- * are reused and only the data is updated via memcpy / cudaMemcpyAsync. A tensor is reshaped
- * (and its backing memory reallocated) only when the incoming buffer size exceeds the current
- * allocation capacity. The persistent entity is emitted by reference-counted copy each frame
- * rather than being moved, so the cache remains valid for the next call.
- *
- * @param cont GXF context for transmission
- * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
- * @param input_data_map Map of tensor name as key, mapped to the data buffer
- * @param op_output Output context. Assumes the output port name is "transmitter".
- * @param out_tensors Output tensor names
- * @param tensor_out_dims_map Map with model name as key mapped to output tensor dimensions
- * @param cuda_buffer_in Whether input buffers reside on the GPU
- * @param cuda_buffer_out Whether the output message should reside on the GPU
- * @param allocator_ GXF Memory allocator
- * @param module Module name used in error reporting
- * @param cstream CUDA stream to use for async memory copies
- * @param cache Persistent cache holding the reusable output entity and per-tensor allocation info
- * @return GXF result code
- */
-gxf_result_t transmit_data_per_model(gxf_context_t& cont,
-                                     const HoloInfer::MultiMappings& model_to_tensor_map,
-                                     HoloInfer::DataMap& input_data_map, OutputContext& op_output,
-                                     std::vector<std::string>& out_tensors,
-                                     HoloInfer::DimType& tensor_out_dims_map, bool cuda_buffer_in,
-                                     bool cuda_buffer_out,
-                                     const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
-                                     const std::string& module, const cudaStream_t& cstream,
-                                     TensorTransmitCache& cache);
-
-/**
- * Setting up activation for each model by activation_map and ActivationSpec
- *
- * @param inference_specs: Inference spec that are needed to set the it's activation_map.
- * @param activation_map: The predefined activation_map comes from the InferenceOp's
- * `activation_map` parameter.
- * @param activation_specs: Activation specs received from the input port
- * `model_activation_specs` of InferenceOp.
- * @param module Module that called for setting up activation specifications
- */
-gxf_result_t set_activation_per_model(
-    std::shared_ptr<HoloInfer::InferenceSpecs>& inference_specs,
-    const HoloInfer::Mappings& activation_map,
-    const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module);
 }  // namespace holoscan::utils
-
-#endif /* HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP */

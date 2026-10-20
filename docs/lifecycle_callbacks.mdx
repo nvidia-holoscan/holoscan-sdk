@@ -1,0 +1,770 @@
+Most of an operator's life is spent in `compute()` — the steady-state,
+per-activation work. But some work belongs *around* steady state, not inside
+it: validating immutable configuration, reserving a finite pool, warming up a
+model, and later releasing everything cleanly. Lifecycle callbacks are where
+that setup and teardown work lives, and the runtime drives them through a small
+set of global stage barriers so the work is ordered correctly across every
+operator in the graph during startup. A restart executes lifecycle callbacks
+only for its compiled closure. Local dispatch pauses while the transaction runs.
+
+This page shows the two ways to author that work — the simple
+`start()`/`stop()` overrides and the advanced sparse stage callbacks — when
+each hook actually runs, what an advanced callback can do through its
+`LifecycleContext`, how to order lifecycle work across operators, what happens
+when lifecycle work fails, and how restarts are authorized and requested.
+
+For a worked stereo example and the reasons behind these rules, see
+[Lifecycle and Restart in Depth](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth).
+
+**Complete C++ example:** [`examples/lifecycle_callbacks/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/lifecycle_callbacks/cpp)
+
+<Warning>
+  **Beta.** Everything on this page works today as described: both authoring
+  paths, the stage barriers, cross-operator ordering, phase-selected parameter
+  views, and the rollback semantics. The API may still evolve in upcoming
+  releases. Not yet in baseline: automatic retry or backoff of a failed stage
+  (`kRetryableFailure` is a classification only), parallel execution of
+  independent same-level callbacks, and restart requests from inside a
+  lifecycle callback.
+</Warning>
+
+<Note title="You will learn">
+  - The eight global lifecycle stages, from `kConfigure` through `kStart` and
+    the teardown pair `kStop`/`kRelease`
+  - The two authoring paths — simple `start()`/`stop()` overrides and sparse
+    `spec.lifecycle().stage(...)` callbacks — and the one-callback-per-stage
+    rule that connects them
+  - When each hook actually runs, relative to construction, `setup()`,
+    `compile()`, the first `compute()`, shutdown, and restarts
+  - Why advanced callbacks are `noexcept` and return a `LifecycleStatus` value
+    instead of throwing
+  - What services `LifecycleContext` exposes inside a callback
+  - How to order lifecycle work across operators with dependency facts or
+    `graph.lifecycle().before(...)`
+  - What happens when a lifecycle callback fails during startup or shutdown
+  - How deny-by-default restart permissions connect operator requests from
+    `compute()` and requests from external run control
+</Note>
+
+## The eight stage barriers
+
+The runtime uses a fixed set of eight stages. During initial startup, every
+operator completes a stage before any operator advances to the next stage.
+A checkpoint without a callback completes as skipped and still participates
+in ordering. Dependencies order operators within one stage. The barriers
+already order different stages. The fixed stages also determine restart
+suffixes and which completed work is eligible for Stop/Release cleanup. When a forward stage fails, the work completed in that pass is
+rolled back in **reverse completion order**. Ordinary shutdown is not a blanket
+reverse replay: it runs the compiled `kStop` and `kRelease` plans, in which
+authored teardown dependencies take precedence and only independent same-level
+`kStop` peers unwind in reverse of their successful start order.
+
+Six forward (startup) stages run in this order:
+
+| Stage | Intent |
+|---|---|
+| `kConfigure` | Validate immutable configuration and derive cold intent. |
+| `kDiscover` | Discover external capabilities without publishing readiness. |
+| `kAllocate` | Reserve admitted finite runtime resources (pools, devices). |
+| `kWarmUp` | Prepare resources without making the operator activatable yet. |
+| `kArm` | Bind current-generation external and readiness capabilities. |
+| `kStart` | Publish the operator as ready for steady-state activation. |
+
+Two teardown stages run on shutdown; the same pair also unwinds completed
+forward work when a startup pass or a restart's forward suffix fails:
+
+| Stage | Intent |
+|---|---|
+| `kStop` | Close activation acceptance and quiesce steady-state work. |
+| `kRelease` | Release resources owned by the active lifecycle epoch. |
+
+A requested completion or stop closes callback admission before teardown.
+Callback claims ordered before that session-wide boundary may proceed and
+retire; no claim ordered afterward enters. Teardown still runs, and a cleanup
+failure overrides `kCompleted`, `kRequestedCompleted`, or `kStopped` with
+terminal `kFailed`.
+
+The helper `is_lifecycle_forward_stage()` returns `true` only for `kConfigure`
+through `kStart`; the teardown stages are never valid restart entry points
+(more on restarts below). An authorized restart re-enters the forward chain at
+a compiler-resolved forward stage as a single transaction over its closure.
+The requested entry can widen to an earlier stage within the closure. See
+[restart scope and entry](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth#derive-restart-membership-before-its-entry-stage).
+
+<svg viewBox="0 0 760 300" role="img" aria-labelledby="lifecycle-stage-barriers-title" aria-describedby="lifecycle-stage-barriers-description" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lifecycle-stage-barriers-title">The eight lifecycle stages: six forward stages and the teardown pair</title>
+  <desc id="lifecycle-stage-barriers-description">Startup proceeds from Configure through Discover, Allocate, WarmUp, Arm, and Start. Shutdown proceeds through Stop and Release. Allocate highlights one possible callback. Scoped restart and its effective entry are explained separately.</desc>
+  <defs>
+    <marker id="lifecycle-stage-barriers-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="20" y="96" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="96" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="70" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kConfigure</text>
+  <rect x="144" y="96" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="144" y="96" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="194" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kDiscover</text>
+  <rect x="268" y="96" width="100" height="44" rx="8" fill="#76B900" opacity="0.25" />
+  <rect x="268" y="96" width="100" height="44" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+  <text x="318" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kAllocate</text>
+  <rect x="392" y="96" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="392" y="96" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="442" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kWarmUp</text>
+  <rect x="516" y="96" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="516" y="96" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="566" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kArm</text>
+  <rect x="640" y="96" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="640" y="96" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="690" y="123" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kStart</text>
+  <line x1="120" y1="118" x2="140" y2="118" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <line x1="244" y1="118" x2="264" y2="118" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <line x1="368" y1="118" x2="388" y2="118" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <line x1="492" y1="118" x2="512" y2="118" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <line x1="616" y1="118" x2="636" y2="118" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <line x1="318" y1="140" x2="318" y2="164" stroke="#76B900" strokeWidth="1.5" />
+  <text x="318" y="182" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">your callback runs here (opt-in)</text>
+  <path d="M 690 140 L 690 190 L 566 190 L 566 228" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <text x="636" y="184" textAnchor="middle" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">shutdown</text>
+  <rect x="516" y="232" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="516" y="232" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="566" y="259" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kStop</text>
+  <rect x="640" y="232" width="100" height="44" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="640" y="232" width="100" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="690" y="259" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kRelease</text>
+  <line x1="616" y1="254" x2="636" y2="254" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-stage-barriers-arrow)" />
+  <text x="70" y="259" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">teardown pair (also unwinds a failed restart)</text>
+</svg>
+
+<Tip>
+  Most operators register **nothing** — or just a matched `kAllocate` /
+  `kRelease` pair. Register a callback for a stage only when you genuinely have
+  work at that barrier.
+</Tip>
+
+## Two authoring paths, one checkpoint model
+
+Every operator has one logical checkpoint slot per stage, and two authoring
+paths can fill those slots. They meet in the *same* slots, which is what keeps
+the rules below simple.
+
+### The simple path: override `start()` and `stop()`
+
+For plain setup and teardown at the start/stop boundary, override the public
+virtuals `Operator::start()` and `Operator::stop()`:
+
+```cpp
+class Recorder final : public holoscan::Operator<RecorderParams> {
+ public:
+  void start() override {          // runs as the kStart checkpoint
+    writer_.open(params().path);   // params() is phase-selected here
+  }
+  void stop() override {           // runs as the kStop checkpoint
+    writer_.close();
+  }
+  // setup(), contract(), compute() as usual ...
+
+ private:
+  Writer writer_;
+};
+```
+
+Graph authoring detects the overrides when the operator is added with
+`graph.op<T>(...)` and lowers each one as a **required** callback in the same
+checkpoint slot the advanced path uses: `start()` runs as your `kStart`
+checkpoint, `stop()` as your `kStop` checkpoint. Your 4.x overrides port
+unchanged (see
+[migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x)),
+the no-argument `void` signatures remain valid, and nothing about the advanced
+path deprecates them.
+
+Inside `start()`/`stop()` the operator reads its parameters through
+`Operator::params()`, which the runtime points at the exact phase-selected
+generation before invoking the hook. Because `stop()` returns `void` and takes
+no context, it cannot report a cleanup failure as a value (a thrown exception
+is converted to `kFatalFailure`), and it cannot observe the cancellation
+latch.
+
+### The advanced path: sparse stage callbacks
+
+When work belongs at another stage (`kAllocate`, `kArm`, …), when you need
+`LifecycleContext` services, or when `stop()`'s `void` return cannot express a
+cleanup failure, register sparse callbacks per stage, inside `setup()`,
+through the fluent `spec.lifecycle()` builder. An operator with no lifecycle
+work registers nothing, and the runtime records a successful skipped
+checkpoint for it at every barrier.
+
+Each advanced callback is a member function with the exact signature
+`LifecycleStatus method(LifecycleContext&) noexcept`. The builder takes a typed
+member pointer, so the operator type is deduced — no string names:
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.input(frames_);
+  spec.lifecycle()
+      .stage(holoscan::LifecycleStage::kAllocate, &Detector::allocate)    // required
+      .optional(holoscan::LifecycleStage::kWarmUp, &Detector::warm_up);   // may be absent
+}
+
+holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
+  // ... reserve a finite pool ...
+  return holoscan::LifecycleStatus::kOk;
+}
+```
+
+`.stage(...)` registers a required callback; `.optional(...)` registers one
+whose *absence* would have been permitted. If you need ordering within a
+stage, express it across operators (see below) rather than stacking callbacks.
+
+Registration itself is a cold authoring call: it can throw `std::bad_alloc`,
+and an invalid stage, a duplicate stage, or a member pointer that does not
+belong to the exact concrete operator type is reported when graph authoring
+validates the declaration — not at the `.stage(...)` call itself.
+
+### At most one application callback per stage
+
+The two paths meet at the same checkpoint slots, so **at most one application
+callback** may fill a slot. An operator that overrides `start()` cannot also
+register an advanced `kStart` callback (and likewise for `stop()`/`kStop`);
+graph authoring rejects the conflict with `GRAPH_LIFECYCLE_CALLBACK_DUPLICATE`
+when the operator is added. Mixing *across* stages is fine — advanced `kStart`
+plus a plain `stop()` override is valid. At run time, Core invokes the one
+callback that fills a slot, or records a successful skipped logical checkpoint
+when neither path fills it. It never invokes an advanced callback and then the
+virtual for the same stage.
+
+| You author | What runs |
+|---|---|
+| `start()` override only | The override, as the required `kStart` checkpoint |
+| Advanced `kStart` only | The advanced callback |
+| `stop()` override only | The override, as the required `kStop` checkpoint |
+| Advanced `kStop` only | The advanced callback |
+| `start()` override **and** advanced `kStart` | Rejected at graph authoring: `GRAPH_LIFECYCLE_CALLBACK_DUPLICATE` |
+| `stop()` override **and** advanced `kStop` | Rejected the same way |
+| Advanced `kStart` plus `stop()` override (or the mirror) | Valid — the callbacks occupy different stage slots |
+| Two advanced callbacks for one stage | Rejected when graph authoring replays `setup()` |
+| Nothing for a stage | A successful skipped checkpoint that still satisfies ordering |
+
+## When lifecycle stage callbacks actually run
+
+Lifecycle stage callbacks — from `kConfigure` through `kRelease`, including
+simple `start()`/`stop()` hooks lowered into `kStart`/`kStop` — run only during
+`RunSession` lifecycle transitions. Operator construction, declaration, and
+contract validation happen earlier and may be replayed:
+
+- **Graph authoring constructs a prototype.** `graph.op<T>()` constructs the
+  authoring operator and calls its `setup()` declaration method.
+- **Compile replays declarations and contracts.** `compile()` constructs
+  temporary factory instances and calls `setup()` and `contract()` while
+  validating and lowering the plan. An accepted parameter override can add
+  another constructor/`setup()` replay for each affected operator. No
+  lifecycle stage callback executes before `run()`/`run_async()`.
+- **Each run constructs fresh operators.** A `RunSession` rebuilds every
+  runtime operator from its factory, calls `setup()`, and validates the replayed
+  `contract()` before any lifecycle stage callback. Treat constructors,
+  `setup()`, and `contract()` as deterministic, repeatable declaration and
+  validation code: do not acquire external resources or perform externally
+  visible work there. Acquire external resources in lifecycle callbacks instead.
+  `start()` is not a constructor substitute, and ordinary operator-instance
+  state from one run is not retained by the next.
+- **Startup is stage-major.** The six forward stages run one at a time behind
+  global barriers: every operator finishes stage N before any operator enters
+  stage N+1. Only after every operator's `kStart` completes does the runtime
+  arm notifications, bind readiness sources, open control ingress, and enter
+  the compute dispatch loop — in the initial startup of a run, the first
+  `compute()` always happens after the last `kStart`.
+- **Callbacks run on the operator's execution lane.** Each callback body is
+  dispatched synchronously onto its operator's assigned lane — not on the
+  thread that called `run()`/`run_async()` — serially and in deterministic
+  order: topological levels, then a stable registration-keyed order within a
+  level. The baseline never runs two callbacks of one transition in parallel.
+- **Shutdown fences inputs first.** On completion, `request_stop()`, or failure,
+  the runtime first cancels readiness sources, closes notifications, stops
+  channels, and closes tensor resources; only then does the `kStop` stage run,
+  followed by `kRelease`, and finally the lanes stop. Advanced teardown
+  callbacks can observe `ctx.cancellation().stop_requested() == true` when a
+  stop has been requested; a simple `stop()` has no context parameter and
+  cannot read the latch.
+- **Restarts re-run hooks mid-run.** A published restart tears down through
+  `kStop` (plus `kRelease` for early re-entry stages) and re-runs the forward
+  suffix, so `start()`/`stop()` and advanced callbacks can run several times
+  in one run. Restart teardown is *not* a cancellation request — the latch
+  stays unset unless the run is actually stopping. See
+  [restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+<svg viewBox="0 0 760 470" role="img" aria-labelledby="lifecycle-hook-timing-title" aria-describedby="lifecycle-hook-timing-description" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lifecycle-hook-timing-title">Lifecycle stage callback timing across graph authoring, compile replay, RunSession startup, compute, and shutdown</title>
+  <desc id="lifecycle-hook-timing-description">Four horizontal bands. Band one: graph authoring constructs an operator prototype and calls setup; compile constructs temporary operators and replays setup and contract, while an accepted parameter override can add an affected-operator constructor and setup replay. No lifecycle stage callback runs in this band. Band two: RunSession startup constructs fresh operators, calls setup, validates contract replay, then drives kConfigure, kDiscover, kAllocate, kWarmUp, and kArm to the kStart barrier. At kStart, at most one application callback runs per operator — the start override or the advanced kStart callback — and an empty slot is recorded as skipped. Band three: steady-state compute activations begin only after every operator's kStart, with control ingress opening in between. Band four: shutdown fences sources, notifications, and channels first, then runs kStop. At most one application callback runs there — the stop override or the advanced kStop callback — and an empty slot is skipped; an advanced callback can observe the cancellation latch. Core then runs kRelease and stops the lanes. A failure inset explains startup rollback: reverse completion order, the completed-kStart prefix rule for the simple stop hook, and advanced kStop eligibility after completed kArm.</desc>
+  <defs>
+    <marker id="lifecycle-hook-timing-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <text x="20" y="28" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">authoring &amp; compile — declaration + replay; no lifecycle stage callback</text>
+  <rect x="20" y="38" width="200" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="38" width="200" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="120" y="62" textAnchor="middle" fill="currentColor" fontSize="13" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">graph.op&lt;T&gt;(): ctor + setup()</text>
+  <line x1="220" y1="58" x2="244" y2="58" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="248" y="38" width="230" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="248" y="38" width="230" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="363" y="55" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compile(): temporary ctor + setup()</text>
+  <text x="363" y="70" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">+ contract() replay</text>
+  <line x1="40" y1="78" x2="40" y2="118" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <text x="52" y="102" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">run() / run_async()</text>
+  <text x="744" y="102" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">accepted parameter override may add affected-op ctor + setup()</text>
+  <text x="120" y="116" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">RunSession startup — stage-major global barriers</text>
+  <rect x="20" y="126" width="190" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="126" width="190" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="115" y="143" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">fresh ctor + setup()</text>
+  <text x="115" y="159" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">+ contract() validation</text>
+  <line x1="210" y1="146" x2="232" y2="146" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="236" y="126" width="290" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="236" y="126" width="290" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="381" y="143" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kConfigure → kDiscover → kAllocate</text>
+  <text x="381" y="159" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">→ kWarmUp → kArm</text>
+  <line x1="526" y1="146" x2="550" y2="146" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="554" y="126" width="90" height="40" rx="8" fill="#76B900" opacity="0.25" />
+  <rect x="554" y="126" width="90" height="40" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+  <text x="599" y="150" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kStart</text>
+  <line x1="599" y1="166" x2="599" y2="184" stroke="#76B900" strokeWidth="1.5" />
+  <text x="744" y="198" textAnchor="end" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">at most one: start() override | advanced kStart | otherwise skipped</text>
+  <line x1="40" y1="166" x2="40" y2="226" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <text x="52" y="212" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">ingress opens</text>
+  <text x="120" y="224" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">steady state</text>
+  <rect x="20" y="234" width="92" height="36" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="234" width="92" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="66" y="256" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compute()</text>
+  <rect x="124" y="234" width="92" height="36" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="124" y="234" width="92" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="170" y="256" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compute()</text>
+  <rect x="228" y="234" width="92" height="36" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="228" y="234" width="92" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="274" y="256" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compute()</text>
+  <text x="336" y="256" textAnchor="start" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">…</text>
+  <text x="744" y="256" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">first compute() only after every operator's kStart</text>
+  <line x1="40" y1="270" x2="40" y2="298" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <text x="120" y="296" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">shutdown — completion, stop request, or failure</text>
+  <rect x="20" y="306" width="210" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="306" width="210" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="125" y="323" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">inputs fenced first:</text>
+  <text x="125" y="339" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">sources, notifications, channels</text>
+  <line x1="230" y1="326" x2="252" y2="326" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="256" y="306" width="84" height="40" rx="8" fill="#76B900" opacity="0.25" />
+  <rect x="256" y="306" width="84" height="40" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+  <text x="298" y="330" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kStop</text>
+  <line x1="340" y1="326" x2="362" y2="326" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="366" y="306" width="100" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="366" y="306" width="100" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="416" y="330" textAnchor="middle" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kRelease</text>
+  <line x1="466" y1="326" x2="488" y2="326" stroke="currentColor" strokeWidth="2" markerEnd="url(#lifecycle-hook-timing-arrow)" />
+  <rect x="492" y="306" width="110" height="40" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="492" y="306" width="110" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="547" y="330" textAnchor="middle" fill="currentColor" fontSize="13" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">lanes stop</text>
+  <line x1="298" y1="346" x2="298" y2="364" stroke="#76B900" strokeWidth="1.5" />
+  <text x="20" y="380" textAnchor="start" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">at most one: stop() override | advanced kStop | otherwise skipped — advanced can observe cancellation</text>
+  <rect x="12" y="396" width="736" height="66" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.5" />
+  <text x="24" y="416" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.85" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">If a kStart fails: forward rollback runs kStop (then kRelease) over completed work in reverse completion order.</text>
+  <text x="24" y="434" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.85" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Simple stop() runs only for operators that completed kStart before the failing position;</text>
+  <text x="24" y="452" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.85" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">advanced kStop callbacks stay eligible after a completed kArm.</text>
+</svg>
+
+## Callback results: `LifecycleStatus`, not exceptions
+
+Advanced lifecycle callbacks are `noexcept` and report their disposition as a
+value, consistent with the SDK-wide errors-as-values model. (Simple
+`start()`/`stop()` overrides return `void`; their failure story is in the next
+section.) Supply an explanation with
+`ctx.report_error(error)` or `ctx.report_error(code, message)` before returning a
+failure status. Reporting copies bounded text without allocation or exceptions;
+the first report wins for that invocation. It does not change the returned
+status, and a successful callback does not publish a failure merely because it
+reported detail. The next callback starts with fresh diagnostic state.
+
+The four statuses:
+
+| Status | Meaning |
+|---|---|
+| `kOk` | The stage completed successfully. |
+| `kSkipped` | The stage completed successfully without application work — distinct from `kOk`. |
+| `kRetryableFailure` | The stage failed for a cause classified as retryable. |
+| `kFatalFailure` | The stage failed and the run cannot continue. |
+
+<Warning>
+  Two sharp edges. First, each eligible callback is attempted **once per
+  transition pass**, with no automatic retry or backoff: `kRetryableFailure`
+  is a *classification* for future retry policy and is treated today like any
+  other failure of the pass. (A later admitted restart is a new transaction —
+  it can perform pre-restart teardown, a candidate forward attempt, rollback,
+  and old-state restoration, and your callback runs once in each phase it is
+  eligible for.) Second, a callback registered with `.optional(...)` that is
+  present and returns a failure **still fails** the transition — optional
+  means *absence* is permitted, not that failures are ignored.
+</Warning>
+
+## When lifecycle work fails
+
+The two paths fail differently, but both fail closed:
+
+- **Advanced callbacks cannot throw.** They are `noexcept` by signature — an
+  exception that reaches the boundary terminates the process. Report failure
+  as a `LifecycleStatus` value instead.
+- **Simple `start()`/`stop()` may throw.** The runtime catches the exception
+  and converts it to `kFatalFailure`; nothing escapes `run()`.
+
+A failed **startup** rolls the run back and fails it:
+
+- Work completed in the startup pass unwinds in reverse completion order —
+  `kStop` runs for operators that completed `kArm` or `kStart`, then
+  `kRelease` for operators that completed `kAllocate`.
+- Simple `stop()` follows a **positional prefix rule** during startup
+  rollback: it runs only for operators that successfully completed `kStart`
+  before the failing position in flattened start order. The failing operator's
+  own `stop()` is skipped — even when its `start()` body was entered before
+  throwing — and so is everything at or after its position. Advanced `kStop`
+  callbacks are not subject to that cutoff; they keep ordinary rollback
+  eligibility after a completed `kArm`.
+- The run reports `RunTermination::kFailed` with the diagnostic token
+  `RUNTIME_LIFECYCLE_CALLBACK_FAILED`, and the later shutdown pass is a no-op
+  — `stop()` is never invoked twice for one failure.
+
+A failed **`kStop` during ordinary shutdown never aborts cleanup**: the
+runtime keeps invoking every other eligible `kStop`, still runs `kRelease`,
+and only then marks the run failed with the same token. See
+[understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+for how the token surfaces in `diagnostics()`.
+
+## Inside a callback: `LifecycleContext`
+
+A callback receives a `LifecycleContext&` — a borrowed, callback-lifetime
+facade. It exposes exactly the cold services a stage needs, and deliberately
+nothing that could submit or await lifecycle work itself:
+
+- `ctx.cancellation().stop_requested()` — a cooperative stop /
+  fatal-shutdown latch. In a **forward** callback, check it before beginning
+  new work and return `kSkipped` only when no work was created. In `kStop` or
+  `kRelease`, cancellation never removes the callback's teardown obligations:
+  perform every required quiescence and release action, using the latch only
+  to omit optional work or shorten optional waits.
+- `ctx.params<Params>()` — the complete immutable parameter aggregate selected
+  for **this** callback phase. Repeated calls return the same address, and the
+  `Params` type must match the operator's declared aggregate exactly.
+- `ctx.params_generation()` — the phase-selected parameter generation number.
+- `ctx.transition_phase()` — which transition phase selected this callback's
+  state view (startup, pre-restart teardown, restart forward, rollback,
+  restore, or shutdown).
+- `ctx.resolve_clock(key)` → `expected<ClockRef, Error>` — resolve a declared
+  clock for this generation. Resolution is cold-only; no compute-time lookup is
+  installed.
+- `ctx.restart_target(ref)` → `expected<OperatorRef, Error>` — bind an
+  already-authorized plan target to the current run generation. This resolves
+  *identity* only; it does not submit a restart.
+
+```cpp
+holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
+  if (ctx.cancellation().stop_requested()) {
+    // Forward kAllocate: no work started, so this reserved nothing. Note that teardown is still
+    // scheduled -- a stage that returns kSkipped is recorded as completed exactly as a kOk one is,
+    // and kRelease is gated on that record -- so the matching release body must tolerate being
+    // called with nothing to hand back.
+    return holoscan::LifecycleStatus::kSkipped;
+  }
+  const DetectorParams& p = ctx.params<DetectorParams>();   // phase-selected params
+  // ... reserve a pool sized from p ...
+  return holoscan::LifecycleStatus::kOk;
+}
+```
+
+<Warning>
+  **`params<T>()` in a callback is phase-selected.** During a restart, the
+  parameter view a callback sees may be the *candidate* generation or the old
+  one — not necessarily the generation `compute()` reads. Read parameters fresh
+  inside each callback rather than caching a reference across stages. Simple
+  `start()`/`stop()` overrides read the same phase-selected view through
+  `Operator::params()`. See
+  [typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
+  for the parameter model itself.
+</Warning>
+
+## Bind a lifecycle-selected output rate
+
+An output whose exact nominal rate depends on device configuration or discovery
+can declare the stage that owns the selection:
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.output(frame_, "frame")
+      .lifecycle_nominal_rate(holoscan::LifecycleStage::kDiscover)
+      .max_nominal_rate(holoscan::Rate::hz(120U))
+      .produces_tensor(frame_spec_);
+
+  spec.lifecycle().stage(holoscan::LifecycleStage::kDiscover,
+                         &CameraSource::discover);
+}
+
+holoscan::LifecycleStatus discover(holoscan::LifecycleContext& ctx) noexcept {
+  const auto selected = ctx.bind_nominal_rate(frame_, holoscan::Rate::hz(60U));
+  if (!selected) {
+    return holoscan::LifecycleStatus::kFatalFailure;
+  }
+
+  const auto same_stage = ctx.rate(frame_);
+  // This callback is still inside the global Discover barrier. The binding is
+  // candidate-private and the resolved value remains pending until every
+  // Discover callback succeeds.
+  return same_stage &&
+                 same_stage->state == holoscan::PortRateViewState::kPendingBarrier
+             ? holoscan::LifecycleStatus::kOk
+             : holoscan::LifecycleStatus::kFatalFailure;
+}
+```
+
+`bind_nominal_rate()` accepts only an output owned by the callback's Operator,
+at the stage declared for that output, during startup or restart forward work.
+The value must be a positive exact rational and cannot exceed
+`max_nominal_rate()`. Repeating an equivalent normalized value in the same
+candidate is idempotent; repeating a different value is a conflict. Ignoring a
+failed bind does not make the candidate publishable.
+
+The stage barrier is the visibility boundary. A same-stage `ctx.rate()` query
+reports `kPendingBarrier`; a later stage sees the globally resolved value and
+its propagated input/`follows()` dependents. During steady state,
+`ExecutionContext::rate(port)` returns the same published generation in O(1)
+without graph traversal or rate arithmetic. `RunGenerationId` stays stable for
+the `RunSession`; `RateGenerationId` changes when startup or restart publishes
+a new coherent rate snapshot.
+
+For `kConfigure` and `kDiscover`, Core closes the selected barrier, evaluates
+the complete queue/pool geometry, and performs framework-owned materialization
+as the first `kAllocate` work, before any user `kAllocate` callback. A finite
+maximum lets compilation preallocate the admitted ceiling and later install a
+smaller logical active limit. An ordinary non-Tensor queue may instead remain
+candidate geometry until this early barrier supplies the rate, because Core can
+close and materialize that queue before user allocation begins.
+
+Lifecycle-bound runtime-pool Tensor output is deliberately narrower. Without a
+finite maximum, only direct-host raw-Tensor geometry that Core can completely
+define is admitted. A descriptor-backed multi-field Tensor output needs a
+finite maximum and otherwise fails compilation without a partial allocation
+inventory. This Tensor exception must not be generalized into a requirement
+that every early lifecycle-bound non-Tensor queue declare a maximum.
+
+`kWarmUp` and `kArm` occur after physical allocation. A rate selected there
+therefore needs `max_nominal_rate()` or an exact explicit queue depth that
+proves the preallocated domain. The later callback may change an active logical
+limit within that domain, but it cannot allocate or silently grow backing.
+
+On restart, re-enter at or before the declared binding stage to discover a new
+value. Compatible exact or larger backing can be retained while Runtime installs
+a fresh empty binding generation and a smaller active limit. If the candidate
+needs unadmitted growth or an incompatible provider, it fails before
+publication and the old generation remains recoverable. A restart that begins
+after the binding stage retains the published value rather than pretending the
+selection ran again.
+
+The installed
+[`rate_aware_ports` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/rate_aware_ports)
+runs this boundary end to end: Discover propagation and callback/compute
+queries, in-capacity 100 Hz selections at both `kWarmUp` and `kArm`, typed
+rejection of a 144 Hz selection above a 120 Hz maximum, and a 60-to-30 Hz
+restart that retains the allocation generation while publishing a fresh rate
+and storage-binding generation.
+
+The following is **Essential integration pseudocode**, not a Core camera or
+receive-pool API. The bridge and its mode/layout types are vendor-owned:
+
+```cpp
+holoscan::LifecycleStatus CameraSource::discover(
+    holoscan::LifecycleContext& ctx) noexcept {
+  const auto mode = bridge_.discover_camera_mode();  // Essential-side pseudocode
+  if (!mode || mode->fps == 0U || mode->fps > 120U) {
+    return holoscan::LifecycleStatus::kFatalFailure;
+  }
+  return ctx.bind_nominal_rate(frame_, holoscan::Rate::hz(mode->fps))
+             ? holoscan::LifecycleStatus::kOk
+             : holoscan::LifecycleStatus::kFatalFailure;
+}
+```
+
+Core owns rate admission and Core-owned queue/Tensor-pool materialization. An
+HSB-shaped Essential adapter still needs independent maximum payload, layout,
+alignment, placement, registration, descriptor, and in-flight bounds for its
+own receive pool. A maximum frame rate bounds entry pressure; it does not prove
+those byte or transport properties. During pre-restart teardown, use
+`transition_phase()` to quiesce and retain adapter-owned backing. Compare the
+newly discovered candidate with that retained geometry only after the new
+Discover barrier; do not release a compatible larger pool merely because the
+new mode is smaller.
+
+## Ordering across operators
+
+The stage barriers already order work *between* stages. Within a stage, two
+declarative mechanisms order work across operators; the runtime lowers both
+into a deterministic dependency graph, so nothing depends on construction
+order.
+
+**Same-stage facts, declared per operator.** An operator declares that its
+checkpoint at a stage `produces` a named fact; another declares a
+`requires_dependency` on that fact at a stage. The producer's checkpoint then
+completes before the requirer's:
+
+```cpp
+inline constexpr holoscan::LifecycleDependencyKey kPoolReady{"detector.pool.ready"};
+inline constexpr holoscan::LifecycleDependencyKey kUpstreamArmed{"sensor.armed"};
+
+spec.lifecycle()
+    .stage(holoscan::LifecycleStage::kAllocate, &Detector::allocate)
+    .produces(holoscan::LifecycleStage::kAllocate, kPoolReady)             // I satisfy this fact...
+    .requires_dependency(holoscan::LifecycleStage::kArm, kUpstreamArmed);  // ...and I need this one
+```
+
+**Direct order, declared at graph scope.** From the containing graph, order two
+operators' checkpoints in the same stage directly:
+
+```cpp
+graph.lifecycle()
+    .before(producer, consumer, holoscan::LifecycleStage::kStart);  // producer's kStart first
+```
+
+Prefer dependency facts when the operator itself knows what it provides or
+needs (they travel with the operator and stay valid in any graph); use
+`before(...)` when the ordering is a property of one particular composition.
+
+## Restart: graph permissions, operator and external requests
+
+Restart authority is **deny-by-default**: nothing can restart an operator
+unless the containing graph granted a matching permission at authoring time.
+
+```cpp
+graph.lifecycle()
+    .allow_self_restart(worker)                    // worker may request its own restart
+    .allow_external_restart(worker)                // external run control may restart worker
+    .allow_restart_request(supervisor, worker);    // supervisor may request worker's restart
+```
+
+An **operator-originated** restart is requested at run time from `compute()`,
+through the `ExecutionContext`. External control code running outside Runtime
+callbacks — such as an application supervisor — instead uses a restricted
+`LifecycleControlHandle`, described on the
+[restart control](/holoscan/sdk-user-guide/advanced/restart-control) page.
+Handle submission from a Runtime callback is rejected, and a
+`LifecycleContext` deliberately cannot submit through either path. These rules
+keep callbacks from re-entering the lifecycle machinery that is running them:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  // Restart myself from a forward stage (requires allow_self_restart):
+  HOLOSCAN_TRY(auto receipt,
+               ctx.request_restart(holoscan::LifecycleRestartOptions{
+                   .from_stage = holoscan::LifecycleStage::kAllocate}));
+  (void)receipt;  // LifecycleRestartReceipt: run-scoped identity of the accepted request
+  return {};
+}
+```
+
+A two-argument `ctx.request_restart(target, options)` overload requests the
+restart of an authorized *other* operator. The `from_stage` must be a forward
+stage (`kConfigure` through `kStart`) — `kStop` and `kRelease` are
+teardown-only and can never be a restart entry point. The `reason` field in
+`LifecycleRestartOptions` is a registered audit code, not free text.
+
+Restart semantics — coalescing, rollback, transaction states, and external run
+control — have their own page: see
+[restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+## Putting it together
+
+A `Detector` that reserves a pool at `kAllocate`, optionally warms up at
+`kWarmUp`, and orders itself against an upstream operator's readiness:
+
+```cpp
+struct DetectorParams { std::uint32_t pool_size{8}; };
+// Declare its schema with HOLOSCAN_PARAM_SCHEMA as usual (see the
+// parameter-schemas page, linked below).
+
+inline constexpr holoscan::LifecycleDependencyKey kPoolReady{"detector.pool.ready"};
+inline constexpr holoscan::LifecycleDependencyKey kUpstreamArmed{"sensor.armed"};
+
+class Detector final : public holoscan::Operator<DetectorParams> {
+ public:
+  holoscan::Input<Frame> frames_{"frames"};
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(frames_);
+    spec.lifecycle()
+        .stage(holoscan::LifecycleStage::kAllocate, &Detector::allocate)      // required
+        .optional(holoscan::LifecycleStage::kWarmUp, &Detector::warm_up)      // absence OK
+        .produces(holoscan::LifecycleStage::kAllocate, kPoolReady)            // I satisfy this...
+        .requires_dependency(holoscan::LifecycleStage::kArm, kUpstreamArmed); // ...and need this
+  }
+
+  holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext&) override {
+    return {};  // steady-state work goes here
+  }
+
+  holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
+    if (ctx.cancellation().stop_requested()) {
+      // Forward kAllocate: nothing was reserved. Teardown is still scheduled for a stage
+      // that returned kSkipped, which is harmless here only because pool_ owns what it holds.
+      return holoscan::LifecycleStatus::kSkipped;
+    }
+    const DetectorParams& p = ctx.params<DetectorParams>();  // phase-selected
+    pool_.reserve(p.pool_size);                              // reserve finite resources
+    return holoscan::LifecycleStatus::kOk;
+  }
+
+  holoscan::LifecycleStatus warm_up(holoscan::LifecycleContext&) noexcept {
+    return pool_.empty() ? holoscan::LifecycleStatus::kSkipped  // nothing to warm
+                         : holoscan::LifecycleStatus::kOk;
+  }
+
+ private:
+  Pool pool_;
+};
+```
+
+This listing is an illustrative variant. The shipping
+`lifecycle_callbacks` example demonstrates the same sparse stage registration,
+dependency ordering, optional `kStart`/`kStop` callbacks, and recorded
+startup/teardown evidence.
+
+For how `DetectorParams` declares its schema, see
+[parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+## Recap
+
+- Startup and shutdown run through eight global stage barriers: `kConfigure` →
+  `kDiscover` → `kAllocate` → `kWarmUp` → `kArm` → `kStart`, with `kStop` and
+  `kRelease` for teardown.
+- Two authoring paths fill the same checkpoint slots: override
+  `start()`/`stop()` for the simple path, or register sparse advanced
+  callbacks with `spec.lifecycle().stage(...)`/`.optional(...)`. Every operator
+  has one logical checkpoint per stage, and at most one application callback
+  may occupy it. A same-stage conflict is rejected with
+  `GRAPH_LIFECYCLE_CALLBACK_DUPLICATE`; an empty slot is a successful skipped
+  checkpoint; and cross-stage mixing is valid. Most operators register nothing
+  or just `kAllocate`/`kRelease`.
+- Lifecycle stage callbacks run only in `RunSession` transitions. Authoring
+  constructs a prototype and calls `setup()`; compile and each `RunSession`
+  reconstruct operators and replay `setup()` plus `contract()` validation
+  before lifecycle startup. Every `kStart` precedes the first `compute()`,
+  inputs are fenced before `kStop`, and `stop()`/`start()` may repeat under
+  restarts.
+- Advanced callbacks are `noexcept` and return `LifecycleStatus`; `kSkipped`
+  is a distinct success; one attempt per eligible callback per transition
+  pass, with no automatic retry; and a present optional callback that fails
+  still fails the transition. A throwing `start()`/`stop()` becomes
+  `kFatalFailure`.
+- Startup rollback unwinds in reverse completion order and applies the
+  completed-`kStart` prefix rule to simple `stop()`; a `kStop` failure during
+  ordinary shutdown never aborts cleanup.
+- `LifecycleContext` provides cancellation, phase-selected `params<T>()`,
+  clock resolution, and restart-target identity binding — read parameters fresh
+  in every callback (simple hooks read `Operator::params()` instead).
+- Order within a stage with `produces`/`requires_dependency` facts or
+  `graph.lifecycle().before(...)`, never by construction order.
+- Restart permission is deny-by-default at graph scope. Operators request from
+  `compute()` via `ExecutionContext::request_restart(...)`; external
+  supervisors use a restricted `LifecycleControlHandle`. Lifecycle callbacks
+  cannot submit through either path.
+
+Next: [graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition).

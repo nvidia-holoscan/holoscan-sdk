@@ -1,0 +1,345 @@
+Every example so far has lived inside a single graph: operators wired with
+`add_flow()`, compiled into one plan, run by one process. This walkthrough
+crosses the process boundary. The `external_clients` example ships two
+small standalone clients — a **sensor daemon** that publishes IMU samples
+into a running graph, and a **recorder** that consumes the graph's exported
+control result — and neither of them is an operator or contains a graph. The
+C++ variants link only against `holoscan::core`; the Python variants import
+the matching `holoscan.channel` facade.
+
+The runnable source lives at `public/examples/external_clients/` in the SDK
+tree. Both clients have C++ and Python variants with the same command line and
+catalog handoff.
+
+What makes this work is a deliberately narrow contract: the graph process
+serializes its **endpoint catalog** to a JSON file, and each external client
+loads that file and attaches to one named endpoint through the
+`ChannelRuntime` client API. Nothing else is shared — no compiled plan, no
+in-memory objects, no transport handles. Because cross-process attachment is
+asynchronous, both clients wrap their I/O in small, principled retry loops,
+and those loops are the real lesson of this page.
+
+<Warning>
+  **Developer preview.** Interprocess channels and the standalone client API
+  are a developer preview: cross-process payloads carry bounds (for example,
+  cross-process tensors — host-pageable, pinned-host, or CUDA-device backed —
+  are always read-only on import), and the API surface may evolve in upcoming
+  releases. Verify against the headers in your installed SDK before relying
+  on details.
+</Warning>
+
+<Note title="You will learn">
+  - How a graph hands its boundary to another process as a single JSON
+    catalog file
+  - How a standalone process attaches with `ChannelRuntime`,
+    `create_publisher`, and `create_subscriber`
+  - Why attach is asynchronous, and how to write a deadline-bounded retry
+    loop around it
+  - Which outcomes are safe to retry — and why an indeterminate publication
+    never is
+  - How to close a stream so that end-of-stream is actually observed
+</Note>
+
+## Two processes, one artifact
+
+When you `compile()` a graph that declares `import_topic` / `export_topic`
+boundaries, the resulting plan carries an **endpoint catalog**: a description
+of every boundary endpoint — its name, payload identity, and queue policy.
+The graph process saves that catalog to disk and passes the path to its
+peers (via `argv`, an environment variable, or however you launch them):
+
+```cpp
+// In the graph process, after compile():
+auto saved = plan.endpoint_catalog().save_json("/tmp/catalog.json");
+if (!saved) { /* branch on saved.error().code */ }
+```
+
+The catalog file is the *entire* contract. Either side may start first, a
+peer built from a different binary can attach as long as it loads the same
+catalog, and a wrong or stale catalog fails at attach time — with a typed
+error, not a hang. When the boundary changes, regenerate and re-share the
+file.
+
+Each endpoint in the catalog has a deployment-stable name, which the graph
+side assigns when declaring the topic:
+
+```cpp
+holoscan::TopicOptions options;
+options.endpoint_name = "baseline.camera_imu.imu";  // the name external clients attach by
+auto imported = graph.import_topic<std::uint32_t>(
+    "holomq://baseline.camera_imu.imu", options);
+```
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+## Attaching: catalog in, endpoint out
+
+Both clients open identically. Load the catalog, create a `ChannelRuntime`,
+and attach to the named endpoint — every step returns
+`holoscan::expected`, so a standalone client gets the same errors-as-values
+discipline as an operator. From `sensor_daemon`:
+
+```cpp
+auto catalog = holoscan::ChannelEndpointCatalog::load_json(argv[1]);
+if (!catalog) {
+  std::cerr << "catalog load failed: "
+            << holoscan::error_code_name(catalog.error().code) << '\n';
+  return 4;
+}
+auto runtime = holoscan::ChannelRuntime::create();
+if (!runtime) { /* ... */ }
+auto publisher = runtime->create_publisher<std::uint32_t>(*catalog, argv[2]);
+if (!publisher) { /* ... */ }
+```
+
+The recorder differs by one line — `create_subscriber<std::uint32_t>`
+instead of `create_publisher`. Note what is *absent*: no transport
+configuration, no broker address, no serialization setup. The catalog
+already pins all of that; the client only names which endpoint it wants.
+
+`create_publisher` succeeding does **not** mean a peer is connected.
+Cross-process attachment completes asynchronously, in the background, which
+is why everything that follows is a loop.
+
+## The sensor daemon: retry what is provably safe
+
+The daemon publishes a finite stream of `uint32_t` IMU samples, each stamped
+with a caller-owned capture timestamp. Before publishing, it waits (with a
+deadline) for at least one subscriber to appear, polling
+`update_connections()` to refresh the connection snapshot and
+`has_subscribers()` to check it:
+
+```cpp
+const auto deadline = std::chrono::steady_clock::now() + 5s;
+while (std::chrono::steady_clock::now() < deadline) {
+  auto updated = publisher.update_connections();
+  if (!updated) { return holoscan::make_unexpected(std::move(updated).error()); }
+  if (publisher.has_subscribers()) { return {}; }
+  std::this_thread::sleep_for(5ms);
+}
+return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kTimeout});
+```
+
+The publish loop is where the example earns its keep. `emit_captured(value,
+capture_timestamp_ns)` returns a positive recipient count on success. The
+daemon treats that success as delivery. Everything else follows one rule —
+**retry only outcomes that provably did not publish**:
+
+```cpp
+auto emitted = publisher.emit_captured(value, capture_timestamp_ns);
+if (emitted) { return emitted; }  // delivered
+if (!emitted &&
+    emitted.error().code != holoscan::ErrorCode::kNotReady &&
+    emitted.error().code != holoscan::ErrorCode::kBackpressured) {
+  return holoscan::make_unexpected(std::move(emitted).error());  // terminal
+}
+// Pre-submit kNotReady/kBackpressured: not published — retry.
+std::this_thread::sleep_for(5ms);
+```
+
+<Warning>
+  **Never retry an indeterminate publication.** The pre-submit `kNotReady` and
+  `kBackpressured` errors prove that the sample was not delivered. Leave the
+  retry loop on any other error and handle it according to that error's
+  contract. In particular, `kPublicationPartial` and
+  `kPublicationIndeterminate` consume publication authority and are terminal
+  for that sample because retrying may duplicate a delivery.
+</Warning>
+
+The daemon also calls `update_connections()` at the top of every retry
+iteration and propagates any refresh failure instead of looping blindly — a
+dead transport should end the loop, not spin it until the deadline.
+
+## Ordered end-of-stream
+
+A finite stream is not finished when the last sample goes out; it is
+finished when downstream has observed end-of-stream. The daemon ends with a
+`close()` loop shaped like the publish loop:
+
+```cpp
+auto closed = publisher.close();
+if (closed) { return {}; }
+if (closed.error().code != holoscan::ErrorCode::kNotReady) {
+  return holoscan::make_unexpected(std::move(closed).error());
+}
+// kNotReady proves no receiver observed EOS yet and leaves the
+// publisher usable; anything else consumes the facade and is terminal.
+```
+
+The same retry rule applies: `kNotReady` proves the close did not take
+effect and the publisher is still usable, so retrying is safe. Any other
+close failure consumes the publisher and is terminal. Only after the close
+succeeds does the daemon report completion — samples published, total
+recipient deliveries, and the catalog digest (`catalog->digest()`, a
+normalized fingerprint that both sides can log to confirm they loaded the
+same contract).
+
+## The recorder: wait until a sample arrives
+
+The consuming side is event-driven. `wait_and_receive_sample()` blocks on the
+endpoint's transport event lane and covers both waits at once: it absorbs the
+`kNotReady` the transport reports while it is still connecting *and* while no
+sample is pending. The recorder repeats that bounded wait until it observes
+remote `kClosed`; it does not treat one wake or one received value as stream
+completion. Its optional sample limit is the explicit exception for graphs that
+intentionally keep producing. From `result_recorder`:
+
+```cpp
+auto sample = subscriber->wait_and_receive_sample(
+    std::chrono::steady_clock::now() + 10s);
+```
+
+The deadline is an absolute coordinate rather than a per-attempt duration, so a
+spurious wake cannot silently restart the budget. `kNotReady` never escapes the
+call; a subscriber that is still connecting simply keeps waiting. Because the
+catalog always admits event wake, the recorder sets no option to get this — a
+publication wakes the recorder from a kernel wait instead of finding it mid-sleep.
+
+The wait is event-driven but not purely so. Transport notification is best
+effort — its result is not reported to the publisher — so a blocked wait also
+re-checks readiness once a second as a bounded fallback, and readiness that
+arrives on a clock-health lane rather than a data lane is discovered on that
+fallback rather than by a wake. An idle recorder therefore costs one wakeup per
+second rather than nothing at all: far below the 2 ms poll loop it replaced, but
+not zero, and enough to keep a fully idle process out of the deepest sleep
+states. Treat the one-second figure as an implementation bound, not a contract.
+
+A received sample carries its payload in `sample->data` and public
+`SampleMetadata` in `sample->metadata` — the publication `sequence`, the
+producer's `capture_timestamp_ns`, and the `source_clock_id` naming the
+clock domain that timestamp belongs to. The recorder prints these alongside
+the catalog digest:
+
+```cpp
+const holoscan::SampleMetadata& metadata = sample->metadata;
+std::cout << "value=" << sample->data
+          << " sequence=" << metadata.sequence
+          << " capture_timestamp_ns=" << metadata.capture_timestamp_ns
+          << " source_clock_id=" << metadata.source_clock_id.value << '\n';
+```
+
+Metadata is the *public* record only: transport-level lifecycle evidence
+(such as producer-epoch history) lives in runtime traces, not in
+`SampleMetadata`.
+
+After the sensor daemon's ordered publisher close, an input-driven finite graph
+drains every accepted sample, closes eligible downstream outputs, and lets the
+recorder observe remote `kClosed`. Only after that remote terminal observation
+does the recorder close its local subscriber. The local close releases client
+resources; it neither publishes EOS nor helps the graph complete. A graph with
+an independent trigger, another unbounded producer, or unused admitted
+external-restart capacity remains live according to that authored authority.
+
+For such an unbounded graph, pass a positive `max-samples` value. The recorder
+then returns successfully after receiving that many values, reports that remote
+EOS was not observed, and closes only its local subscriber. This bounded mode
+does not claim that the producer or graph completed.
+
+After the recorder has finished with the local endpoint, it closes the
+subscriber explicitly and checks the result:
+
+```cpp
+auto closed = subscriber->close();
+if (!closed) {
+  return holoscan::make_unexpected(std::move(closed).error());
+}
+```
+
+This is local consumer cleanup only. It discards any unread local samples,
+causes later checked receive operations on that facade to return `kClosed`,
+and sends no EOS into the graph. Publisher `close()` remains the only ordered
+producer-EOS operation. If a separate client thread is polling or waiting,
+request its cancellation and join it before calling subscriber `close()`;
+calls on one subscriber are externally serialized.
+
+## Running the pair
+
+Both programs take the catalog path and the endpoint name on the command
+line; the daemon additionally accepts a sample count, period, and first
+value:
+
+```bash
+sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
+result_recorder <catalog.json> <endpoint> [max-samples]
+```
+
+The Python variants use the same arguments:
+
+```bash
+python3 sensor_daemon/python/sensor_daemon.py \
+  <catalog.json> <endpoint> [count] [period-ms] [first-value]
+python3 recorder/python/recorder.py \
+  <catalog.json> <endpoint> [max-samples] [--async]
+```
+
+They use `hs.channel.Runtime`, infer `uint32` from the graph-produced catalog,
+and raise the corresponding `hs.errors` exception on failure. Passing
+`timeout=` to Python `emit()` implements the same one-deadline retry rule as
+the explicit C++ loop. The optional `--async` recorder uses
+`hs.channel.aio.Subscriber` with the catalog's native readiness descriptor and
+asserts that no Python helper thread appears.
+
+Omit `max-samples` for a finite input-driven graph so the recorder demonstrates
+data-before-EOS ordering. Supply a positive limit for an independently
+triggered or otherwise unbounded graph. For a deployed `camera_imu_control`
+graph, whose camera remains clock-driven, record one control result with:
+
+```bash
+result_recorder <catalog.json> baseline.camera_imu.control 1
+```
+
+These commands require a separately running deployed graph that owns the
+catalog endpoints. `camera_imu_control --emit-artifacts` only writes the
+deployment bundle; it does not start that graph or its Channel services. The baseline release
+does not ship an author-facing graph-only launcher for this manual
+three-process recipe, so use the no-argument camera/IMU reference executable
+for an end-to-end smoke test. Once the deployed graph is running, launch either
+client in any order — the recorder's wait and the daemon's retry loops absorb
+the startup race. These
+intentionally small acceptance companions are independently tested
+attach-and-retry templates, not a general device-adapter or recording product.
+
+The source tree also includes a finite import-relay-export graph in C++ and
+Python plus `python/run_clients.py`. The example CTests use that launcher to
+run the Python sensor and recorder as separate processes against each graph
+language. A third CTest runs the async recorder against the C++ graph. The
+sensor's ordered close drains through the relay, the recorder observes remote
+EOS, and the graph completes naturally.
+
+## Recap
+
+- The serialized endpoint catalog is the **only** thing the graph process
+  and an external client share: `save_json` on one side, `load_json` on the
+  other, attach by deployment-stable endpoint name.
+- Graphs use ports and `add_flow()`; standalone processes use
+  `ChannelRuntime` with `create_publisher` / `create_subscriber`. Never mix
+  the two vocabularies. Python uses the matching `hs.channel.Runtime` facade
+  and infers catalog payloads without a type argument.
+- Attach is asynchronous. On the publish side, wrap `emit_captured` and
+  `close` in deadline-bounded retry loops, refreshing with
+  `update_connections()`. On the subscribe side, prefer
+  `wait_and_receive_sample` with an absolute deadline over a
+  `receive_sample` poll loop.
+- Retry only provably-unpublished outcomes — pre-submit `kNotReady` or
+  `kBackpressured`. Partial and indeterminate publications are terminal. For
+  publisher `close()`, retry only `kNotReady`; every other close failure is terminal.
+  Leave other emit errors for code-specific handling.
+- Publisher `close()` publishes ordered EOS. In a finite input-driven graph,
+  accepted data drains before EOS reaches exports and the run completes
+  naturally. A recorder sample limit bounds intentionally unbounded graphs but
+  is not EOS. Subscriber `close()` only retires the local consumer endpoint;
+  cancel and join its client thread before local close.
+- A finite stream completes only after an ordered end-of-stream `close()`
+  succeeds and the graph's retained work drains; log the catalog digest on
+  both sides to confirm a shared contract.
+
+Next: the full client API — Tensor payloads, producer restart semantics, and
+the retryable-error taxonomy — is covered in
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).

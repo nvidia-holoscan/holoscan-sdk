@@ -1,0 +1,189 @@
+The `hello_*` examples are the smallest programs that ship with the SDK. Each
+one exercises exactly one slice of the installed SDK — one or two library
+targets, one API idea — and prints a single `... sample complete` line
+when it succeeds. They double as install-tree smoke tests: if
+`find_package(holoscan)` cannot resolve a target or its headers, the matching
+`hello_*` example fails to configure or compile, which is precisely the signal
+they exist to give.
+
+This page tours all six. Read it as a map: each stop tells you what the
+example demonstrates, which API calls carry the weight, and where in the guide
+the underlying concept is taught in full. The sources live under
+`public/examples/hello_core`, `public/examples/hello_tensor`,
+`public/examples/hello_schema`, `public/examples/hello_logger`,
+`public/examples/hello_cccl`, and `public/examples/hello_matx` in the SDK
+tree.
+
+<Note title="You will learn">
+- What each of the six `hello_*` examples demonstrates, in one screen or less
+- The key API calls each one exercises, and the CMake target it links
+- How the series maps SDK library targets (`holoscan::core`,
+  `holoscan::schema`, `holoscan::sensor_io`, `holoscan::logger`) to header
+  families
+- Where to go next in the guide for the full treatment of each concept
+</Note>
+
+<Tip>
+Every `hello_*` example follows the same CMake shape: one executable, C++20,
+one or two `holoscan::*` link targets, and a CTest entry that passes when the
+`... sample complete` line appears. If you are wiring up your own project
+against an installed SDK, copying one of these `CMakeLists.txt` files is the
+fastest correct starting point.
+</Tip>
+
+## hello_core — errors as values
+
+`hello_core` (`hello_core.cpp`) is the minimal consumer of
+`holoscan::expected<T, Error>`, the SDK's errors-as-values foundation. A
+helper returns either a value or a `holoscan::Error`, and the caller branches
+on `has_value()` instead of catching anything. It also shows
+`holoscan::error_code_name()`, which turns an `ErrorCode` enumerator into its
+spelling (`kInvalidArgument`) automatically. Headers:
+`holoscan/core/errors.hpp` and `holoscan/core/expected.hpp`; link target:
+`holoscan::core`.
+
+```cpp
+holoscan::expected<int, holoscan::Error> checked_value(bool ok) {
+  if (!ok) {
+    return holoscan::make_unexpected(
+        holoscan::Error{holoscan::ErrorCode::kInvalidArgument, "value was rejected"});
+  }
+  return 42;
+}
+```
+Concept chapter: [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+## hello_tensor — a Tensor from a DLPack context
+
+`hello_tensor` (`hello_tensor.cpp`) builds a host `holoscan::Tensor` by hand
+from a `holoscan::DLManagedTensorContext`, then queries its metadata with
+`tensor.ndim()` and `tensor.shape()`. It uses CPU (`kDLCPU`) data only, so it
+runs without a GPU — the point is the DLPack-backed Tensor type itself, not
+device memory. Header: `holoscan/core/domain/tensor.hpp`; link target:
+`holoscan::core`.
+
+```cpp
+auto context = std::make_shared<holoscan::DLManagedTensorContext>();
+context->dl_shape = {2, 3};
+context->tensor.dl_tensor.data = data.data();
+context->tensor.dl_tensor.device = DLDevice{.device_type = kDLCPU, .device_id = 0};
+// ... ndim, dtype, shape, strides ...
+const holoscan::Tensor tensor(std::move(context));
+```
+<Note>
+In a real pipeline you rarely construct a Tensor from a raw DLPack context —
+`allocate_tensor()` borrows a slot from a preallocated pool and handles stream
+ordering for you. This example goes low-level on purpose, to show the type
+underneath.
+</Note>
+
+Concept chapters: [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101)
+and [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+## hello_schema — FlatBuffers metadata round-trip
+
+`hello_schema` (`hello_schema.cpp`) round-trips a Tensor's image metadata
+through the FlatBuffers-backed schema helpers: it fills a
+`holoscan::schema::ImageMetadataOptions` (height, width, encoding,
+timestamps, frame ID), serializes with
+`holoscan::schema::build_image_metadata()`, and reads the bytes back with
+`holoscan::schema::parse_image_metadata()`. Both helpers return
+`expected<..., Error>`, so failure is a value here too. Only the metadata is
+encoded — never the tensor payload bytes. Header:
+`holoscan/sensor_io/image_metadata.hpp`; link target: `holoscan::sensor_io`. The
+`Image` and `Imu` schemas belong to that library rather than to Core, so a graph
+that carries either one links `holoscan::sensor_io`; it brings `holoscan::schema`
+with it.
+
+```cpp
+const holoscan::schema::ImageMetadataOptions options{
+    .height = 3,
+    .width = 2,
+    .encoding = holoscan::schema::ImageEncoding_MONO32F,
+    .capture_timestamp_ns = 987654321,
+    .frame_id = "hello_schema_frame"};
+
+const auto metadata = holoscan::schema::build_image_metadata(tensor, options);
+```
+Concept chapters: [Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads)
+and, for defining your own tables,
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
+
+## hello_logger — fmt-formatted logging macros
+
+`hello_logger` (`hello_logger.cpp`) is two lines of API: set the runtime
+threshold with `holoscan::set_log_level(holoscan::LogLevel::INFO)`, then emit
+an fmt-formatted message with `HOLOSCAN_LOG_INFO("... answer={}", answer)`.
+Header: `holoscan/logger/logger.hpp`; link target: `holoscan::logger`.
+
+```cpp
+holoscan::set_log_level(holoscan::LogLevel::INFO);
+HOLOSCAN_LOG_INFO("hello from the holoscan logger: answer={}", answer);
+```
+<Warning>
+The compile-time log threshold is **caller-owned**: the installed
+`holoscan::logger` target does not define `HOLOSCAN_LOG_ACTIVE_LEVEL` for
+you. Its `CMakeLists.txt` calls the `holoscan_apply_logging_policy()` helper
+on the executable — if you skip an equivalent step in your own project, you
+get the permissive default rather than your intended threshold, and messages
+you meant to compile out stay in the binary.
+</Warning>
+
+Concept chapter: [Logging](/holoscan/sdk-user-guide/debugging-and-testing/logging).
+
+## hello_cccl — CUDA C++ Core Libraries alongside the SDK
+
+`hello_cccl` (`hello_cccl.cu`) proves that the CCCL stack — Thrust, CUB, and
+`libcu++` — coexists with `holoscan::core` in one translation unit. It fills a
+`thrust::device_vector` on an owned `cuda::stream`, reduces it with a
+`cub::BlockReduce` kernel plus a `cuda::atomic_ref` accumulation, and waits on
+completion via `cuda::event` / `event_ref` rather than a blanket device sync.
+It links `CCCL::CCCL`, `CUDA::cudart`, and `holoscan::core`, and exits with
+code 77 (CTest's skip code) when no CUDA device is present.
+
+```cpp
+cuda::stream owning_stream{cuda::device_ref{device_id}};
+cuda::stream_ref stream = owning_stream;
+
+auto stream_policy = thrust::cuda::par.on(stream.get());
+thrust::fill(stream_policy, data->begin(), data->end(), 1);
+```
+Concept chapter: [Relevant technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies);
+for the stream-ordering discipline these patterns feed into, see
+[Performance considerations](/holoscan/sdk-user-guide/performance/performance-considerations).
+
+## hello_matx — MatX expressions on a CUDA stream
+
+`hello_matx` (`hello_matx.cu`) runs a MatX tensor expression next to the SDK:
+it builds a `matx::cudaExecutor` on a `cuda::stream_ref`, evaluates
+`(output = input + 1.0F).run(executor)` over a `matx::linspace` input, and
+confirms completion with the same `cuda::event` pattern as `hello_cccl`. It
+links `matx::matx` on top of `CCCL::CCCL`, `CUDA::cudart`, and
+`holoscan::core`, and also skips (exit code 77) without a CUDA device.
+
+```cpp
+matx::cudaExecutor executor{stream.get()};
+auto input = matx::linspace(0.0F, 1.0F, static_cast<matx::index_t>(4));
+auto output = matx::make_tensor<float>({4});
+
+(output = input + 1.0F).run(executor);
+```
+Concept chapter: [Relevant technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies).
+
+## Recap
+
+- The six `hello_*` examples each isolate one SDK surface and double as
+  install-tree smoke tests: link, compile, run, print `... sample complete`.
+- `hello_core` and `hello_logger` cover the two universal foundations —
+  `holoscan::expected<T, Error>` and the `HOLOSCAN_LOG_*` macros.
+- `hello_tensor` and `hello_schema` cover the data plane: the DLPack-backed
+  `holoscan::Tensor` and the FlatBuffers metadata helpers in
+  `holoscan::sensor_io`.
+- `hello_cccl` and `hello_matx` show CCCL and MatX composing with
+  `holoscan::core` in the same build, using stream-scoped work and event-based
+  completion instead of device-wide synchronization.
+- Their `CMakeLists.txt` files are the shortest correct templates for linking
+  an installed SDK.
+
+Next: [Camera + IMU control](/holoscan/sdk-user-guide/examples/camera-imu-control)
+walks through a full pipeline that puts these pieces to work.

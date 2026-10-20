@@ -1,0 +1,513 @@
+Most of a Holoscan application lives inside one graph: operators exchange data
+through typed ports, and `add_flow()` wires them together. But real systems
+rarely end at the graph boundary. A sensor daemon in another process feeds you
+samples; a control loop elsewhere on the machine consumes your output. This
+page shows how a graph declares those boundaries — **external topics** — and
+how the compiled plan turns them into a precise, inspectable contract that
+external processes can attach to.
+
+The key idea is separation of concerns across the compose → compile → run
+phases. During **compose**, you declare a boundary with `import_topic<T>()` or
+`export_topic<T>()`, exactly as cold and typed as any other authoring call.
+During **compile**, the plan records every boundary in an **endpoint catalog**.
+During **run**, the graph side binds automatically — you never write transport
+code inside the graph. Everything an external process needs to know lives in
+the catalog, and nothing else crosses the boundary.
+
+**Complete graph examples:** [`examples/camera_imu_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/camera_imu_control/cpp),
+[`examples/external_clients/sensor_daemon/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/sensor_daemon/cpp),
+[`examples/external_clients/recorder/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/recorder/cpp),
+and [`examples/flatbuffer_schemas/descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+
+<Note title="You will learn">
+  - How to declare inbound and outbound boundaries with `import_topic<T>()` and
+    `export_topic<T>()` using `holomq://` URIs
+  - How `TopicOptions` and its `endpoint_name` give each boundary a
+    deployment-stable identity
+  - Why the graph side binds automatically at run — no channel code in the graph
+  - How `plan.endpoint_catalog()` serves as the single contract an external
+    process sees
+  - Where the line falls between what stays inside the graph and what is visible
+    outside it
+</Note>
+
+## Declaring a boundary
+
+An external topic is declared on the `Graph` during composition, alongside your
+operators and flows. `import_topic<T>()` brings data **into** the graph from an
+external producer; `export_topic<T>()` sends data **out** to an external
+consumer. Both take an exact, nonempty `holomq://` URI that identifies the
+topic, plus boundary options:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    holoscan::Graph graph{"sensor-pipeline"};
+
+    holoscan::TopicOptions imu_options;
+    imu_options.endpoint_name = "imu";
+    const auto imu = graph.import_topic<std::uint32_t>("holomq://imu", imu_options);
+
+    holoscan::TopicOptions control_options;
+    control_options.endpoint_name = "control";
+    const auto control = graph.export_topic<std::uint32_t>(
+        "holomq://control", control_options);
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python supplies a payload token in place of the C++ template argument and
+    accepts topic options as keywords:
+
+    ```python
+    import holoscan as hs
+
+    graph = hs.Graph("sensor-pipeline")
+    imu = graph.import_topic(
+        "holomq://imu", hs.payload.uint32, endpoint_name="imu"
+    )
+    control = graph.export_topic(
+        "holomq://control", hs.payload.uint32, endpoint_name="control"
+    )
+    ```
+  </Tab>
+</Tabs>
+
+Python supplies a registered payload token instead of a C++ template argument.
+Topic options may be passed as keywords or as an owned `hs.topics.TopicOptions`
+value:
+
+```python
+import holoscan as hs
+
+graph = hs.Graph("sensor-pipeline")
+imu = graph.import_topic(
+    "holomq://imu", hs.payload.uint32, endpoint_name="imu"
+)
+control_options = hs.topics.TopicOptions(endpoint_name="control")
+control = graph.export_topic(
+    "holomq://control", hs.payload.uint32, options=control_options
+)
+```
+
+The returned handles are typed: `import_topic<T>` returns an
+`ImportedTopic<T>`, and `export_topic<T>` returns an `ExportedTopic<T>`. Each
+exposes exactly one graph-side port that you wire like any operator port:
+
+- `ImportedTopic<T>::output()` — the graph-side `Output<T>` that feeds your
+  operators. External data *enters* here, so from inside the graph it looks
+  like a source output.
+- `ExportedTopic<T>::input()` — the graph-side `Input<T>` that your operators
+  feed. Data *leaves* here, so from inside the graph it looks like a sink
+  input.
+
+Wiring uses ordinary `add_flow()`, with the same validation as any other edge:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    auto fusion = graph.op<WindowFusion>("fusion");
+
+    add_flow(imu.output(), fusion->imu,
+             holoscan::ConnectionOptions{.queue_depth = 32U});
+    add_flow(fusion->control, control.input(),
+             holoscan::ConnectionOptions{.queue_depth = 8U});
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from custom_holoscan.operators import WindowFusion
+
+    fusion = WindowFusion(graph, "fusion")
+    graph.add_flow(imu.output, fusion.imu, queue_depth=32)
+    graph.add_flow(fusion.control, control.input, queue_depth=8)
+    ```
+  </Tab>
+</Tabs>
+
+Like the rest of the authoring surface, `import_topic` and `export_topic`
+fail immediately when a declaration is invalid — a malformed URI, a bad option
+combination, or a payload type the boundary cannot carry. C++ throws
+`holoscan::RuntimeError`; Python raises the corresponding `hs.HoloscanError`
+subclass under `hs.errors`. Compilation returns rejected plans, and run fails
+closed.
+
+<Warning>
+  **The URI is an identity, not a location.** The `holomq://` URI is an exact,
+  case-sensitive topic identity — the scheme selects the interprocess
+  transport, and the string must match exactly on both sides. It is
+  descriptive: declaring it does not grant any process runtime attachment
+  authority, and there is no host/port to tweak inside it.
+</Warning>
+
+### Ordinary inline payload capacity
+
+Scalar, POD, and ordinary generated-schema topics use the fixed-inline HoloMQ
+family. The complete catalog data frame is limited to 32,768 bytes, including
+24 bytes of catalog attribution. An ordinary generated schema also carries a
+40-byte schema envelope. The maximum application capacities are therefore:
+
+| Payload | Maximum application capacity |
+| --- | ---: |
+| Scalar or POD | 32,744 bytes |
+| Serialized FlatBuffer | 32,704 bytes |
+
+For a generated schema, the serialized bound comes from
+`generated_schema_max_serialized_size_v<T>`; it is a capacity, not the size of
+every message. Catalog construction and graph compilation reject a bound whose
+complete framed size exceeds 32,768 bytes. The transport sizes each service's
+preallocated slots exactly for that framed bound, while each message still
+records its actual serialized size.
+
+Python resolves SDK schemas from the provider-owned schema catalog. The same
+topic API records the schema identity in the compiled endpoint catalog:
+
+```python
+messages = graph.import_topic(
+    "holomq://messages",
+    hs.payload.schema.String,
+    endpoint_name="messages",
+)
+```
+
+Descriptor-backed Tensor schemas use a separate envelope path. Their Tensor
+data remains handle-backed and does not count toward this ordinary inline
+limit.
+
+<Note>
+  Python external-topic authoring supports scalar, inline-schema, raw Tensor,
+  and descriptor-backed Tensor payloads. Tensor topics require the matching
+  payload token and complete boundary contracts described below.
+</Note>
+
+### Descriptor-backed schema topics
+
+An application-owned FlatBuffer schema may carry one or more direct Tensor
+fields together with ordinary metadata. Such a boundary needs a complete
+field-qualified `DescriptorTensorTopicContract<T>` in addition to its common
+`TopicOptions`:
+
+```cpp
+holoscan::DescriptorTensorTopicContract<tensor_topic::ExternalFrameT> tensors;
+tensors
+    .field(Fields::pixels, pixels_boundary_contract)
+    .field(Fields::calibration, calibration_boundary_contract);
+
+auto frames = g.import_topic<tensor_topic::ExternalFrameT>(
+    "holomq://frames", options, std::move(tensors));
+```
+
+Each field contract fixes its representation, finite shape/byte bounds, and
+external transfer policy. The schema envelope carries ordinary fields and
+Tensor descriptors; the Tensor data remains in separately retained or imported
+backing. HoloMQ therefore does not serialize Tensor bytes into the FlatBuffer
+or make transport cost depend on Tensor size. A bounded staging copy occurs
+only when an authored `kCopyIfNeeded` policy permits it and the supplied
+backing cannot be exported directly.
+
+The
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example shows a two-Tensor schema entering and leaving a Graph, including the
+standalone catalog client for both directions.
+
+### Python Tensor topic authoring
+
+Python uses the same Core Tensor boundary contract as C++. The wrapper owns the
+shape and stride arrays, so temporary Python lists remain valid through compile.
+
+```python
+import holoscan as hs
+
+image_boundary = hs.tensor.TensorBoundaryContract(
+    representation=hs.tensor.TensorRepresentation(
+        memory_kind=hs.tensor.MemoryKind.HOST,
+        dtype=hs.tensor.DLDataType(hs.tensor.DLDataTypeCode.DLUINT, 8, 1),
+        rank=2,
+        strides=hs.tensor.TensorStridePolicy.CONTIGUOUS_ONLY,
+    ),
+    bounds=hs.tensor.TensorBounds(max_rank=2, max_shape=[1080, 1920]),
+)
+
+image = graph.import_topic(
+    "holomq://camera/image",
+    hs.payload.TensorType,
+    tensor=image_boundary,
+)
+```
+
+Descriptor-backed schemas take one contract per Tensor field. Field names come
+from the generated schema traits rather than a Python-side schema model.
+
+```python
+packet = graph.import_topic(
+    "holomq://camera/packet",
+    hs.payload.schema.TensorPacket,
+    tensor_fields={"data": image_boundary},
+)
+```
+
+The Graph-side operator port must use the exact descriptor schema. Missing or
+unknown field names are rejected during authoring, and an external peer whose
+Tensor transport profile differs from the catalog is rejected at attachment.
+
+## Naming the endpoint with `TopicOptions`
+
+`TopicOptions` is the complete cold contract for one boundary. Its most
+important field is `endpoint_name` — the explicit, deployment-stable name under
+which the boundary appears in the endpoint catalog. External clients look
+endpoints up **by this name**, so choose it the way you would choose a public
+API name: stable across builds, meaningful to the peer team, never derived
+from internal wiring details.
+
+```cpp
+holoscan::TopicOptions options;
+options.endpoint_name = "frames";                 // the name external peers look up
+const auto frames = g.import_topic<std::uint32_t>("holomq://frames", std::move(options));
+```
+
+Beyond the name, `TopicOptions` carries the rest of the boundary contract, all
+declared cold at compose time:
+
+- `capture_time` — a `RequireCaptureTime{clock}` requirement that inbound
+  samples carry capture timestamps in a declared clock domain (see
+  [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)).
+- `clock_health` — an optional ordered status-report contract. A monitored
+  import can require a fresh healthy report before admitting data; standalone
+  scalar, raw-Tensor, and descriptor-schema publishers use the same
+  `report_clock_health()` operation.
+- `attach` — a `TopicAttachPolicy` selecting whether an absent external peer is
+  acceptable. The default is optional: composition and graph start never wait
+  for an external process.
+- `bounds` — finite publisher/subscriber-side bounds (queue depths, claim
+  counts), keeping the boundary bounded by construction like everything else
+  in the runtime.
+- Tensor- and schema-specific fields (`tensor`, `schema`,
+  `memory_conversion`) that constrain what a Tensor or schema payload may look
+  like at the boundary — see
+  [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+
+There is deliberately no backend option bag, raw handle, or device ordinal in
+`TopicOptions`: the boundary contract stays backend-neutral and cold.
+
+<Warning>
+  For descriptor-backed schema fields, `kRequireExportable` enforces the
+  declared Tensor storage kind and layout, but it does not constrain the exact
+  CUDA device ordinal. The exported buffer handle carries the actual device
+  identity needed for import. An imported CUDA-device Tensor, raw or a
+  descriptor field, therefore needs a copy-capable policy such as
+  `kCopyIfNeeded`: it adds the planned staging path and an explicit device, see
+  [Binding a device for an imported device topic](#binding-a-device-for-an-imported-device-topic).
+  Compilation rejects an imported CUDA-device Tensor that uses
+  `kRequireExportable`.
+</Warning>
+
+### Binding a device for an imported device topic
+
+An imported topic whose Tensor storage is `kCudaDevice` or `kCudaManaged`, or
+whose copy-capable storage is `kPinnedHost` (including a descriptor-schema
+Tensor field with that storage kind), must be placed on an explicit CUDA
+device. The compiler never selects device zero, and
+an imported topic has no owning operator, so
+`bind_tensor_output_device` cannot name it. Bind it by endpoint name through
+`CompileOptions::deployment` instead:
+
+```cpp
+auto imported = graph.import_topic<holoscan::schema::ImageT>(
+    "holomq://proto_image",
+    holoscan::TopicOptions{.endpoint_name = "proto_image"},
+    image_contract);  // CUDA-device Tensor field with foreign_emit_policy kCopyIfNeeded
+graph.add_flow(imported.output(), sink->image_in);
+
+holoscan::CompileOptions options;
+options.deployment.bind_imported_topic_device(holoscan::ImportedTopicDevicePlacement{
+    .endpoint_name = "proto_image",
+    .device = holoscan::DeviceId{0},
+});
+holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+```
+
+The key is the `endpoint_name` given in `TopicOptions`, or the topic URI when
+no endpoint name was set. In Python, use
+`options.deployment.bind_imported_topic_device(endpoint_name=..., device=hs.execution.DeviceId(0))`.
+
+The device lives in `CompileOptions` rather than `TopicOptions` because it is a
+deployment decision, not part of the boundary contract: the same graph can run
+on different GPUs without changing the topic declaration, and the bound device
+is part of the plan identity. Compilation rejects an unknown or ambiguous
+endpoint, an exported topic, a non-Tensor payload, an invalid device, a
+duplicate binding, and a bound pinned-host Tensor that uses `kRequireExportable`
+with `PHYSICAL_TENSOR_DEVICE_BINDING_INVALID`. A CUDA topic with a copy-capable
+policy and no binding is rejected with `IMPLICIT_DEVICE_ZERO_REJECTED`, whose
+diagnostic names the endpoint and this API. Host-memory topics take no binding.
+
+An imported device topic must use a copy-capable transfer policy such as
+`kCopyIfNeeded`. That policy still keeps zero-copy for storage the publisher can
+export; it adds a staging pool, which is where the planned device and the
+consumer's CUDA stream come from. The default `kRequireExportable` policy
+creates no staging pool. Compilation therefore rejects an imported CUDA Tensor,
+raw or a descriptor field, that uses it with
+`PHYSICAL_TENSOR_LOGICAL_REQUIREMENTS_INVALID`, whether or not a binding is
+supplied, instead of compiling a plan that cannot deliver a sample. The check is
+per field, so a copied field cannot hide an unstaged one.
+
+## The graph side binds automatically
+
+Inside the graph, an external topic is *just another port*. Your operators
+receive imported samples through their ordinary `Input<T>` ports and emit
+through ordinary `Output<T>` ports; their `contract()` and `compute()` neither
+know nor care that a sample crossed a process boundary. When you compile the
+graph and start it, the runtime materializes the boundary transport for you:
+
+```cpp
+holoscan::ExecutionPlan plan = holoscan::compile(g);
+if (!plan.ok()) { /* inspect the rejected plan */ }
+
+holoscan::RunSession session = holoscan::run_async(plan);
+// The imports and exports are now bound — no channel code was written.
+```
+
+You never construct a publisher, subscriber, or channel object on the graph
+side. Declaring the topic *is* the entire graph-side involvement; binding is
+the runtime's job at run.
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+<svg viewBox="0 0 760 420" role="img" aria-labelledby="graph-external-boundary-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="graph-external-boundary-title">The graph/external boundary: typed ports and add_flow inside, standalone ChannelRuntime clients outside, endpoint catalog on the boundary</title>
+  <defs>
+    <marker id="graph-external-boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">
+    <rect x="16" y="100" width="316" height="260" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4"/>
+    <rect x="428" y="100" width="316" height="260" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4"/>
+    <text x="174" y="128" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor">Inside the graph</text>
+    <text x="586" y="128" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor">External processes</text>
+    <line x1="380" y1="84" x2="380" y2="392" stroke="currentColor" strokeWidth="2" strokeDasharray="6 6" opacity="0.55"/>
+    <text x="380" y="410" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">process boundary</text>
+    <rect x="304" y="28" width="152" height="56" rx="8" fill="#76B900" fillOpacity="0.25" stroke="#76B900" strokeWidth="2"/>
+    <text x="380" y="52" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">Endpoint catalog</text>
+    <text x="380" y="72" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.7">imu · control</text>
+    <rect x="56" y="160" width="112" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <text x="112" y="187" textAnchor="middle" fontSize="14" fill="currentColor">fusion</text>
+    <rect x="176" y="280" width="112" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <text x="232" y="307" textAnchor="middle" fontSize="14" fill="currentColor">planner</text>
+    <path d="M 112 204 L 112 302 L 168 302" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#graph-external-boundary-arrow)"/>
+    <text x="122" y="258" textAnchor="start" fontSize="11" fill="currentColor" opacity="0.55">add_flow()</text>
+    <text x="240" y="246" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">channels materialized at run</text>
+    <rect x="512" y="160" width="150" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <text x="587" y="187" textAnchor="middle" fontSize="14" fill="currentColor">Sensor daemon</text>
+    <rect x="512" y="280" width="150" height="44" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <text x="587" y="307" textAnchor="middle" fontSize="14" fill="currentColor">Control client</text>
+    <text x="587" y="246" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">no compiled plan · catalog only</text>
+    <line x1="512" y1="182" x2="176" y2="182" stroke="currentColor" strokeWidth="2" markerEnd="url(#graph-external-boundary-arrow)"/>
+    <text x="380" y="168" textAnchor="middle" fontSize="11" fill="currentColor">import_topic · holomq://imu</text>
+    <circle cx="380" cy="182" r="5" fill="#76B900"/>
+    <line x1="288" y1="302" x2="504" y2="302" stroke="currentColor" strokeWidth="2" markerEnd="url(#graph-external-boundary-arrow)"/>
+    <text x="398" y="288" textAnchor="middle" fontSize="11" fill="currentColor">export_topic · holomq://control</text>
+    <circle cx="380" cy="302" r="5" fill="#76B900"/>
+    <text x="174" y="346" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">{'vocabulary: Input<T> / Output<T> + add_flow()'}</text>
+    <text x="586" y="346" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">vocabulary: ChannelRuntime pub / sub</text>
+  </g>
+</svg>
+
+## The endpoint catalog: the boundary contract
+
+When `compile()` accepts a graph, the resulting plan carries an **endpoint
+catalog** describing every declared boundary — payload identity, endpoint
+names, capacities, and queue policy. You reach it with
+`plan.endpoint_catalog()`:
+
+```cpp
+const holoscan::ChannelEndpointCatalog& catalog = plan.endpoint_catalog();
+
+// Hand the contract to a peer process as canonical JSON:
+if (auto saved = catalog.save_json("/tmp/frames-catalog.json"); !saved) {
+  // typed filesystem error — branch on saved.error().code
+}
+```
+
+The catalog is the **only** thing a graph shares with an external process. The
+peer loads the same JSON (`ChannelEndpointCatalog::load_json()`) and looks up
+endpoints by the `endpoint_name` you declared; it inherits no compiled plan,
+no in-memory objects, and no transport handles. This makes "what crosses the
+boundary" a single inspectable artifact: if you can read the catalog JSON, you
+can see the complete external surface of the application. Because the catalog
+serialization is canonical, the same boundary always produces the same bytes,
+and either process may start first.
+
+Two practical consequences follow:
+
+- **A differently built peer can attach.** The peer binary does not need to
+  link against your application or share its build — only the catalog.
+- **A stale catalog fails at attach, not at compile.** If you change a
+  boundary (type, name, bounds), regenerate and re-share the catalog; a peer
+  holding the old JSON is rejected when it tries to attach.
+
+## What stays inside, what the outside sees
+
+The boundary is asymmetric by design. Everything about *how* your pipeline
+works stays private to the graph; only the declared endpoints are visible
+outside.
+
+| Stays inside the graph | Visible to external processes |
+| --- | --- |
+| Operators, their names, and their wiring | Endpoint names from `TopicOptions::endpoint_name` |
+| Temporal contracts, triggers, missing-data policy | Payload identity (the exact `T` of each boundary) |
+| Regions, clocks, lifecycle ordering | Queue policy, capacities, and declared bounds |
+| The compiled plan and its internal channels | The `holomq://` topic identity |
+| Everything else in `GraphView` | Nothing else — the catalog is exhaustive |
+
+An external process cannot observe or influence your internal topology. It
+sees a named, typed endpoint with declared bounds — nothing more. Conversely,
+your operators cannot tell an external peer from an internal one: an imported
+topic delivers samples through the same typed port machinery, subject to the
+same temporal contracts, as any internal flow.
+
+This is why the boundary belongs in *composing applications* rather than in a
+networking chapter: you are not opening a socket, you are extending the typed
+dataflow contract of the graph to one carefully named edge.
+
+## Where to go deeper
+
+This page covers declaring the boundary. Two advanced pages cover the far
+side:
+
+- **Running across processes** — sharing the catalog with a peer process,
+  generation-fenced producer restart, and cross-process Tensor transport:
+  [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).
+- **Writing the peer** — the standalone `ChannelRuntime` client, publishers
+  and subscribers, and attach/retry patterns:
+  [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
+
+For a complete working boundary — an external IMU producer feeding a graph
+import and a graph export feeding an external control consumer — see the
+`camera_imu_control` example in
+[Camera + IMU + control](/holoscan/sdk-user-guide/examples/camera-imu-control).
+## Recap
+
+- `import_topic<T>("holomq://…")` and `export_topic<T>("holomq://…")` declare
+  typed external boundaries during composition; invalid declarations throw,
+  like all authoring.
+- `TopicOptions::endpoint_name` gives each boundary its deployment-stable
+  public name; the rest of `TopicOptions` declares the cold boundary contract.
+- Ordinary scalar, POD, and serialized-schema frames are bounded to 32,768
+  bytes including catalog attribution and any schema envelope.
+- Inside the graph, a boundary is just a port: wire `imported.output()` /
+  `exported.input()` with `add_flow()`, and the runtime binds it automatically
+  at run.
+- `plan.endpoint_catalog()` is the entire external contract — serialize it
+  with `save_json()` and share nothing else with peer processes.
+- Internal topology, contracts, and wiring stay private; external processes
+  see only named, typed, bounded endpoints.
+
+Next: [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
+— what types may cross ports and boundaries, and how POD, schema, and Tensor
+payloads differ.

@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+message(FATAL_ERROR
+    "HOLOSCAN_RAW_BUILD_TREE_PACKAGE_UNSUPPORTED\n"
+    "The Holoscan SDK raw build tree is not a supported CMake package.\n"
+    "Install Holoscan into a prefix, then point CMAKE_PREFIX_PATH or holoscan_DIR "
+    "at that completed installation. No partial build-tree package fallback is provided."
+)

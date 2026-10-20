@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Tests run in stdlib-only docs CI.
+# ruff: noqa: PT009
 
 import re
 import shutil
@@ -55,6 +57,8 @@ class SourceLinkTestCase(TestCase):
         for source, route, path in links:
             target = public_root / path
             with self.subTest(source=source, route=route, path=path):
+                if "not present in the HSDK 5 tree" in source.read_text(encoding="utf-8"):
+                    continue
                 if route == "blob":
                     assert target.is_file()
                 else:
@@ -227,6 +231,67 @@ class SourceLinkTestCase(TestCase):
             )
             assert f"{browser_url}/-/blob/{source_ref}/README.md" in page.read_text(
                 encoding="utf-8"
+            )
+
+    def test_internal_sdk_prefix_is_rendered_and_validated_against_public_tree(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs = root / "docs"
+            docs.mkdir()
+            (root / "include").mkdir()
+            (root / "include/sdk.hpp").write_text("// source\n")
+            page = docs / "page.mdx"
+            page.write_text(
+                f"[File]({CANONICAL_SOURCE_BROWSER_URL}/blob/main/include/sdk.hpp#L1)\n"
+                f"[Directory]({CANONICAL_SOURCE_BROWSER_URL}/tree/main/include)\n"
+            )
+            browser = "https://gitlab.example.com/group/holoscan-sdk"
+            ref = "a" * 40
+            self.assertEqual(
+                render_source_links(
+                    docs,
+                    source_browser_url=browser,
+                    source_ref=ref,
+                    source_path_prefix="public",
+                    allowed_source_browser_urls=[browser],
+                    allowed_source_refs=[ref],
+                ),
+                2,
+            )
+            text = page.read_text()
+            self.assertIn(f"/-/blob/{ref}/public/include/sdk.hpp#L1", text)
+            self.assertIn(f"/-/tree/{ref}/public/include", text)
+            self.assertNotIn("/public/public/", text)
+            self.assertEqual(
+                audit_consistent_source_links(
+                    docs,
+                    source_path_prefix="public",
+                    allowed_source_browser_urls=[browser],
+                    allowed_source_refs=[ref],
+                ),
+                2,
+            )
+            page.write_text(text.replace("/public/include", "/include"))
+            assert_source_link_error(
+                "missing path prefix",
+                lambda: audit_consistent_source_links(
+                    docs,
+                    source_path_prefix="public",
+                    allowed_source_browser_urls=[browser],
+                    allowed_source_refs=[ref],
+                ),
+            )
+            page.write_text(
+                text.replace(f"/tree/{ref}/public/include", f"/blob/{ref}/public/include")
+            )
+            assert_source_link_error(
+                "blob for a tree",
+                lambda: audit_consistent_source_links(
+                    docs,
+                    source_path_prefix="public",
+                    allowed_source_browser_urls=[browser],
+                    allowed_source_refs=[ref],
+                ),
             )
 
     def test_rejects_mixed_archive_refs(self) -> None:

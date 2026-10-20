@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="400" viewBox="0 0 960 400" role="img" aria-labelledby="title desc">
+  <title id="title">holomq WaitSet multi-topic dispatch flow</title>
+  <desc id="desc">Attach subscribers, wait for readiness, dispatch try_take by WaitSetHandle.</desc>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#5a8f00"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#0b5394"/>
+    </marker>
+  </defs>
+  <style>
+    .b { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 600; fill: #1a1a1a; }
+    .s { font-family: Consolas, Menlo, monospace; font-size: 14px; fill: #0b5394; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .lbl { font-family: Consolas, Menlo, monospace; font-size: 13px; font-weight: 600; fill: #333; }
+    .lbl-dim { font-family: Consolas, Menlo, monospace; font-size: 12px; fill: #888; }
+    .loop { font-family: Consolas, Menlo, monospace; font-size: 12px; fill: #555; font-style: italic; }
+  </style>
+
+  <rect x="0" y="0" width="960" height="400" fill="#ffffff"/>
+
+  <!-- Attach phase -->
+  <rect x="24" y="36" width="168" height="72" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="108" y="64" text-anchor="middle" class="b">Subscriber</text>
+  <text x="108" y="86" text-anchor="middle" class="s">cam_sub</text>
+
+  <rect x="24" y="124" width="168" height="72" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="108" y="152" text-anchor="middle" class="b">Subscriber</text>
+  <text x="108" y="174" text-anchor="middle" class="s">imu_sub</text>
+
+  <text x="240" y="58" text-anchor="middle" class="lbl">attach()</text>
+  <line x1="192" y1="72" x2="288" y2="72" stroke="#76b900" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+  <text x="240" y="146" text-anchor="middle" class="lbl">attach()</text>
+  <line x1="192" y1="160" x2="288" y2="160" stroke="#76b900" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+  <rect x="288" y="60" width="200" height="120" rx="6" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="388" y="92" text-anchor="middle" class="b">WaitSet</text>
+  <text x="388" y="116" text-anchor="middle" class="s">WaitSetHandle</text>
+  <text x="388" y="138" text-anchor="middle" class="d">one attachment per subscriber</text>
+  <text x="388" y="158" text-anchor="middle" class="d">RAII WaitSetAttachment</text>
+
+  <!-- Wait -->
+  <text x="548" y="92" text-anchor="middle" class="lbl">wait_for_ready()</text>
+  <line x1="488" y1="120" x2="608" y2="120" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="608" y="60" width="168" height="120" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="692" y="92" text-anchor="middle" class="b">WaitResult</text>
+  <text x="692" y="116" text-anchor="middle" class="s">ready</text>
+  <text x="692" y="138" text-anchor="middle" class="d">timeout / error</text>
+  <text x="692" y="160" text-anchor="middle" class="d">continue or break</text>
+
+  <!-- ready_handles -->
+  <line x1="692" y1="180" x2="692" y2="200" stroke="#888" stroke-width="1.2"/>
+  <line x1="692" y1="200" x2="548" y2="200" stroke="#888" stroke-width="1.2"/>
+  <line x1="548" y1="200" x2="548" y2="232" stroke="#888" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="560" y="218" text-anchor="start" class="lbl">ready_handles()</text>
+
+  <!-- Dispatch -->
+  <rect x="288" y="232" width="520" height="96" rx="6" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="548" y="260" text-anchor="middle" class="b">Dispatch by WaitSetHandle</text>
+  <text x="548" y="284" text-anchor="middle" class="d">match handle, then try_take() on the right subscriber</text>
+  <text x="548" y="304" text-anchor="middle" class="d">try_take per ready handle; loop on spurious kernel wake</text>
+
+  <!-- try_take branches -->
+  <line x1="388" y1="328" x2="388" y2="344" stroke="#0b5394" stroke-width="1.2" marker-end="url(#arr-blue)"/>
+  <line x1="548" y1="328" x2="548" y2="344" stroke="#0b5394" stroke-width="1.2" marker-end="url(#arr-blue)"/>
+
+  <rect x="308" y="344" width="160" height="28" rx="4" fill="#eef7e8" stroke="#76b900"/>
+  <text x="388" y="363" text-anchor="middle" class="s">cam_sub.try_take()</text>
+
+  <rect x="468" y="344" width="160" height="28" rx="4" fill="#eef7e8" stroke="#76b900"/>
+  <text x="548" y="363" text-anchor="middle" class="s">imu_sub.try_take()</text>
+
+  <!-- Loop back (exits dispatch box right edge) -->
+  <path d="M 808 310 C 880 310, 880 120, 776 120" fill="none" stroke="#888" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="872" y="220" class="loop">while running</text>
+</svg>

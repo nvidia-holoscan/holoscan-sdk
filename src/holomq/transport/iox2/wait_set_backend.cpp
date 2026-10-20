@@ -1,0 +1,429 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <holomq/detail/transport/iox2/wait_set_backend.hpp>
+
+#include <holomq/detail/transport/iox2/runtime.hpp>
+#include <holomq/detail/wait_strategy_utils.hpp>
+#include <holomq/logger.hpp>
+#include "scoped_file_descriptor.hpp"
+
+#include <iox2/signal_handling_mode.hpp>
+
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <thread>
+#include <utility>
+
+#include <sys/eventfd.h>
+#include <unistd.h>
+
+namespace holomq::detail::transport {
+
+namespace {
+
+[[nodiscard]] std::uint64_t allocate_wait_set_id() noexcept {
+  // Wait sets are created concurrently, for example by several RunSessions in one process.
+  static std::atomic<std::uint64_t> next_id{1};
+  return next_id.fetch_add(1U, std::memory_order_relaxed);
+}
+
+[[nodiscard]] WaitResult readiness_or_timeout(const bool ready) noexcept {
+  return ready ? WaitResult::ready : WaitResult::timeout;
+}
+
+}  // namespace
+
+Iox2WaitSetBackend::~Iox2WaitSetBackend() {
+  for (auto& attachment : attachments_) {
+    attachment.set_attached_to_wait_set(false);
+  }
+}
+
+auto Iox2WaitSetBackend::create(::iox2::Node<::iox2::ServiceType::Ipc>& node)
+    -> holomq::expected<Iox2WaitSetBackend, holomq::Error> {
+  auto waitset_or = std::move(::iox2::WaitSetBuilder())
+                        .signal_handling_mode(::iox2::SignalHandlingMode::Disabled)
+                        .create<::iox2::ServiceType::Ipc>();
+  if (!waitset_or.has_value()) {
+    return holomq::make_unexpected(map_wait_set_create_error(waitset_or.error()));
+  }
+  return Iox2WaitSetBackend(node, std::move(waitset_or).value(), allocate_wait_set_id());
+}
+
+auto Iox2WaitSetBackend::create(Runtime& runtime)
+    -> holomq::expected<Iox2WaitSetBackend, holomq::Error> {
+  return create(runtime.node_for_waitset());
+}
+
+Iox2WaitSetBackend::Iox2WaitSetBackend(::iox2::Node<::iox2::ServiceType::Ipc>& node,
+                                       ::iox2::WaitSet<::iox2::ServiceType::Ipc> waitset,
+                                       const std::uint64_t wait_set_id) noexcept
+    : node_(&node), waitset_(std::move(waitset)), wait_set_id_(wait_set_id) {}
+
+auto Iox2WaitSetBackend::attach_trigger(std::shared_ptr<void> owner, const int descriptor,
+                                        std::function<void()> drain)
+    -> holomq::expected<WaitSetHandle, holomq::Error> {
+  if (owner == nullptr || descriptor < 0 || !drain) {
+    return holomq::make_unexpected(holomq::Error{holomq::ErrorCode::kInvalidArgument});
+  }
+
+  auto descriptor_or = ::iox2::FileDescriptor::create_non_owning(descriptor);
+  if (!descriptor_or.has_value()) {
+    HOLOMQ_LOG_ERROR("WaitSet attach_trigger failed: invalid wake descriptor");
+    return holomq::make_unexpected(
+        holomq::Error{holomq::ErrorCode::kFailure, "wait trigger has no usable wake descriptor"});
+  }
+
+  AttachmentEntry entry{};
+  entry.handle = WaitSetHandle{next_handle_id_++};
+  entry.trigger = true;
+  entry.kernel_attached = true;
+  // Readiness means "a subscriber may have a sample", which a trigger never does. Cancellation is
+  // reported through WaitTrigger::is_set instead, so no foreign handle reaches ready_handles().
+  entry.has_samples = []() { return holomq::expected<bool, holomq::ErrorCode>{false}; };
+  // Drain unconditionally. The monotonic latch carries cancellation state, so leaving the
+  // descriptor readable would only make a level-triggered attachment report forever.
+  entry.drain_wake_events = [drain = std::move(drain)]() {
+    drain();
+    return holomq::expected<bool, holomq::ErrorCode>{false};
+  };
+  entry.set_attached_to_wait_set = [](const bool) {};
+  entry.descriptor = std::make_unique<::iox2::FileDescriptor>(std::move(descriptor_or).value());
+
+  auto guard_or = waitset_.attach_notification(entry.descriptor->as_view());
+  if (!guard_or.has_value()) {
+    auto error = map_wait_set_attachment_error(guard_or.error());
+    HOLOMQ_LOG_ERROR("WaitSet attach_trigger failed: {}", holomq::error_message(error));
+    return holomq::make_unexpected(std::move(error));
+  }
+  entry.guard.emplace(std::move(guard_or).value());
+  // Retained so the wake object outlives both the guard and the descriptor above.
+  entry.attachment_owner = std::move(owner);
+
+  const WaitSetHandle handle = entry.handle;
+  attachments_.push_back(std::move(entry));
+  return handle;
+}
+
+auto Iox2WaitSetBackend::set_readiness_mask(const WaitSetHandle handle,
+                                            std::shared_ptr<const std::atomic<bool>> mask) noexcept
+    -> holomq::expected<void, holomq::ErrorCode> {
+  const auto it =
+      std::find_if(attachments_.begin(), attachments_.end(), [&](const AttachmentEntry& entry) {
+        return entry.handle == handle;
+      });
+  if (it == attachments_.end() || !it->is_subscriber()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+  it->readiness_mask = std::move(mask);
+  return {};
+}
+
+auto Iox2WaitSetBackend::attach_wake() -> holomq::expected<void, holomq::Error> {
+  if (wake_descriptor_ >= 0) {
+    return holomq::make_unexpected(
+        holomq::Error{holomq::ErrorCode::kInvalidArgument, "wait set already has a wake"});
+  }
+  // EFD_SEMAPHORE is not set, so posts coalesce into one readable count until drained.
+  auto owner = std::make_shared<ScopedFileDescriptor>(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
+  if (!*owner) {
+    HOLOMQ_LOG_ERROR("WaitSet attach_wake failed: eventfd errno {}", errno);
+    return holomq::make_unexpected(
+        holomq::Error{holomq::ErrorCode::kFailure, "failed to create wait set wake object"});
+  }
+  const int descriptor = owner->get();
+  auto descriptor_or = ::iox2::FileDescriptor::create_non_owning(descriptor);
+  if (!descriptor_or.has_value()) {
+    HOLOMQ_LOG_ERROR("WaitSet attach_wake failed: invalid wake descriptor");
+    return holomq::make_unexpected(
+        holomq::Error{holomq::ErrorCode::kFailure, "wait set wake has no usable descriptor"});
+  }
+
+  AttachmentEntry entry{};
+  entry.handle = WaitSetHandle{next_handle_id_++};
+  entry.wake = true;
+  entry.kernel_attached = true;
+  entry.has_samples = []() { return holomq::expected<bool, holomq::ErrorCode>{false}; };
+  // Drain every post so the level-triggered attachment stops reporting until the next one.
+  entry.drain_wake_events = [descriptor]() -> holomq::expected<bool, holomq::ErrorCode> {
+    std::uint64_t posts = 0U;
+    for (;;) {
+      const ssize_t bytes = ::read(descriptor, &posts, sizeof(posts));
+      if (bytes > 0) {
+        continue;
+      }
+      // EFD_NONBLOCK reports an empty counter as EAGAIN.
+      if (bytes == 0 || errno == EAGAIN) {
+        return false;
+      }
+      if (errno != EINTR) {
+        // A wake left readable would end every later wait at once, so fail the wait instead.
+        HOLOMQ_LOG_ERROR("WaitSet wake drain failed: read errno {}", errno);
+        return holomq::make_unexpected(holomq::ErrorCode::kFailure);
+      }
+    }
+  };
+  entry.set_attached_to_wait_set = [](const bool) {};
+  entry.descriptor = std::make_unique<::iox2::FileDescriptor>(std::move(descriptor_or).value());
+
+  auto guard_or = waitset_.attach_notification(entry.descriptor->as_view());
+  if (!guard_or.has_value()) {
+    auto error = map_wait_set_attachment_error(guard_or.error());
+    HOLOMQ_LOG_ERROR("WaitSet attach_wake failed: {}", holomq::error_message(error));
+    return holomq::make_unexpected(std::move(error));
+  }
+  entry.guard.emplace(std::move(guard_or).value());
+  // Retained so the eventfd outlives both the guard and the descriptor view above.
+  entry.attachment_owner = std::move(owner);
+
+  attachments_.push_back(std::move(entry));
+  wake_descriptor_ = descriptor;
+  return {};
+}
+
+auto Iox2WaitSetBackend::signal_wake() const noexcept -> holomq::expected<void, holomq::ErrorCode> {
+  if (wake_descriptor_ < 0) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+  constexpr std::uint64_t kPost = 1U;
+  while (::write(wake_descriptor_, &kPost, sizeof(kPost)) < 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    // A full counter already holds an undrained wake, which is all a post needs to ensure.
+    if (errno == EAGAIN) {
+      return {};
+    }
+    return holomq::make_unexpected(holomq::ErrorCode::kFailure);
+  }
+  return {};
+}
+
+void Iox2WaitSetBackend::detach(const WaitSetHandle handle) noexcept {
+  const auto it =
+      std::find_if(attachments_.begin(), attachments_.end(), [&](const AttachmentEntry& entry) {
+        return entry.handle == handle;
+      });
+  if (it == attachments_.end()) {
+    return;
+  }
+  it->set_attached_to_wait_set(false);
+  attachments_.erase(it);
+}
+
+std::size_t Iox2WaitSetBackend::capacity() const noexcept {
+  return static_cast<std::size_t>(waitset_.capacity());
+}
+
+auto Iox2WaitSetBackend::collect_ready_handles() noexcept
+    -> holomq::expected<bool, holomq::ErrorCode> {
+  ready_handles_.clear();
+  for (const auto& attachment : attachments_) {
+    // The mask's owner holds this subscriber's queued samples back until it clears the mask.
+    if (attachment.readiness_mask != nullptr &&
+        attachment.readiness_mask->load(std::memory_order_acquire)) {
+      continue;
+    }
+    auto ready = attachment.has_samples();
+    if (!ready.has_value()) {
+      HOLOMQ_LOG_ERROR("WaitSet readiness query failed: {}",
+                       holomq::error_code_name(ready.error()));
+      return holomq::make_unexpected(ready.error());
+    }
+    if (ready.value()) {
+      ready_handles_.push_back(attachment.handle);
+    }
+  }
+  return !ready_handles_.empty();
+}
+
+auto Iox2WaitSetBackend::wait_poll(const WaitStrategy& strategy) noexcept
+    -> holomq::expected<WaitResult, holomq::ErrorCode> {
+  const auto spin_until = std::chrono::steady_clock::now() + strategy.spin_duration;
+
+  while (std::chrono::steady_clock::now() < spin_until) {
+    auto ready = collect_ready_handles();
+    if (!ready.has_value()) {
+      return holomq::make_unexpected(ready.error());
+    }
+    if (ready.value()) {
+      return WaitResult::ready;
+    }
+    std::this_thread::yield();
+  }
+
+  if (strategy.mode == WaitMode::Return) {
+    auto ready = collect_ready_handles();
+    if (!ready.has_value()) {
+      return holomq::make_unexpected(ready.error());
+    }
+    return readiness_or_timeout(ready.value());
+  }
+
+  std::this_thread::sleep_for(detail::timed_wait_sleep_duration(strategy));
+  auto ready = collect_ready_handles();
+  if (!ready.has_value()) {
+    return holomq::make_unexpected(ready.error());
+  }
+  return readiness_or_timeout(ready.value());
+}
+
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+auto Iox2WaitSetBackend::wait_kernel(const WaitStrategy& strategy,
+                                     const bool precheck_ready) noexcept
+    -> holomq::expected<WaitResult, holomq::ErrorCode> {
+  const auto spin_until = std::chrono::steady_clock::now() + strategy.spin_duration;
+
+  // Every kernel wait polls readiness at least once before blocking. That protects a caller when a
+  // queued sample has no corresponding notification, and it closes the drain-to-block race: an
+  // endpoint can become ready after a caller's drain and before its block, and blocking then waits
+  // for the next publisher notification to release a sample the caller already owns. The Runtime
+  // channel pump used to skip this scan through the unchecked entry point on the assumption that
+  // its preceding drain left nothing ready; measured on
+  // graph_intraprocess_docs_pod_1to2_per_sink_latency, that assumption cost 41 blocks per 60k
+  // samples in a 0.9-1.2 ms band. No caller skips the scan any more: precheck_ready is always true
+  // today and is retained only as the seam for a narrowly gated unchecked wait, should one ever be
+  // justified.
+  //
+  // A checked wait yields once even at spin_duration zero, and that is deliberate: it is
+  // load-bearing for a caller that blocks straight out of a not-ready poll. A single-slot receive
+  // and notification pair can otherwise fall into lockstep: the publisher's notify is rejected
+  // because the slot is still full, and progress reverts to the wait timeout instead of a wake.
+  // Measured on the graph interprocess POD 1:1 saturated benchmark, dropping this yield cost
+  // 175,919 -> 8,769 msg/s, moved end-to-end p99 from 9.9 us to 3.7 ms, and drove publisher
+  // notification attempts per accepted notification from 9.5 to 300.8. The median is untouched
+  // either way, so a latency-percentile or unit test will not catch its removal.
+  if (precheck_ready || strategy.spin_duration > std::chrono::nanoseconds::zero()) {
+    do {
+      auto ready = collect_ready_handles();
+      if (!ready.has_value()) {
+        return holomq::make_unexpected(ready.error());
+      }
+      if (ready.value()) {
+        return WaitResult::ready;
+      }
+      std::this_thread::yield();
+    } while (std::chrono::steady_clock::now() < spin_until);
+  }
+
+  if (attachments_.empty()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+
+  bool saw_kernel_notification = false;
+  // Tracked separately from saw_kernel_notification because a trigger contributes no ready handle:
+  // it is the one wake that can end a kernel wait with nothing to dispatch, and a caller driving a
+  // ready_handles() loop has to be able to tell that apart from a spurious wake.
+  bool saw_trigger_notification = false;
+  holomq::ErrorCode drain_error = holomq::ErrorCode::kSuccess;
+  const auto callback = ::iox2::bb::StaticFunction<::iox2::CallbackProgression(
+      ::iox2::WaitSetAttachmentId<::iox2::ServiceType::Ipc>)>(
+      [this, &saw_kernel_notification, &saw_trigger_notification, &drain_error](
+          const ::iox2::WaitSetAttachmentId<::iox2::ServiceType::Ipc>& attachment_id) {
+        for (auto& attachment : attachments_) {
+          if (attachment.kernel_attached && attachment.guard.has_value() &&
+              attachment_id.has_event_from(attachment.guard.value())) {
+            saw_kernel_notification = true;
+            saw_trigger_notification = saw_trigger_notification || attachment.trigger;
+            auto drained = attachment.drain_wake_events();
+            if (!drained.has_value()) {
+              HOLOMQ_LOG_ERROR("WaitSet wake drain failed: {}",
+                               holomq::error_code_name(drained.error()));
+              drain_error = drained.error();
+              return ::iox2::CallbackProgression::Stop;
+            }
+          }
+        }
+        return ::iox2::CallbackProgression::Continue;
+      });
+
+  const bool timed_kernel_wait = strategy.timeout.has_value();
+
+  if (timed_kernel_wait) {
+    const ::iox2::bb::Duration timeout =
+        ::iox2::bb::Duration::from_nanos(static_cast<std::uint64_t>(strategy.timeout->count()));
+    const auto run_or = waitset_.wait_and_process_once_with_timeout(callback, timeout);
+    if (!run_or.has_value()) {
+      return holomq::make_unexpected(map_wait_set_run_error_code(run_or.error()));
+    }
+  } else {
+    const auto run_or = waitset_.wait_and_process_once(callback);
+    if (!run_or.has_value()) {
+      return holomq::make_unexpected(map_wait_set_run_error_code(run_or.error()));
+    }
+  }
+
+  if (drain_error != holomq::ErrorCode::kSuccess) {
+    return holomq::make_unexpected(drain_error);
+  }
+
+  auto ready = collect_ready_handles();
+  if (!ready.has_value()) {
+    return holomq::make_unexpected(ready.error());
+  }
+  if (ready.value()) {
+    // Data wins over cancellation. A wake that carried both is reported as ready so the sample is
+    // not dropped in favour of a shutdown; the caller's WaitTrigger::is_set check still sees the
+    // latch on this pass or the next one.
+    return WaitResult::ready;
+  }
+
+  // A fired trigger ends the wait with nothing to dispatch. Reporting it as ready would leave a
+  // ready_handles() loop spinning on an empty span until its deadline, because the latch is
+  // monotonic and the descriptor has already been drained above.
+  if (saw_trigger_notification) {
+    return WaitResult::cancelled;
+  }
+
+  // Kernel wake without queued samples yet (spurious wake); callers loop on empty ready_handles().
+  if (saw_kernel_notification || !timed_kernel_wait) {
+    return WaitResult::ready;
+  }
+
+  return WaitResult::timeout;
+}
+
+auto Iox2WaitSetBackend::wait(const WaitStrategy& strategy, const bool precheck_ready) noexcept
+    -> holomq::expected<WaitResult, holomq::ErrorCode> {
+  ready_handles_.clear();
+  detail::warn_if_ignored_timeout_on_return(strategy);
+
+  if (attachments_.empty()) {
+    HOLOMQ_LOG_ERROR("WaitSet wait failed: no attachments");
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+
+  if (strategy.mode == WaitMode::KernelWait) {
+    // A cancellation trigger or the wake is kernel attached but is not an event-wake subscriber.
+    // Counting either here would admit a kernel wait that no publication can ever end, a silent
+    // fallback to waking only on timeouts.
+    const bool has_kernel_attachment =
+        std::any_of(attachments_.begin(), attachments_.end(), [](const AttachmentEntry& entry) {
+          return entry.kernel_attached && entry.is_subscriber();
+        });
+
+    if (!has_kernel_attachment) {
+      HOLOMQ_LOG_ERROR(
+          "WaitSet wait failed: KernelWait requires event wake on at least one attachment");
+      return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+    }
+
+    return wait_kernel(strategy, precheck_ready);
+  }
+
+  return wait_poll(strategy);
+}
+
+auto create_wait_set_backend(Runtime& runtime)
+    -> holomq::expected<Iox2WaitSetBackend, holomq::Error> {
+  return Iox2WaitSetBackend::create(runtime);
+}
+
+}  // namespace holomq::detail::transport

@@ -1,0 +1,279 @@
+If you need to move structured data between operators and do not want to declare
+anything — no identity traits, no layout description, no serialization code — the SDK
+schema types are the path of least resistance. They are FlatBuffers-backed message types
+that ship with the SDK, ready to use as port types: declare
+`Output<holoscan::schema::TimeT>` on one operator and `Input<holoscan::schema::TimeT>` on
+another, wire them with `add_flow()`, and the runtime does the rest. The codec is chosen
+automatically at `compile()` time, and exactly the same code works whether the connection
+stays in-process or crosses a process boundary over an interprocess topic.
+
+Each type carries its own stable schema-family identity, verifier, and serialized-size bound. Use an
+application-owned FlatBuffers schema when the SDK's message shapes do not fit; the same
+generated owning-type experience extends to your `.fbs` definition. The
+[experimental raw-POD path](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads)
+is reserved for expert applications that deliberately cannot use a schema compiler or
+generated code.
+
+**Complete C++ example:** [`examples/schema_payloads/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/schema_payloads/cpp)
+
+<Note title="You will learn">
+  - Which schema types the SDK provides and what each one carries
+  - How to emit and receive a schema value with zero declarations
+  - Why the same code works in-process and across processes
+  - How schema-family identity and compatibility admission work
+  - How the bounded serialized-size cap fails, and how to size for it
+  - Where to define and generate your own application-owned FlatBuffer schema
+</Note>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+Test schema operators with owning metadata and Tensor snapshots using the
+[operator testing fixture](/holoscan/sdk-user-guide/debugging-and-testing/testing#tensor-and-schema-snapshots).
+
+## The SDK schema types
+
+Four schema types are available directly as port payloads. Each is an owning native
+value type — plain fields you read and write, no builder objects on the pipeline path:
+
+| Type | Carries | Fields |
+|---|---|---|
+| `holoscan::schema::TimeT` | A timestamp pair | `time_ns`, `acqtime_ns` (both `int64_t`) |
+| `holoscan::schema::StringT` | A variable-length string | `data` (`std::string`) |
+| `holoscan::schema::ImageT` | One image frame and its pixels | `header`, `height`, `width`, `encoding`, `data` (a Core `Tensor`), `color_space`, `significant_bits`, `roi_offset_x`, `roi_offset_y`, `plane_layouts`, `exposure_time_ns`, `gain` |
+| `holoscan::schema::ImuT` | One IMU sample | `header`, `orientation` (quaternion), `angular_velocity`, `linear_acceleration` (3-vectors), `flags`, `orientation_covariance`, `angular_velocity_covariance`, `linear_acceleration_covariance` (row-major 3x3 matrices) |
+
+`ImageT` and `ImuT` are the two sensor payloads, and the two that share a `header`. What
+that header promises, how to extend either payload, and what a schema change costs a
+running deployment are covered in
+[Sensor payloads](/holoscan/sdk-user-guide/data-and-payloads/sensor-payloads).
+`ImuT` is the natural carrier for the high-rate leg of a fusion pipeline and `ImageT`
+for the frame leg; the schema-payloads example above emits `ImuT` for exactly that.
+`ImageT` keeps its pixels in a Core `Tensor` rather than inside the FlatBuffer, so frame
+metadata and pixel storage stay bounded independently of each other; that makes it a
+descriptor-Tensor payload, and an operator producing one declares its Tensor layout and
+allocation bounds like any other Tensor-carrying port. `StringT` suits status,
+description, and control-text messages. `TimeT` carries a capture/acquisition timestamp
+pair when the payload itself *is* the timestamp.
+
+Pick a schema type for ordinary structured messages: you skip manual identity and byte-layout
+traits and gain verified variable-length, optional, and nested fields. Define an
+application-owned schema when the SDK shape does not fit. Bulk device-backed data can use
+a descriptor-Tensor schema; a direct [`Tensor`](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+remains appropriate when the payload is only the Tensor.
+
+## Zero declarations: emit and receive
+
+There is no registration step, no attach call, and no trait to specialize. Use the type
+as the port payload and the ordinary port verbs:
+
+```cpp
+class StatusSource final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.output(out, "status");
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    holoscan::schema::StringT status;
+    status.data = "pipeline healthy";
+    return out.emit(std::move(status));
+  }
+
+  holoscan::Output<holoscan::schema::StringT> out;
+};
+```
+
+On the consumer side, `receive()` hands you an owning `Sample<T>` whose `data` member is
+the native value, fields already populated and verified:
+
+```cpp
+class StatusSink final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(in, "status").queue_depth(1U);
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = in.receive();  // expected<Sample<schema::StringT>, Error>
+    if (!sample) { return holoscan::make_unexpected(std::move(sample).error()); }
+    consume(sample->data.data);  // the StringT's string field
+    return {};
+  }
+
+  holoscan::Input<holoscan::schema::StringT> in;
+};
+```
+
+Emitting a `TimeT` is the same one-liner:
+
+```cpp
+return out.emit(holoscan::schema::TimeT{.time_ns = t, .acqtime_ns = a});
+```
+
+Wiring, compiling, and running are completely unchanged from any other payload type:
+`add_flow()` connects the ports, `compile()` selects the schema codec for you, and the
+plan either runs or is rejected with a reason. There is no codec opt-in and nothing
+schema-specific in your graph code. If any of this is unfamiliar, start with
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph) and
+[Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+
+## In-process and cross-process, same code
+
+A schema value is carried as a self-contained encoded envelope. Inside one process this
+detail is invisible — you emit a native value and receive a native value. The payoff
+comes at a process boundary: because the envelope is self-describing and
+portable-by-construction, the *same* operator code works when the connection is exported
+over an interprocess topic. No `#ifdef`, no alternate serialization path, no
+transport-aware code in `compute()`.
+
+On every receive, the runtime verifies the encoded bytes first (a FlatBuffers verifier
+pass) and only then materializes the owning native value. A malformed or truncated frame
+from an external process is rejected with a typed error and never reaches your
+`compute()`. See
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels) for
+exporting a connection, and
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+for feeding a graph from a non-operator process.
+
+<Warning>
+  **Schema payloads are bounded — size for the cap.** Every schema type has a
+  compile-time maximum serialized size,
+  `generated_schema_max_serialized_size_v<T>`. A value that encodes larger than
+  the cap — for example, a very long `schema::StringT` — fails with a typed
+  `kResourceExhausted` error instead of allocating without bound. This is the
+  same bounded-by-construction rule as everywhere else in the runtime: treat the
+  cap as part of your message design, not as an error to discover in the field.
+</Warning>
+
+## Schema family identity and compatibility
+
+Every generated schema supplies its stable family name, compatibility epoch, derived 128-bit family
+id, and independent four-byte FlatBuffers file identifier. Runtime admission combines those facts
+with the envelope, endpoint generation, capacity, and—where applicable—descriptor-Tensor carriage
+contracts. Attach mismatches fail with `kIncompatible`; a received frame that violates the attached
+contract fails with `kProtocolError` before typed payload exposure.
+
+Inside one process the C++ type system already enforces most of this: `add_flow()` only
+connects an `Output<T>` to an `Input<T>` of the same `T`. Family admission earns its keep
+at process boundaries, where the type system cannot reach. SDK users do not write or register these
+identities, and application authors do not pin generated BFBS hashes or revision counters. See
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+for the canonical identity model, compatible-edit rules, optional provenance, intentional-break,
+and conformance-baseline workflows. The current release does not promise cross-release N/N+1 endpoint
+compatibility.
+
+## Generate an application-owned schema
+
+When the SDK shapes do not fit, define the message in an application-owned `.fbs` file and use the
+installed `holoscan_add_flatbuffer_schema()` CMake function. It runs the matching schema compiler
+and generates the FlatBuffers headers, owning object-API type, stable schema-family identity,
+bounded codec, native traits, and Runtime type operations.
+
+Application Operators use the generated owning type directly:
+
+```cpp
+holoscan::Output<app::CustomControlT> output;
+holoscan::Input<app::CustomControlT> input;
+```
+
+Values then use the same `emit()`, `receive()`, graph composition, and cross-process path as the SDK
+schema types. Application code does not specialize schema traits, hand-pin a digest, or expose an
+inline transport wrapper as its port type. The complete generation call, `.fbs` example, supported
+field shapes, and descriptor-Tensor variant are documented in
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
+
+## Experimental exception: raw POD
+
+The [experimental raw-POD path](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads) is a
+separate expert escape hatch for fixed-layout messages that deliberately cannot depend on a schema
+compiler or generated code. It requires an explicit identity and an exact byte-covering field
+layout; the application owns binary compatibility, schema evolution, and coordinated deployment.
+Do not use raw POD as the ordinary alternative to an SDK schema type.
+
+## Borrowing and prepared metadata
+
+Use `input.selected_sample()` for callback-local reads. It avoids the owning native copy made by
+`receive()` and `receive_data()`; those owning APIs remain the choice when metadata must outlive
+the activation. Const access to a generated `shared_ptr` does not make its pointee immutable.
+
+| Task | C++ API | Native preparation required? |
+| --- | --- | --- |
+| Read a selected value in `compute()` | `Input<T>::selected_sample()` | No |
+| Publish an unchanged ordinary schema by reference | `Output<T>::emit_ref(value, options)` | No |
+| Edit an ordinary schema without repeated metadata allocation | `schema::SchemaScratch<T>` | Yes |
+| Edit descriptor metadata with fresh output Tensors | `schema::DescriptorMetadataScratch<T>` and `emit_tensor()` / `emit_tensors()` | Yes |
+
+Application schemas opt into generated scratch and prepared receive storage through
+`holoscan_add_flatbuffer_schema(... NATIVE_BOUNDS_FILE native_bounds.json)`. The bounds file
+declares finite container sizes and an aggregate prepared-memory limit; it does not change wire
+identity or native field types. The SDK supplies this capability for `ImuT`. Image keeps
+`sensor_io::ImageDescriptorScratch` and its separate, specialized receive normalization.
+
+Prepare scratch outside `compute()`. Use `copy_from()` for ordinary schemas or
+`copy_metadata_from()` for descriptors, and use `reset()` for structural clearing. Preserve the
+prepared owners and buffers: do not replace the whole value, move/swap containers, or clear a
+string vector directly. Bounded scalar, inline-struct and existing string edits are supported.
+Successful bounded copy/reset operations reuse their cold-prepared storage. String-vector
+validation visits all `max_elements` entries, including parked buffers, so oversized declared
+bounds also increase per-message work.
+
+The compiled `schema_payloads` example includes an IMU transform that borrows with
+`selected_sample()`, copies into `SchemaScratch<schema::ImuT>`, edits one fixed struct, and
+publishes with `emit_ref()`. Its `start()` method creates scratch only when the optional is empty;
+an in-place lifecycle restart therefore reuses the original cold allocation. The installed
+`multi_tensor_schema` example demonstrates the corresponding
+`DescriptorMetadataScratch<T>` flow with two CUDA image fields and one host calibration field.
+See `examples/schema_payloads/cpp` and
+`examples/flatbuffer_schemas/multi_tensor_schema/cpp`.
+
+<Warning>
+For generated prepared schemas, do not retain a copied nested metadata `shared_ptr` past selection
+retirement, or from scratch across its next copy/reset. Reuse fails closed with
+`ErrorCode::kPreparedStorageInvalid` rather than mutating aliased metadata. The same code identifies
+other violations of prepared-storage preservation; it is not a peer/wire error. Temporary owner
+copies destroyed before the reuse boundary are permitted. Use owning receive or an independent
+metadata copy when a longer lifetime is needed. Releasing an escaped alias does not automatically
+restart a run that has already failed.
+</Warning>
+
+`emit_ref()` synchronously encodes an ordinary schema into Runtime-owned bounded bytes; it does
+not retain the caller's native object. The caller may reuse its scratch after successful
+publication, even before consumers run. By-value `emit(scratch.value())` still copies. Neither API
+promises allocation-free transport or automatically retries a failed callback.
+
+Descriptor scratch deliberately keeps Tensor fields null. Read input buffers through the selected
+sample, register asynchronous reads with the Runtime-managed consumer stream, and write separate
+output loans. Metadata lifetime does not replace the Runtime's Tensor-readiness and retirement
+rules. A generic output loan does not preserve nested generated-object capacity between uses.
+
+## Recap
+
+- SDK schema types (`schema::TimeT`, `schema::StringT`, `schema::ImageT`,
+  `schema::ImuT`) are the zero-declaration payload path: use them directly as
+  `Output<T>`/`Input<T>` types. The sensor payloads among them, `schema::ImageT` and
+  `schema::ImuT`, are owned by `holoscan::sensor_io` rather than by Core, so carrying
+  either one means linking that library (the `holoscan-sensor-io` install
+  component, required alongside `holoscan-core`). The type names are unchanged: a FlatBuffers namespace is part of the wire
+  identity, so these stayed `holoscan::schema::*` when their ownership moved.
+- The codec is selected automatically at `compile()`; the same operator code works
+  in-process and across processes.
+- Received values are verified before delivery and arrive as owning native values with
+  fields populated.
+- Serialized size is bounded by `generated_schema_max_serialized_size_v<T>`; overflow is
+  a typed `kResourceExhausted`, never unbounded allocation.
+- Schema admission matches the stable family name, compatibility epoch, derived family id, and file
+  identifier, plus exact envelope and endpoint constraints; incompatible peers fail before delivery.
+- Application-owned `.fbs` files generate owning port types and package traits — see
+  [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
+
+Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+covers application-owned `.fbs` definitions, generated owning types, and package traits.

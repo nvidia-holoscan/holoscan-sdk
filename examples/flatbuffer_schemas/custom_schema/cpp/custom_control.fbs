@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Application-defined control message for the custom_schema example. This is
+// the worked schema from the user guide's "Custom FlatBuffer schemas" page.
+// Compatible edits retain the root name, file identifier, epoch, and explicit field IDs and must
+// conform to the committed source baseline.
+namespace app;
+
+table CustomControl {
+  // Monotonic control sequence.
+  sequence: ulong (id: 0);
+
+  // Small scalar control gain.
+  gain: float (id: 1);
+
+  // User-defined label.
+  label: string (id: 2);
+}
+
+root_type CustomControl;
+file_identifier "ACCT";

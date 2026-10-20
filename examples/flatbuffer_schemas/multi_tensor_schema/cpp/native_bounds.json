@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schemas": {
+    "stereo.StereoFrame": {
+      "max_prepared_bytes": 2048,
+      "fields": {
+        "header.source": {
+          "max_bytes": 64
+        }
+      }
+    }
+  }
+}

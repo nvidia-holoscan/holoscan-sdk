@@ -1,0 +1,364 @@
+This walkthrough covers `camera_imu_control`, the guide's hero application:
+a camera + IMU fusion pipeline that exercises nearly every concept from the
+earlier chapters in one program. A simulated camera produces bounded host
+tensors on a 20 ms clock. An embedded fusion graph combines each frame with a
+bracketed interval of IMU samples imported from outside the process, then exports
+the fused control value for an external consumer. If you can
+read this example end to end, you understand the Holoscan 5.0 programming
+model.
+
+The full source lives at `examples/camera_imu_control/` in the SDK
+tree, with two companion processes under `examples/external_clients/`.
+
+<Note title="You will learn">
+  - How the camera + IMU application is composed from an embedded graph, two
+    operators, and two external topics
+  - How `OnWindow` + `BracketedWindow` align a slow camera with a fast IMU
+  - How a bounded host `Tensor` is allocated, written, committed, and emitted
+  - How `import_topic` / `export_topic` expose deployment-stable endpoints to
+    processes outside the graph
+  - How to run the bounded in-process reference, emit deployment artifacts,
+    and reuse the standalone companion-client patterns
+</Note>
+
+<Warning>
+  **Developer preview.** This example uses Prototype external-topic and channel APIs.
+  The external-topic options, artifact layout, and companion protocols may
+  evolve in upcoming releases; treat the shapes below as illustrative and
+  re-check the shipped sources.
+</Warning>
+
+## What it builds
+
+One executable, `camera_imu_control`, composes and compiles a single
+application graph with two operators and two external endpoints:
+
+- **`CameraSource`** — fires on a 20 ms clock and emits one 64-byte host
+  `Tensor` per activation from a preallocated, bounded pool.
+- **`WindowFusion`** — primes with the first camera frame, then selects a
+  bracketed IMU neighborhood around each interval between consecutive frames
+  and emits a `std::uint32_t` control value when the contract permits activation.
+- **Imported topic** `baseline.camera_imu.imu` — `std::uint32_t` IMU samples
+  published by an external process.
+- **Exported topic** `baseline.camera_imu.control` — the fused control result,
+  consumed by an external process.
+
+The same binary has two modes: a bounded **reference run** that starts the
+pipeline plus an in-process external client and proves one fused result end to
+end, and a cold **artifact-only mode** (`--emit-artifacts`) that writes the
+deployment bundle without starting the runtime at all.
+
+## The graph shape
+
+The application nests one graph inside another — a direct application of
+[reusable graphs](/holoscan/sdk-user-guide/composing-applications/reusable-graphs).
+The inner `FusionGraph` owns the sensor-side wiring and re-exports the fusion
+output as its own public port; the outer `CameraImuGraph` embeds it and wires
+that port to the exported control topic.
+
+```text
+CameraImuGraph ("holoscan-camera-imu-control")
+└── FusionGraph ("fusion")                        [embedded via embed<FusionGraph>()]
+    ├── import_topic<uint32_t>("holomq://baseline.camera_imu.imu")
+    ├── CameraSource ("camera") ──frame──▶ WindowFusion ("window-fusion")
+    ├── imported imu ────────────imu────▶ WindowFusion
+    └── control (exported Output<uint32_t>)
+        └── outer: add_flow ──▶ export_topic<uint32_t>("holomq://baseline.camera_imu.control")
+```
+
+The inner graph declares its public surface as a member port and connects it
+with `export_output`:
+
+```cpp
+class FusionGraph final : public holoscan::Graph {
+ public:
+  holoscan::Output<std::uint32_t> control{"control"};
+
+ protected:
+  void compose() override {
+    // ... clock, import_topic, ops, add_flow ...
+    export_output(control, fusion->control);
+  }
+};
+```
+
+Two details are easy to miss but deliberate:
+
+- **Each graph sets its own default clock.** The inner graph creates a
+  `RealtimeClock` configured with `.use_time_since_epoch = true` so that
+  capture timestamps from the external IMU publisher and the camera's
+  activation times live in one comparable time domain. See
+  [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+- **The IMU import requires capture time.** The `TopicOptions` for the import
+  set `capture_time = holoscan::RequireCaptureTime{.clock = clock}`, so every
+  external sample must arrive with a capture timestamp in that clock's domain
+  — otherwise windowed selection against camera frames would be meaningless.
+
+## The interesting contracts
+
+The two `contract()` declarations are the heart of the example. The camera is
+a pure clock-driven source:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result.trigger(holoscan::OnClock{.period = 20ms});
+  return result;
+}
+```
+
+The fusion operator is where temporal windowing earns its keep. It anchors on
+the camera input, selects the IMU interval between consecutive camera captures,
+and declares how to handle a terminally incomplete window:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result
+      .trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U})
+      .input(camera, holoscan::Exact{})
+      .input(imu,
+             holoscan::BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 16U})
+      .on_missing(imu, holoscan::SafeDefault{});
+  return result;
+}
+```
+
+The first camera anchor establishes the starting boundary. For each later
+anchor, select the exact current frame and a complete IMU bracket: one strict
+predecessor before the previous anchor, every sample in the inclusive interval,
+and one strict successor after the current anchor. The full batch must fit
+16 samples. An incomplete window stays pending until selection or a terminal
+reason. Only a terminally missing result invokes `SafeDefault`, which permits
+the degraded path without a partial batch.
+
+The [worked bracket diagrams](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns#bracketedwindow-all-or-nothing-neighborhoods)
+show why an endpoint sample cannot supply the successor and how adjacent windows
+share samples. Those examples use a bound of 8, while this contract uses 16.
+The interval spans consecutive captures, not exposure duration.
+The runtime selects before `compute()`. The application still owns
+physical timestamp accuracy and how overlapping support samples contribute to
+integration.
+
+Inside `compute()`, the windowed input is read as a batch rather than a single
+`receive()`:
+
+```cpp
+std::uint32_t integrated = 0U;
+if (imu.selection().state == holoscan::InputState::kSelected) {
+  auto batch = imu.selected_batch();
+  if (!batch) { return holoscan::make_unexpected(std::move(batch).error()); }
+  for (const auto& sample : *batch) { integrated += sample.data; }
+}
+```
+
+The `selection().state` check distinguishes a real IMU window from the
+`SafeDefault` case. While the IMU stream remains open but silent, timed-out
+windows can still produce degraded camera-only values. Once the IMU ends,
+incomplete pending windows close with `kEndOfStream`. While the camera input
+remains open, that event alone cannot trigger an activation. Later camera
+arrivals create no new windows, but can allow an outstanding terminal result
+to activate with its retained camera anchor and the declared missing policy.
+`SafeDefault` cannot sustain new camera-only fusion after those results are
+handled. The session can keep running. The integer sum here is a teaching
+calculation, not a physical IMU integration algorithm. For the selector catalog
+see [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+and [Advanced temporal patterns](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns).
+
+<Warning>
+  A `SelectedBatchView` and its iterators are valid only for the current
+  activation. Fold the window into your own state inside `compute()`; never
+  stash the view or a reference to its samples for a later activation.
+</Warning>
+
+## The tensor path
+
+The camera output declares its tensor shape and its allocation bounds at
+`setup()` time, so the compiler can size the pool up front:
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.output(frame, "frame")
+      .produces_tensor(holoscan::TensorOutputSpec{
+          .representation = kHostByteFrame,  // host memory, uint8, rank 1
+          .bounds = holoscan::tensor_bounds(64U),
+          .storage = holoscan::TensorOutputStorage::kRuntimePool,
+      });
+}
+```
+
+Each activation then borrows a slot, writes it through an explicit host
+writer, commits, and emits with an explicit capture time:
+
+```cpp
+auto loan =
+    frame.allocate_tensor(holoscan::TensorLoanRequest{.shape = kFrameShape, .dtype = kByteDtype});
+if (!loan) {
+  return holoscan::make_unexpected(std::move(loan).error());
+}
+auto fill = [this](const holoscan::TensorOutputWriteGuard& writer)
+    -> holoscan::expected<void, holoscan::Error> {
+  auto* bytes = writer.data_as<std::uint8_t>();
+  if (bytes == nullptr || writer.byte_size() != kFrameShape.front()) {
+    return holoscan::make_unexpected(
+        holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
+  }
+  std::fill_n(bytes, writer.byte_size(), static_cast<std::uint8_t>(sequence_++));
+  return {};
+};
+auto committed = loan->write_host_and_commit(fill);
+if (!committed) {
+  return holoscan::make_unexpected(std::move(committed).error());
+}
+return frame.emit(std::move(*loan),
+                  holoscan::EmitOptions{.capture_time = context.activation_time()});
+```
+
+Everything here is bounded by construction: `allocate_tensor()` borrows from a
+preallocated pool sized from the declared bounds, and exhaustion surfaces as
+`kResourceExhausted` — a value you branch on, not an exception. The consumer
+side mirrors the declaration with `.expects_tensor(kHostByteFrame)`, so a
+layout mismatch is a compile-time plan rejection rather than a runtime
+surprise. Background:
+[Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) and
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+Note also every result is checked. `allocate_tensor`,
+`write_host_and_commit`, and `emit` all return
+`holoscan::expected<T, Error>`, and the example threads failures out of
+`compute()` rather than catching anything — the
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+style applied uniformly.
+
+## External endpoints
+
+The IMU input and control output cross the process boundary through
+[external topics](/holoscan/sdk-user-guide/composing-applications/external-topics)
+with **stable, explicit endpoint names**:
+
+```cpp
+holoscan::TopicOptions imu_options;
+imu_options.endpoint_name = kImuEndpoint;  // "baseline.camera_imu.imu"
+imu_options.capture_time = holoscan::RequireCaptureTime{.clock = clock};
+const auto imu = import_topic<std::uint32_t>("holomq://" + std::string{kImuEndpoint}, imu_options);
+// wired like any other producer:
+add_flow(imu.output(), fusion->imu, holoscan::ConnectionOptions{.queue_depth = 32U});
+```
+
+The exported side is symmetric: `export_topic<std::uint32_t>(...)` in the
+outer graph, wired via `add_flow(fusion->control, control.input(), ...)`.
+Compiling the graph records both endpoints in the plan's endpoint catalog,
+which is what standalone processes use to attach.
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+One subtlety in the fusion operator's `compute()`: the exported control edge
+can report `kNotReady` before an external consumer has attached. The example
+treats that as a droppable, retry-on-next-frame condition rather than an
+error — external attachment is deliberately **not** a startup barrier, so the
+pipeline runs whether or not the recorder is connected yet.
+
+## How to run
+
+### The bounded reference run
+
+Running the binary with no arguments starts the compiled plan **and** an
+in-process `ChannelRuntime` client that plays both external roles:
+
+```bash
+./camera_imu_control
+```
+
+The client creates a publisher on `baseline.camera_imu.imu` and a subscriber on
+`baseline.camera_imu.control` from `plan.endpoint_catalog()`, waits for both
+directions to observe a live peer, publishes 16 captured IMU samples, waits
+for one control value that provably includes IMU contribution (a camera-only
+`SafeDefault` result is ignored), then stops and joins the session
+deterministically. On success it prints the control value and sequence number
+and exits `0`. The reference run is bounded and returns distinct nonzero
+statuses with diagnostics; exact sample counts and numeric exit codes are test
+details, not API.
+
+This in-process client is a smoke path for the example itself — the real
+external-client story is the companion processes below.
+
+### Emitting deployment artifacts
+
+The artifact mode compiles the graph and writes the deployment bundle
+(including `endpoint-catalog.json`) without starting the runtime, CUDA, or any
+transport:
+
+```bash
+./camera_imu_control --emit-artifacts \
+  --artifact-root ./holoscan-artifacts --deployment-id developer
+```
+
+There is also a build target (`camera_imu_control_graph_artifacts`) that
+does the same from CMake. Keeping artifact publication separate from execution
+means build tooling can regenerate bundles without side effects; rebuilding
+preserves timestamps of unchanged artifacts. See
+[Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+### The companion processes
+
+The separate-process companions live in `examples/external_clients/`
+and are walked through in detail on
+[External clients](/holoscan/sdk-user-guide/examples/external-clients). Both
+take the **exact** emitted catalog path plus an endpoint name — they never
+search for a global "latest" catalog. The no-argument reference mode already
+creates in-process clients for both endpoints; do not attach the standalone
+companions to that same run. The baseline release ships the companions as independently tested
+catalog-client patterns, but it does not yet ship an author-facing
+graph-only/deployment launcher for this three-process recipe.
+
+```bash
+# Publish IMU samples:
+./sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
+
+# Record control results:
+./result_recorder <catalog.json> baseline.camera_imu.control 1
+```
+
+The sensor daemon's optional arguments default to `64`, `5`, and `1`,
+respectively. The final recorder argument is a positive sample limit. This
+graph's camera remains active on its independent clock after the finite IMU
+publisher closes, so its control export does not reach remote EOS. The limit
+lets the recorder consume one representative control result and then close its
+local subscriber without claiming graph completion. Omit the limit when using
+the recorder with a finite input-driven graph to wait for data followed by
+remote `kClosed`.
+
+<Tip>
+  The sensor daemon and recorder are ordinary programs — no operator base
+  class, no graph, no HoloMQ headers. If you are integrating an existing
+  driver process with a Holoscan application, they are the pattern to copy;
+  see [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
+</Tip>
+
+## Recap
+
+- The hero app uses a nominal 50 Hz camera clock (20 ms) with a high-rate IMU.
+  `OnWindow` + `BracketedWindow` select inter-anchor neighborhoods after priming.
+  `SafeDefault` can handle silence while the IMU stream is open. After it ends,
+  later anchors create no new windows, though outstanding terminal results can
+  still produce activations.
+- Host tensors are produced from a bounded pool: declare bounds in `setup()`,
+  then borrow → write → commit → emit, checking every `expected` result.
+- `import_topic` / `export_topic` give the graph deployment-stable external
+  endpoints; external attachment is never a startup barrier.
+- One binary serves both roles: a bounded self-contained reference run, and a
+  cold `--emit-artifacts` mode that produces the catalog used by deployment
+  tooling and compatible standalone peers.
+- Standalone companions (`sensor_daemon`, `result_recorder`) attach by
+  catalog path + endpoint name using the `ChannelRuntime` client API.
+
+Next: [Slow/fast fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion)
+isolates the temporal-windowing patterns this example uses in a smaller,
+contract-focused program.

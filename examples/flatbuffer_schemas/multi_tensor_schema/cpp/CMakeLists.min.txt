@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_multi_tensor_schema LANGUAGES CXX)
+
+include(CTest)
+
+if(DEFINED HOLOSCAN_TEST_INSTALL_PREFIX AND NOT HOLOSCAN_TEST_INSTALL_PREFIX STREQUAL "")
+    list(PREPEND CMAKE_PREFIX_PATH "${HOLOSCAN_TEST_INSTALL_PREFIX}")
+    find_package(holoscan
+        PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}"
+        NO_DEFAULT_PATH
+        REQUIRED
+    )
+else()
+    find_package(holoscan
+        PATHS
+            "/workspace/holoscan-sdk/install"
+            "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+        REQUIRED
+    )
+endif()
+find_package(CUDAToolkit REQUIRED)
+
+holoscan_add_flatbuffer_schema(
+    TARGET multi_tensor_schema_generated
+    SCHEMA stereo_frame.fbs
+    MAX_SERIALIZED_SIZE 768
+    NATIVE_BOUNDS_FILE native_bounds.json
+)
+
+add_executable(multi_tensor_schema multi_tensor_schema.cpp)
+target_compile_features(multi_tensor_schema PRIVATE cxx_std_20)
+target_link_libraries(multi_tensor_schema
+    PRIVATE CUDA::cudart holoscan::core multi_tensor_schema_generated)
+set_target_properties(multi_tensor_schema PROPERTIES CXX_EXTENSIONS OFF)
+
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_MULTI_TENSOR_SCHEMA_TEST COMMAND multi_tensor_schema)
+    set_tests_properties(EXAMPLE_CPP_MULTI_TENSOR_SCHEMA_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "multi_tensor_schema: transformed one prepared StereoFrameT sample"
+            SKIP_RETURN_CODE 77
+            LABELS "examples;schema;tensor;multi-tensor;cuda"
+            TIMEOUT 30)
+endif()

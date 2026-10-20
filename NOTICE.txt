@@ -11,25 +11,21 @@ Licensed under Apache-2.0 (https://github.com/openssl/openssl/blob/master/LICENS
 ASIO (https://github.com/chriskohlhoff/asio)
 Licensed under BSL-1.0 (https://github.com/chriskohlhoff/asio/blob/asio-1-18-1/asio/LICENSE_1_0.txt)
 
-automake (https://packages.ubuntu.com/jammy/automake)
-1995-2013, Free Software Foundation, Inc
-Licensed under GPL-2.0-or-later (http://changelogs.ubuntu.com/changelogs/pool/main/a/automake-1.16/automake-1.16_1.16.5-1.3/copyright)
+Google Benchmark (https://github.com/google/benchmark)
+Copyright 2015 Google Inc. All rights reserved.
+Licensed under Apache-2.0 (https://github.com/google/benchmark/blob/v1.9.5/LICENSE)
 
 cURLpp (https://github.com/jpbarrette/curlpp)
 Licensed under MIT (https://github.com/jpbarrette/curlpp/blob/v0.8.1/doc/LICENSE)
 
 cccl (https://github.com/NVIDIA/cccl)
 Copyright (c) NVIDIA CORPORATION; CUB: Copyright (c) 2010-2011 Duane Merrill, 2011-2023 NVIDIA CORPORATION; libc++ portions: Copyright (c) 2009-2019 by contributors listed in libcudacxx/test/CREDITS.TXT (in the source archive)
-Licensed under Apache-2.0 WITH LLVM-exception AND BSD-3-Clause AND BSL-1.0 AND NCSA AND MIT AND BSD-2-Clause-FreeBSD (https://github.com/NVIDIA/cccl/blob/v3.2.0/LICENSE)
-The source code for CCCL is available at <https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/cccl/cccl-3.2.0.tar.gz>.
+Licensed under Apache-2.0 WITH LLVM-exception AND BSD-3-Clause AND BSL-1.0 AND NCSA AND MIT AND BSD-2-Clause-FreeBSD (https://github.com/NVIDIA/cccl/blob/v3.3.3/LICENSE)
+The source code for CCCL is available at <https://github.com/NVIDIA/cccl/archive/refs/tags/v3.3.3.tar.gz>.
 
 clang-format (https://pypi.org/project/clang-format/)
 Copyright 2021 Dominic Kempf, Heidelberg University and contributors
 Licensed under Apache-2.0 (https://github.com/ssciwr/clang-format-wheel/blob/main/LICENSE.md)
-
-CLI11 (https://github.com/CLIUtils/CLI11)
-Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/CLIUtils/CLI11/blob/v2.5.0/LICENSE)
 
 cloudpickle (https://github.com/cloudpipe/cloudpickle)
 Copyright (c) 2015, Cloudpickle contributors.
@@ -48,10 +44,6 @@ Licensed under Apache-2.0 (https://github.com/cmake-lint/cmake-lint/blob/632dc76
 codespell (https://pypi.org/project/codespell/)
 Licensed under GPL-2.0-or-later (https://github.com/codespell-project/codespell/blob/master/COPYING)
 
-moodycamel::ConcurrentQueue (https://github.com/cameron314/concurrentqueue)
-Copyright (c) 2013 - 2016 Cameron Desrochers
-Licensed under BSD-2-Clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
-
 coveragepy (https://pypi.org/project/coverage/)
 Licensed under Apache-2.0 (https://github.com/coveragepy/coveragepy/blob/ab3dd57/LICENSE.txt)
 
@@ -59,21 +51,20 @@ cpplint (https://pypi.org/project/cpplint/)
 Copyright (C) 2009 Google Inc.
 Licensed under BSD-3-Clause (https://github.com/cpplint/cpplint/blob/master/LICENSE)
 
+CV-CUDA (https://github.com/CVCUDA/CV-CUDA)
+Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.18.0/LICENSE.md)
+
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
 Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
 
 DLPack (https://github.com/dmlc/dlpack)
-Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
+Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v1.3/LICENSE)
 
 docker-buildx-plugin (https://github.com/docker/buildx)
 Copyright 2013-2017 Docker, Inc.
 Licensed under Apache-2.0 (https://github.com/docker/buildx/blob/master/LICENSE)
-
-eigen (https://gitlab.com/libeigen/eigen)
-Copyright (c) 2006-2025, Eigen authors
-Licensed under MPL-2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.MPL2)
-The source code for Eigen is available at <https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/eigen/eigen-3.4.0.tar.gz>. In compliance with the MPL 2.0 license, you may also obtain a copy of the Source Code Form by reasonable means in a timely manner, at a charge no more than the cost of distribution to the recipient.
 
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
@@ -84,9 +75,13 @@ Licensed under Apache-2.0 (https://github.com/eProsima/Fast-CDR/blob/v2.3.5/LICE
 Fast DDS (https://github.com/eProsima/Fast-DDS)
 Licensed under Apache-2.0 (https://github.com/eProsima/Fast-DDS/blob/v3.4.2/LICENSE)
 
+FlatBuffers (https://github.com/google/flatbuffers)
+Copyright 2014 Google Inc. All rights reserved.
+Licensed under Apache-2.0 (https://github.com/google/flatbuffers/blob/v25.12.19/LICENSE)
+
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
-Licensed under MIT (https://github.com/fmtlib/fmt/blob/12.1.0/LICENSE)
+Licensed under MIT (https://github.com/fmtlib/fmt/blob/12.2.0/LICENSE)
 
 foonathan_memory_vendor (https://github.com/eProsima/foonathan_memory_vendor)
 Licensed under Apache-2.0 (https://github.com/eProsima/foonathan_memory_vendor/blob/v1.3.2/LICENSE)
@@ -100,37 +95,14 @@ Copyright (c) 2002-2006 Marcus Geelnard
 Copyright (c) 2006-2019 Camilla Löwy
 Licensed under Zlib (https://github.com/glfw/glfw/blob/3.4/LICENSE.md)
 
-gRPC (https://github.com/grpc/grpc)
-Copyright 2014 gRPC authors.
-Licensed under Apache-2.0 (https://github.com/grpc/grpc/blob/v1.54.2/LICENSE)
-
 GoogleTest (https://github.com/google/googletest)
 Copyright 2008, Google Inc. All rights reserved.
 Licensed under BSD-3-Clause (https://github.com/google/googletest/blob/v1.17.0/LICENSE)
 
-GXF
-Copyright 2021-2022, NVIDIA CORPORATION
-Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
-Bundled components: yaml-cpp, PyYAML
-
-hwloc (https://github.com/open-mpi/hwloc)
-Copyright © 2004-2006 The Trustees of Indiana University and Indiana University Research and Technology Corporation.  All rights reserved.
-Copyright © 2004-2005 The University of Tennessee and The University of Tennessee Research Foundation.  All rights reserved.
-Copyright © 2004-2005 High Performance Computing Center Stuttgart, University of Stuttgart.  All rights reserved.
-Copyright © 2004-2005 The Regents of the University of California. All rights reserved.
-Copyright © 2009      CNRS
-Copyright © 2009-2016 Inria.  All rights reserved.
-Copyright © 2009-2015 Université Bordeaux
-Copyright © 2009-2015 Cisco Systems, Inc.  All rights reserved.
-Copyright © 2009-2012 Oracle and/or its affiliates.  All rights reserved.
-Copyright © 2010      IBM
-Copyright © 2010      Jirka Hladky
-Copyright © 2012      Aleksej Saushev, The NetBSD Foundation
-Copyright © 2012      Blue Brain Project, EPFL. All rights reserved.
-Copyright © 2013-2014 University of Wisconsin-La Crosse. All rights reserved.
-Copyright © 2015      Research Organization for Information Science and Technology (RIST). All rights reserved.
-Copyright © 2015-2016 Intel, Inc.  All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
+Eclipse iceoryx2 (https://github.com/eclipse-iceoryx/iceoryx2)
+Copyright (c) Contributors to the Eclipse Foundation
+Licensed under Apache-2.0 OR MIT (https://github.com/eclipse-iceoryx/iceoryx2/blob/6ef7c55176a8487ae7ca53c2e0649d5df9a1b3b4/NOTICE.md)
+The source code for Eclipse iceoryx2 is available at <https://github.com/eclipse-iceoryx/iceoryx2/archive/6ef7c55176a8487ae7ca53c2e0649d5df9a1b3b4.tar.gz>.
 
 iproute2 (https://git.kernel.org/pub/scm/network/iproute2/iproute2.git)
 Licensed under GPL-2.0-or-later (https://github.com/iproute2/iproute2?tab=GPL-2.0-1-ov-file#readme)
@@ -171,22 +143,6 @@ Licensed under IJG (https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LIC
 libnuma (https://github.com/numactl/numactl/blob/be8b2225/libnuma.c)
 Copyright (C) 2003,2004,2005,2008 Andi Kleen,SuSE Labs and Cliff Wickman,SGI.
 Licensed under LGPL-2.1-or-later (https://github.com/numactl/numactl/blob/be8b2225/libnuma.c)
-
-libtool (https://www.gnu.org/software/libtool/)
-Copyright (C) 1996-2009 Free Software Foundation, Inc.
-Licensed under GPL-2.0-or-later (http://changelogs.ubuntu.com/changelogs/pool/main/libt/libtool/libtool_2.4.6-14/copyright)
-
-Libtorch (https://github.com/pytorch/pytorch)
-Copyright (c) 2016-present Facebook, Inc (Adam Paszke)
-Copyright (c) 2014-present Facebook, Inc (Soumith Chintala)
-Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
-Copyright (c) 2012-2014 Deepmind Technologies (Koray Kavukcuoglu)
-Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
-Copyright (c) 2011-2013 NYU (Clement Farabet)
-Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
-Copyright (c) 2006 Idiap Research Institute (Samy Bengio)
-Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
-Licensed under BSD-3-Clause (https://github.com/pytorch/pytorch/blob/master/LICENSE)
 
 libv4l (https://packages.ubuntu.com/jammy/libv4l-0)
 Copyright: 2008, 2009, 2010, 2011 Hans de Goede <hdegoede@redhat.com>
@@ -271,11 +227,15 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/186c72d4794ead29527f45ca4a6f59caa7a08caf/LICENSE)
 
 mirrors-clang-format (https://github.com/pre-commit/mirrors-clang-format/)
 Copyright (c) 2021 Anthony Sottile
 Licensed under MIT (https://github.com/pre-commit/mirrors-clang-format/blob/main/LICENSE)
+
+nanobind (https://github.com/wjakob/nanobind)
+Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
+Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICENSE)
 
 net-tools (https://github.com/ecki/net-tools)
 Licensed under GPL-2.0-or-later (https://github.com/ecki/net-tools?tab=GPL-2.0-1-ov-file)
@@ -292,9 +252,9 @@ nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
 Licensed under Apache-2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
 
-NVTX
+NVTX (https://github.com/NVIDIA/NVTX)
 Copyright 2009-2022, NVIDIA CORPORATION
-Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+Licensed under Apache-2.0 WITH LLVM-exception (https://github.com/NVIDIA/NVTX/blob/v3.3.0-c-cpp/LICENSE.txt)
 
 ONNX Runtime (https://github.com/microsoft/onnxruntime)
 Copyright (c) Microsoft Corporation
@@ -324,10 +284,6 @@ pre-commit (https://pypi.org/project/pre-commit/)
 Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
 Licensed under MIT (https://github.com/pre-commit/pre-commit/blob/main/LICENSE)
 
-pybind11 (https://github.com/pybind/pybind11)
-Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/pybind/pybind11/blob/v2.11.1/LICENSE)
-
 pytest-cov (https://github.com/pytest-dev/pytest-cov)
 Copyright (c) 2010 Meme Dough
 Licensed under MIT (https://raw.githubusercontent.com/pytest-dev/pytest-cov/master/LICENSE)
@@ -344,6 +300,18 @@ python-on-whales (https://github.com/gabrieldemarmiesse/python-on-whales)
 Copyright (c) 2020 Gabriel de Marmiesse de Lussan
 Licensed under MIT (https://github.com/gabrieldemarmiesse/python-on-whales/raw/master/LICENSE)
 
+PyTorch (https://github.com/pytorch/pytorch)
+Copyright (c) 2016-present Facebook, Inc (Adam Paszke)
+Copyright (c) 2014-present Facebook, Inc (Soumith Chintala)
+Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
+Copyright (c) 2012-2014 Deepmind Technologies (Koray Kavukcuoglu)
+Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
+Copyright (c) 2011-2013 NYU (Clement Farabet)
+Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
+Copyright (c) 2006 Idiap Research Institute (Samy Bengio)
+Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
+Licensed under BSD-3-Clause (https://github.com/pytorch/pytorch/blob/master/LICENSE)
+
 RAPIDS rapids-cmake (https://github.com/rapidsai/rapids-cmake)
 Copyright (c) 2020-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/v24.12.00/LICENSE)
@@ -352,9 +320,10 @@ rdma-core/ibverbs (https://github.com/linux-rdma/rdma-core)
 Refer to individual files for information on the copyright holders.
 Licensed under Linux-OpenIB (https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT)
 
-RMM (https://github.com/rapidsai/rmm)
-Copyright (c) 2018-2024, NVIDIA CORPORATION.
-Licensed under Apache-2.0 (https://github.com/rapidsai/rmm/blob/branch-24.04/LICENSE)
+reflect-cpp (https://github.com/getml/reflect-cpp)
+Copyright (c) 2023-2025 Code17 GmbH
+Licensed under MIT AND Apache-2.0 WITH LLVM-exception (https://github.com/getml/reflect-cpp/blob/v0.25.0/README.md#license)
+Bundled components: YYJSON, compile-time-regular-expressions, enchantum
 
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
@@ -366,6 +335,12 @@ Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/main/LICEN
 ruff (https://pypi.org/project/ruff/)
 Copyright (c) 2022 Charles Marsh
 Licensed under MIT (https://github.com/astral-sh/ruff/blob/main/LICENSE)
+
+Slang (https://github.com/shader-slang/slang)
+Copyright (c) 2024 Shader Slang Contributors
+Licensed under Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause (https://github.com/shader-slang/slang/blob/v2026.14/LICENSE)
+Bundled components: ankerl unordered_dense, fast_float, glslang, lz4, miniz, SPIRV-Headers, SPIRV-Tools
+The source code for Slang is available at <https://github.com/shader-slang/slang/archive/refs/tags/v2026.14.tar.gz>.
 
 spdlog (https://github.com/gabime/spdlog)
 Copyright (c) 2016 Gabi Melman.
@@ -383,30 +358,9 @@ stb (https://github.com/nothings/stb)
 Copyright (c) 2017 Sean Barrett
 Licensed under MIT (https://github.com/nothings/stb/blob/master/LICENSE)
 
-TinyXML-2 (https://github.com/leethomason/tinyxml2)
-Licensed under Zlib (https://github.com/leethomason/tinyxml2/blob/9.0.0/LICENSE.txt)
-
 tomli (https://pypi.org/project/tomli/)
 Copyright (c) 2021 Taneli Hukkinen
 Licensed under MIT (https://github.com/hukkin/tomli/blob/master/LICENSE)
-
-UCX (https://openucx.org/)
-Copyright (c) 2014-2015      UT-Battelle, LLC. All rights reserved.
-Copyright (c) 2014-2020      NVIDIA corporation & affiliates. All rights reserved.
-Copyright (C) 2014-2015      The University of Houston System. All rights reserved.
-Copyright (C) 2015           The University of Tennessee and The University
-                             of Tennessee Research Foundation. All rights reserved.
-Copyright (C) 2016-2020      ARM Ltd. All rights reserved.
-Copyright (c) 2016           Los Alamos National Security, LLC. All rights reserved.
-Copyright (C) 2016-2020      Advanced Micro Devices, Inc.  All rights reserved.
-Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
-Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
-Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/openucx/ucx/blob/v1.19.0/LICENSE)
-
-UCXX (https://github.com/rapidsai/ucxx)
-Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/rapidsai/ucxx/blob/v0.46.00/LICENSE)
 
 v4l-utils (https://packages.ubuntu.com/jammy/v4l-utils)
 2006-2010 Mauro Carvalho Chehab <mchehab@redhat.com>
@@ -417,22 +371,31 @@ v4l-utils (https://packages.ubuntu.com/jammy/v4l-utils)
 2007      Michel Ludwig <michel.ludwig@gmail.com>
 Licensed under GPL-2.0-or-later (https://github.com/gjasny/v4l-utils/blob/master/COPYING)
 
+Volk (https://github.com/zeux/volk)
+Copyright (c) 2018-2026 Arseny Kapoulkine
+Licensed under MIT (https://github.com/zeux/volk/blob/master/LICENSE.md)
+
 vscode-dev-containers (https://github.com/microsoft/vscode-dev-containers)
 Copyright (c) Microsoft Corporation. All rights reserved.
 Licensed under MIT (https://github.com/microsoft/vscode-dev-containers/blob/v0.245.2/LICENSE)
 
-vulkan-validationlayers (https://packages.ubuntu.com/jammy/vulkan-validationlayers)
-2014-2018 Valve Corporation
-2015-2018 Google, Inc
-2015-2018 The Khronos Group Inc
-2015-2018 LunarG, Inc
-2015-2017 The Android Open Source Project
-2000-2018 Kitware, Inc. and Contributors
-2017      The Glslang Authors
-2007      Matthias Kretz
-2008      Helio Chissini de Castro
-2013      Martin Gräßlin
-Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe/v/vulkan-validationlayers/vulkan-validationlayers_1.3.204.1-1/copyright)
+Vulkan Headers (https://github.com/KhronosGroup/Vulkan-Headers)
+Copyright (c) 2016-2026 The Khronos Group Inc.
+Licensed under Apache-2.0 (https://github.com/KhronosGroup/Vulkan-Headers/blob/main/LICENSE.md)
+
+Vulkan Memory Allocator (https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
+Copyright (c) 2016-2026 Advanced Micro Devices, Inc.
+Licensed under MIT (https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/blob/master/LICENSE.txt)
+
+Vulkan Utility Libraries (https://github.com/KhronosGroup/Vulkan-Utility-Libraries)
+Copyright (c) 2016-2026 The Khronos Group Inc.
+Licensed under Apache-2.0 (https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/main/LICENSE.md)
+
+Vulkan Validation Layers (https://github.com/KhronosGroup/Vulkan-ValidationLayers)
+Copyright (c) 2016-2026 The Khronos Group Inc.
+Licensed under Apache-2.0 AND MIT AND BSD-2-Clause AND BSL-1.0 (https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/vulkan-sdk-1.4.321.0/LICENSE.txt)
+Bundled components: SPIRV-Headers, SPIRV-Tools, Vulkan-Headers, Vulkan-Utility-Libraries, Vulkan Memory Allocator, parallel-hashmap, xxHash, inplace_function (SG14)
+The source code for the Vulkan Validation Layers is available at <https://github.com/KhronosGroup/Vulkan-ValidationLayers/archive/refs/tags/vulkan-sdk-1.4.321.0.tar.gz>.
 
 vulkansdk (https://vulkan.lunarg.com/)
 Copyright (c) 2014-2022 The Khronos Group Inc.
@@ -525,7 +488,11 @@ Licensed under MIT (https://www.x.org/releases/X11R7.7/doc/xorg-docs/License.txt
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.
-Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.8.0/LICENSE)
+Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.9.0/LICENSE)
+
+yyjson (https://github.com/ibireme/yyjson)
+Copyright (c) 2020 YaoYuan <ibireme@gmail.com>
+Licensed under MIT (https://github.com/ibireme/yyjson/blob/0.12.0/LICENSE)
 
 zlib (https://zlib.net/)
 (C) 1995-2026 Jean-loup Gailly and Mark Adler

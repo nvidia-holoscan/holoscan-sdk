@@ -3,320 +3,383 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
-#define HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
+#pragma once
 
+#include <atomic>
+#include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include <holoscan/core/io_context.hpp>
-#include <holoscan/core/io_spec.hpp>
+namespace YAML {
+class Node;
+}  // namespace YAML
+
+#include <holoscan/operators/inference/holoscan_op_inference_export.h>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
-#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
-#include <holoscan/utils/holoinfer_utils.hpp>
+#include <holoscan/core/parameter_schema.hpp>
+#include <holoscan/core/port.hpp>
+#include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/cuda_execution/cuda_green_context_pool.hpp>
+#include <holoscan/cuda_execution/cuda_stream_pool.hpp>
+#include <holoscan/operators/inference/fast_path_eligibility.hpp>
 
-#include <holoinfer.hpp>
+#include <holoinfer/holoinfer.hpp>
 
-namespace HoloInfer = holoscan::inference;
 namespace holoscan::ops {
-/**
- * @brief Inference Operator class to perform single/multi model inference.
- *
- * ==Named Inputs==
- *
- * - **receivers** : multi-receiver accepting `nvidia::gxf::Tensor`(s)
- *   - Any number of upstream ports may be connected to this `receivers` port. The operator
- *     will search across all messages for tensors matching those specified in
- *     `in_tensor_names`. These are the set of input tensors used by the models in
- *     `inference_map`.
- *
- * ==Named Outputs==
- *
- * - **transmitter** : `nvidia::gxf::Tensor`(s)
- *   - A message containing tensors corresponding to the inference results from all models
- *     will be emitted. The names of the tensors transmitted correspond to those in
- *     `out_tensor_names`.
- *
- * ==Parameters==
- *
- * For more details on `InferenceOp` parameters, see
- * [Customizing the Inference
- * Operator](https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/byom#customizing-the-inference-operator)
- * or refer to [Inference](https://docs.nvidia.com/holoscan/sdk-user-guide/operators/inference).
- *
- * - **backend**: Backend to use for inference. Set `"trt"` for TensorRT, `"torch"` for LibTorch
- *   and `"onnxrt"` for the ONNX runtime.
- * - **allocator**: Memory allocator to use for the output.
- * - **inference_map**: Tensor to model map.
- * - **model_path_map**: Path to the ONNX model to be loaded.
- * - **pre_processor_map**: Pre processed data to model map.
- * - **device_map**: Mapping of model (`DataMap`) to GPU ID for inference. Optional.
- * - **dla_core_map**: Mapping of model (`DataMap`) to DLA core index for inference. Optional.
- * - **backend_map**: Mapping of model (`DataMap`) to backend type for inference.
- *   Backend options: `"trt"` or `"torch"`. Optional.
- * - **temporal_map**: Mapping of model (`DataMap`) to a frame delay for model inference. Optional.
- * - **activation_map**: Mapping of model (`DataMap`) to a activation state for model inference.
- *   Optional.
- * - **in_tensor_names**: Input tensors (`std::vector<std::string>`). Optional.
- * - **out_tensor_names**: Output tensors (`std::vector<std::string>`). Optional.
- * - **infer_on_cpu**: Whether to run the computation on the CPU instead of GPU. Optional
- *   (default: `false`).
- * - **parallel_inference**: Whether to enable parallel execution. Optional (default: `true`).
- * - **input_on_cuda**: Whether the input buffer is on the GPU. Optional (default: `true`).
- * - **output_on_cuda**: Whether the output buffer is on the GPU. Optional (default: `true`).
- * - **transmit_on_cuda**: Whether to transmit the message on the GPU. Optional (default: `true`).
- * - **enable_fp16**: Use 16-bit floating point computations. Optional (default: `false`).
- * - **enable_cuda_graphs**: Use CUDA Graphs. Optional (default: `true`).
- * - **dla_core**: The DLA core index to execute the engine on, starts at 0. Set to -1 to disable
- *   DLA. Optional (default: `-1`).
- * - **dla_gpu_fallback**: If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If
- *   this is disabled engine creation will fail if a layer cannot executed on DLA. Optional
- *   (default: `true`).
- * - **is_engine_path**: Whether the input model path mapping is for trt engine files. Optional
- *   (default: `false`).
- * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams. Optional
- *   (default: `nullptr`).
- *
- * ==Device Memory Requirements==
- *
- * When using this operator with a `BlockMemoryPool`, `num_blocks` must be greater than or equal to
- * the number of output tensors that will be produced. The `block_size` in bytes must be greater
- * than or equal to the largest output tensor (in bytes). If `output_on_cuda` is true, the blocks
- * should be in device memory (`storage_type`=1), otherwise they should be CUDA pinned host memory
- * (`storage_type`=0).
- *
- * ==Notes==
- *
- * This operator may launch CUDA kernels that execute asynchronously on a CUDA stream. As a result,
- * the `compute` method may return before all GPU work has completed. Downstream operators that
- * receive data from this operator should either:
- *   - Call `op_input.receive_cuda_stream(<port_name>)` (after calling `receive` for that port) to
- *     synchronize the CUDA stream with the downstream operator's dedicated internal stream before
- *     accessing the data.
- *   - Add a `CudaStreamCondition` to delay scheduling until upstream GPU work has completed.
- *
- * For more details on CUDA stream handling in Holoscan, see:
- * https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling
- */
-class InferenceOp : public holoscan::Operator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(InferenceOp)
 
-  InferenceOp() = default;
+/// @brief Model name -> single string value map (e.g. model path, backend name).
+using InferenceDataMap = std::map<std::string, std::string>;
+
+/// @brief Model name -> ordered list of tensor names map (e.g. per-model input/output tensors).
+using InferenceDataVecMap = std::map<std::string, std::vector<std::string>>;
+
+/// @brief Compile-time-authored configuration for InferenceOp.
+///
+/// Configuration is supplied as one immutable aggregate when the Operator is instantiated on the
+/// authoring Graph (`graph.op<InferenceOp>("name", InferenceOpParams{...})`).
+/// InferenceOp::setup() reads `params()` to dynamically
+/// declare one Input<Tensor>/Output<Tensor> port per configured tensor name (see inference.cpp).
+struct HOLOSCAN_OP_INFERENCE_EXPORT InferenceOpParams {
+  /// Backend to use for inference. Only "trt" is supported by this TensorRT-only module.
+  std::string backend{"trt"};
+  /// Optional per-model backend override map. Every value must be "trt".
+  InferenceDataMap backend_map;
+  /// Map of model name -> path to the model (ONNX source or TensorRT engine file).
+  InferenceDataMap model_path_map;
+  /// Map of model name -> ordered list of input tensor names.
+  InferenceDataVecMap input_map;
+  /// Map of model name -> ordered list of output tensor names.
+  InferenceDataVecMap output_map;
+  /// Per-model TensorRT optimization profile. Map of model_name -> ordered list of "min,opt,max"
+  /// triples (one entry per dynamic dim of one input, in TRT input order). Empty vector for a
+  /// model means "use HoloInfer's default {1,1,1} profile" (existing behavior). This is the
+  /// authoring escape hatch for models whose ONNX declares static input shapes that mismatch
+  /// the default profile (e.g. an input with a fixed non-batch dimension baked into the export).
+  InferenceDataVecMap trt_opt_profile;
+  /// Whether `model_path_map` entries are pre-built TensorRT engine files.
+  bool is_engine_path{false};
+  /// Whether received input tensors are device-resident.
+  bool input_on_cuda{true};
+  /// Whether HoloInfer's output buffers should be device-resident.
+  bool output_on_cuda{true};
+  /// Whether emitted output tensors should be device-resident.
+  bool transmit_on_cuda{true};
+  /// Whether input tensor dimensions may change between compute() calls.
+  bool dynamic_input_dims{false};
+  /// Reserved for a possible future dynamic-output-dims feature; not yet consumed (HoloInfer's
+  /// output dimensions are re-queried every compute() call whenever `dynamic_input_dims` is set,
+  /// which already covers the common case).
+  bool output_dynamic_dims{false};
+  /// Enable TensorRT FP16 engine building with TensorRT versions before 11. Ignored with
+  /// TensorRT 11 and later, which build every network strongly typed: precision follows the
+  /// model's tensor types, so export an FP16 model to get an FP16 engine.
+  bool enable_fp16{false};
+  /// Enable CUDA Graphs capture in the TensorRT backend. When a capture cannot be protected or
+  /// fails, the fallback ladder degrades (and reports) rather than failing — see the fallback
+  /// ladder documentation for the runtime rungs.
+  bool enable_cuda_graphs{true};
+  /// DLA core index to build the engine on; -1 disables DLA.
+  int32_t dla_core{-1};
+  /// @brief Per-model DLA core override. Map of model name -> DLA core index (as a string; e.g.
+  /// `{"detector": "0", "classifier": "1"}`). The value `"-1"` means "run this model on the GPU"
+  /// while other models honor the aggregate-level `dla_core`. When a model is absent from this
+  /// map, it falls back to the aggregate's `dla_core`. Empty (the default) => every model uses
+  /// `dla_core` uniformly, matching pre-existing behavior. Use this for heterogeneous
+  /// multi-model deployments where different models target different DLA cores or a mix of DLA
+  /// and GPU execution.
+  InferenceDataMap dla_core_map;
+  /// If DLA is enabled, allow GPU fallback for layers that cannot run on DLA.
+  bool dla_gpu_fallback{true};
+  /// Run models in parallel (multi-model configurations only).
+  bool parallel_inference{true};
+  /// @brief TensorRT engine-build ceiling on batch dimension. Enforced during ONNX->engine
+  /// conversion: if any optimization profile authored via `trt_opt_profile` requests a batch
+  /// value larger than this ceiling, engine building fails with a clear error. Only consulted
+  /// when a new engine is built from ONNX; ignored for pre-built engines
+  /// (`is_engine_path=true`). Raise when your model or optimization profile needs batches larger
+  /// than 256 (the HoloInfer default).
+  int32_t max_batch_size{256};
+  /// @brief TensorRT engine-build workspace memory ceiling in bytes. Passed to TRT as
+  /// `kWORKSPACE` memory-pool limit during engine construction; tactic selection is bounded by
+  /// this budget, so smaller values yield potentially slower engines but lower peak build-time
+  /// GPU memory. Only consulted when a new engine is built from ONNX; ignored for pre-built
+  /// engines (`is_engine_path=true`). Default is 10 GB (10'000'000'000 bytes), matching
+  /// HoloInfer's historical default. Lower to constrain build memory on smaller GPUs; raise
+  /// only if you observe workspace-limited tactics blocking your best engine plan.
+  std::size_t max_memory{10'000'000'000ULL};
+  /// CUDA stream pool (include/holoscan/cuda_execution/cuda_stream_pool.hpp). Consumed by
+  /// InferenceOp::start(): when present, the pool's acquire() API supplies the dedicated
+  /// per-backend stream(s) used by the fast dispatch paths (kFast: one stream; kParFast/
+  /// kDynParFast: one distinct stream per model). ExecutionContext::cuda_stream() remains the
+  /// stream used for the data-movement copies InferenceOp performs directly and is the stream all
+  /// per-model streams synchronize with via CUDA events. When null, HoloInfer backends fall back
+  /// to their own internally-created stream and kParFast/kDynParFast demote to kSeqFast/
+  /// kDynSeqFast with an explicit warning (fallback ladder case B_STREAM_POOL_INSUFFICIENT).
+  std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool;
+  /// CUDA green-context pool (include/holoscan/cuda_execution/cuda_green_context_pool.hpp).
+  /// Consumed by InferenceOp::start(): when present, the pool's default partition
+  /// CUcontext/SM-count are threaded through to HoloInfer (InferenceSpecs::build_cuda_context_ /
+  /// build_sm_count_) so TensorRT engine building and tactic selection are constrained to that SM
+  /// partition for every configured model. There is no per-model partition map on this aggregate,
+  /// so all models share the pool's default partition. When null, TensorRT engine building uses
+  /// the full GPU. The pool is also what unlocks the top rung of the fallback ladder (green-context
+  /// isolation of concurrent CUDA-Graph capture); a pool with fewer partitions than models
+  /// degrades with an explicit warning (case C_GREEN_CONTEXT_PARTITIONS_INSUFFICIENT).
+  std::shared_ptr<holoscan::CudaGreenContextPool> cuda_green_context_pool;
+
+  /// @brief Loads an `InferenceOpParams` aggregate from a YAML file.
+  ///
+  /// The YAML schema is 1:1 with the fields of this struct:
+  ///
+  /// ```yaml
+  /// model_path_map: {model_a: /path/to/model_a.onnx}
+  /// backend: trt                      # default: "trt"
+  /// backend_map: {model_a: trt}       # optional per-model override
+  /// input_map: {model_a: [input_tensor]}
+  /// output_map: {model_a: [output_tensor]}
+  /// trt_opt_profile: {model_a: ["1,4,8"]}  # optional; "min,opt,max" per dynamic dim
+  /// is_engine_path: false
+  /// input_on_cuda: true
+  /// output_on_cuda: true
+  /// transmit_on_cuda: true
+  /// enable_cuda_graphs: true
+  /// enable_fp16: false
+  /// dla_core: -1
+  /// dla_core_map: {model_a: "0", model_b: "-1"}  # optional per-model DLA core override
+  /// dla_gpu_fallback: true
+  /// parallel_inference: false
+  /// max_batch_size: 256                          # TRT engine-build batch ceiling
+  /// max_memory: 10000000000                      # TRT engine-build workspace budget (bytes)
+  /// dynamic_input_dims: false
+  /// output_dynamic_dims: false
+  /// # Optional: constructs a real CudaStreamPool when present.
+  /// cuda_stream_pool:
+  ///   max_size: 4
+  /// # Optional: constructs a real CudaGreenContextPool when present.
+  /// cuda_green_context_pool:
+  ///   num_partitions: 2
+  ///   device_id: 0
+  ///   sms_per_partition: [8, 8]   # required when num_partitions >= 2; length must equal
+  ///                               # num_partitions; each entry is the SM count for that partition
+  ///                               # and must be a multiple of the device's structured_sm_quantum.
+  /// ```
+  ///
+  /// Every top-level key is optional except `model_path_map`, `input_map`, and `output_map`;
+  /// absent scalar/bool keys fall back to the member's in-class default shown above. The
+  /// `cuda_stream_pool` and `cuda_green_context_pool` sub-maps are the only keys that construct
+  /// real resource objects (`holoscan::CudaStreamPool` / `holoscan::CudaGreenContextPool`,
+  /// respectively) rather than populating a plain-data field; when a sub-map is absent, the
+  /// corresponding `shared_ptr` member stays null, matching a default-constructed
+  /// `InferenceOpParams`.
+  ///
+  /// @param path Path to a YAML file matching the schema above.
+  /// @return The populated `InferenceOpParams`.
+  /// @throws std::runtime_error if the file cannot be read/parsed, or a required key
+  ///   (`model_path_map`, `input_map`, `output_map`) is missing.
+  [[nodiscard]] static InferenceOpParams from_yaml(std::string_view path);
+
+  /// @brief Load an `InferenceOpParams` aggregate from an already-parsed YAML sub-node.
+  ///
+  /// Use this when a single YAML file configures multiple operators — each operator's
+  /// parameters live under a named key at the file's root. `from_yaml_node()` reads that
+  /// subtree and produces the aggregate; `config_dir` is the directory that relative
+  /// `model_path_map` paths resolve against (typically the parent of the YAML file that
+  /// `node` was loaded from).
+  ///
+  /// ```yaml
+  /// # multi_op_app.yaml — three operators in one file
+  /// primary_inference:                 # →
+  /// InferenceOpParams::from_yaml_node(root["primary_inference"], dir) model_path_map: {model_a:
+  /// models/model_a.onnx} input_map:  {model_a: [tensor_in]} output_map: {model_a: [logits]}
+  ///   enable_cuda_graphs: true
+  /// secondary_inference:               # → a second InferenceOpParams
+  ///   model_path_map: {model_b: models/model_b.onnx}
+  ///   input_map:  {model_b: [logits]}
+  ///   output_map: {model_b: [prediction]}
+  /// other_operator:                    # → some other operator's own from_yaml_node
+  ///   ...
+  /// ```
+  ///
+  /// The subtree schema below the named key is identical to what `from_yaml()` accepts at the
+  /// root — the same required + optional keys and the same behavior for absent keys.
+  ///
+  /// `from_yaml(path)` is now a thin wrapper: it loads the file, uses the file's parent as
+  /// `config_dir`, and calls `from_yaml_node(root, parent)`. Existing single-op YAMLs (where
+  /// the file's root is the InferenceOp's section) keep working unchanged.
+  ///
+  /// @param node YAML node containing the InferenceOp parameter subtree (as documented above).
+  /// @param config_dir Directory used to resolve relative `model_path_map` paths. Absolute paths
+  ///   pass through unchanged.
+  /// @return The populated `InferenceOpParams`.
+  /// @throws std::runtime_error if a required key (`model_path_map`, `input_map`, `output_map`)
+  ///   is missing from `node`.
+  [[nodiscard]] static InferenceOpParams from_yaml_node(const YAML::Node& node,
+                                                        const std::filesystem::path& config_dir);
+};
+
+/// @brief Partial `HOLOSCAN_PARAM_SCHEMA` for `InferenceOpParams`.
+///
+/// Known limitation: `holoscan::field<>` (parameter_schema.hpp) has no `std::map` field kind, so
+/// `InferenceDataMap`/`InferenceDataVecMap` (which back `model_path_map`, `input_map`,
+/// `output_map`, `backend_map` — the fields that determine `InferenceOp`'s port topology) and the
+/// `shared_ptr`-held resources (`cuda_stream_pool`, `cuda_green_context_pool`) cannot
+/// be listed below. This schema is therefore declared `.partial()`, covering only the
+/// scalar/bool/string fields, so `param_schema_availability<InferenceOpParams>()` reports
+/// `kDeclared` rather than `kOpaqueLocal`.
+HOLOSCAN_PARAM_SCHEMA(
+    InferenceOpParams, holoscan::param_schema("holoscan.inference.InferenceOpParams", 1).partial(),
+    holoscan::field<&InferenceOpParams::backend>("backend"),
+    holoscan::field<&InferenceOpParams::is_engine_path>("is_engine_path"),
+    holoscan::field<&InferenceOpParams::input_on_cuda>("input_on_cuda"),
+    holoscan::field<&InferenceOpParams::output_on_cuda>("output_on_cuda"),
+    holoscan::field<&InferenceOpParams::transmit_on_cuda>("transmit_on_cuda"),
+    holoscan::field<&InferenceOpParams::dynamic_input_dims>("dynamic_input_dims"),
+    holoscan::field<&InferenceOpParams::output_dynamic_dims>("output_dynamic_dims"),
+    holoscan::field<&InferenceOpParams::enable_fp16>("enable_fp16"),
+    holoscan::field<&InferenceOpParams::enable_cuda_graphs>("enable_cuda_graphs"),
+    holoscan::field<&InferenceOpParams::dla_core>("dla_core"),
+    holoscan::field<&InferenceOpParams::parallel_inference>("parallel_inference"),
+    holoscan::field<&InferenceOpParams::max_batch_size>("max_batch_size"),
+    holoscan::field<&InferenceOpParams::max_memory>("max_memory"));
+
+/// @brief Inference Operator class to perform single/multi model TensorRT inference.
+///
+/// This is a TensorRT-only build of InferenceOp, built on the Holoscan Operator/port model. See
+/// InferenceOpParams for the retained configuration surface.
+///
+/// ==Ports==
+///
+/// This operator declares one `Input<Tensor>` per *external* input tensor name found in
+/// `input_map` and one `Output<Tensor>` per *external* output tensor name found in `output_map`,
+/// named after the tensor. Ports are declared dynamically in setup() from the params() aggregate.
+///
+/// A tensor name that is both an `output_map` value (for one model) and an `input_map` value (for
+/// another model) is a "chained" tensor -- an internal handoff between models managed entirely by
+/// HoloInfer's own execution plan (see the fallback ladder's `H_CHAINED_MODELS` case below), not an
+/// external port. No `Input<Tensor>`/`Output<Tensor>` port is declared for it: declaring both would
+/// be rejected by the compiler (`kDuplicateName`, since the same tensor name would otherwise back
+/// both an input and an output port on this operator).
+///
+/// ==Dispatch selection and the fallback ladder==
+///
+/// start() auto-selects the fastest safe dispatch path for the configuration (see
+/// fast_path_eligibility.hpp for the seven DispatchKind values and the eligibility rule) and then
+/// runs it through the fallback ladder in fallback_ladder.hpp
+/// (`inference_eligibility::resolve_dispatch_with_fallback()`). The ladder degrades one documented
+/// rung at a time — green-context isolation -> mutex-based capture protection -> parallel without
+/// CUDA graphs ->
+/// sequential fast path -> single-model fast path -> kStandard — until it reaches a configuration
+/// that is guaranteed to run. **start() never refuses to start because of a dispatch/capture
+/// configuration**, and no degradation is silent: each rung emits an INFO or WARN block of the form
+///
+/// ```
+/// InferenceOp/HoloInfer: fallback triggered — <REASON_KEY>
+///     requested: <dispatch> + <capture protection>
+///     using:     <dispatch> + <capture protection>
+///     reason:    <why>
+///     fix:       <user-side suggestion, or "none">
+/// ```
+///
+/// naming which primary path was rejected, what replaced it, why, and how to get the faster path
+/// back. Runtime-only degradations raised inside HoloInfer (a failed green-context push, a failed
+/// CUDA-graph capture setup or replay, a blocking stream swapped out from under CUDA Graphs) use
+/// the same format. `modules/inference/README.md`, section "Fallback ladder", documents all
+/// fallback triggers, what causes them, and how to avoid each one.
+class HOLOSCAN_OP_INFERENCE_EXPORT InferenceOp : public holoscan::Operator<InferenceOpParams> {
+ public:
+  InferenceOp() = delete;
+
+  /// @brief Construct InferenceOp with its final `InferenceOpParams` already bound.
+  ///
+  /// @param params The operator's final configuration.
+  /// @throws RuntimeError if `params` fails aggregate validation.
+  explicit InferenceOp(InferenceOpParams params);
 
   void setup(OperatorSpec& spec) override;
-  void initialize() override;
   void start() override;
-  void compute(InputContext& op_input, OutputContext& op_output,
-               ExecutionContext& context) override;
   void stop() override;
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override;
 
-  /**
-   * DataMap specification
-   */
-  struct DataMap {
-    DataMap() = default;
-    explicit operator bool() const noexcept { return !mappings_.empty(); }
-    void insert(const std::string& key, const std::string& value) { mappings_[key] = value; }
+  /// @brief Trigger only once every configured input tensor has an aligned head sample.
+  ///
+  [[nodiscard]] Contract contract() const override;
 
-    std::map<std::string, std::string> get_map() const { return mappings_; }
+  /// @brief Look up one of the dynamically-declared input ports by tensor name (see the class
+  /// doc comment: one `Input<Tensor>` per *external* `input_map` tensor name).
+  ///
+  /// @param tensor_name Input tensor name (an `input_map` value).
+  /// @return Pointer to the port, or nullptr if `tensor_name` is not configured, or is an internal
+  ///   chained tensor with no external port (see the class doc comment).
+  [[nodiscard]] Input<Tensor>* input_port(const std::string& tensor_name) const {
+    auto it = input_port_map_.find(tensor_name);
+    return it == input_port_map_.end() ? nullptr : it->second;
+  }
 
-    std::map<std::string, std::string> mappings_;
-  };
-
-  /**
-   * DataVecMap specification
-   */
-  struct DataVecMap {
-    DataVecMap() = default;
-
-    explicit operator bool() const noexcept { return !mappings_.empty(); }
-    void insert(const std::string& key, const std::vector<std::string>& value) {
-      for (auto const& val : value)
-        mappings_[key].push_back(val);
-    }
-
-    std::map<std::string, std::vector<std::string>> get_map() const { return mappings_; }
-
-    std::map<std::string, std::vector<std::string>> mappings_;
-  };
-
-  // Activation input specification
-  using ActivationSpec = holoscan::inference::ActivationSpec;
+  /// @brief Output-port counterpart of input_port(); one `Output<Tensor>` per *external*
+  /// `output_map` tensor name (nullptr for an internal chained tensor).
+  [[nodiscard]] Output<Tensor>* output_port(const std::string& tensor_name) const {
+    auto it = output_port_map_.find(tensor_name);
+    return it == output_port_map_.end() ? nullptr : it->second;
+  }
 
  private:
-  ///  @brief Map with key as model name and value as vector of inferred tensor name.
-  ///  YAML key: `inference_map` (legacy). Prefer `output_map` for new code.
-  Parameter<DataVecMap> inference_map_;
-
-  ///  @brief NEW preferred name for `inference_map`. YAML key: `output_map`.
-  ///  When both are provided, `output_map` takes precedence.
-  Parameter<DataVecMap> output_map_;
-
-  ///  @brief Map with key as model name and value as model file path
-  Parameter<DataMap> model_path_map_;
-
-  ///  @brief Map with key as model name and value as vector of input tensor names.
-  ///  YAML key: `pre_processor_map` (legacy). Prefer `input_map` for new code.
-  Parameter<DataVecMap> pre_processor_map_;
-
-  ///  @brief NEW preferred name for `pre_processor_map`. YAML key: `input_map`.
-  ///  When both are provided, `input_map` takes precedence.
-  Parameter<DataVecMap> input_map_;
-
-  /// @brief Map with key as model name and value as GPU ID for inference
-  Parameter<DataMap> device_map_;
-
-  /// @brief Map with key as model name and value as DLA core ID for inference
-  Parameter<DataMap> dla_core_map_;
-
-  /// @brief Map with key as model name and value as frame delay for model inference
-  Parameter<DataMap> temporal_map_;
-
-  /// @brief Map with key as model name and value as an activation state for model inference
-  Parameter<DataMap> activation_map_;
-
-  ///  @brief Input tensor names
-  Parameter<std::vector<std::string>> in_tensor_names_;
-
-  ///  @brief Output tensor names
-  Parameter<std::vector<std::string>> out_tensor_names_;
-
-  /// @brief Optimization profile for models with dynamic input shapes
-  Parameter<DataVecMap> trt_opt_profile_;
-
-  ///  @brief Memory allocator
-  Parameter<std::shared_ptr<Allocator>> allocator_;
-
-  ///  @brief Flag to enable inference on CPU (only supported by ONNX Runtime and LibTorch).
-  /// Default is False.
-  Parameter<bool> infer_on_cpu_;
-
-  ///  @brief Flag to enable parallel inference. Default is True.
-  Parameter<bool> parallel_inference_;
-
-  ///  @brief Flag showing if input buffers are on CUDA. Default is True.
-  Parameter<bool> input_on_cuda_;
-
-  ///  @brief Flag showing if output buffers are on CUDA. Default is True.
-  Parameter<bool> output_on_cuda_;
-
-  ///  @brief Flag showing if data transmission is on CUDA. Default is True.
-  Parameter<bool> transmit_on_cuda_;
-
-  ///  @brief Flag showing if input dimensions are dynamic. Default is False.
-  Parameter<bool> dynamic_input_dims_;
-
-  ///  @brief Flag showing if trt engine file conversion will use FP16. Default is False.
-  Parameter<bool> enable_fp16_;
-
-  ///  @brief Flag showing if using CUDA Graphs. Default is True.
-  Parameter<bool> enable_cuda_graphs_;
-
-  /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to
-  /// disable DLA.
-  Parameter<int32_t> dla_core_;
-
-  /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
-  /// disabled, engine creation will fail if a layer cannot executed on DLA.
-  Parameter<bool> dla_gpu_fallback_;
-
-  ///  @brief Flag to show if input model path mapping is for cached trt engine files. Default is
-  ///  False.
-  Parameter<bool> is_engine_path_;
-
-  ///  @brief Backend to do inference on. Supported values: "trt", "torch", "onnxrt".
-  Parameter<std::string> backend_;
-
-  ///  @brief Backend map. Multiple backends can be combined in the same application.
-  ///  Supported values: "trt" or "torch"
-  Parameter<DataMap> backend_map_;
-
-  ///  @brief Optional CUDA stream pool for allocation of an internal CUDA stream if none is
-  ///  available in the incoming messages.
-  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
-
-  // Internal state
-
   /// Pointer to inference context.
-  std::unique_ptr<HoloInfer::InferContext> holoscan_infer_context_;
+  std::unique_ptr<holoscan::inference::InferContext> holoscan_infer_context_;
 
-  /// Pointer to inference specifications
-  std::shared_ptr<HoloInfer::InferenceSpecs> inference_specs_;
+  /// Pointer to inference specifications.
+  std::shared_ptr<holoscan::inference::InferenceSpecs> inference_specs_;
 
-  /// Map holding dimensions per model. Key is model name and value is a vector with
-  /// dimensions.
-  std::map<std::string, std::vector<int>> dims_per_tensor_;
-
-  /// @brief Model inputs to be passed to the inference context
+  /// @brief External input tensor names (consumed but not produced by any configured model) --
+  /// i.e. excluding internal/chained tensors. One `Input<Tensor>` port is declared per entry.
   std::vector<std::string> model_inputs_;
-  /// @brief Model outputs to be passed to the inference context
+  /// @brief External output tensor names (produced but not consumed by any configured model) --
+  /// i.e. excluding internal/chained tensors. One `Output<Tensor>` port is declared per entry.
   std::vector<std::string> model_outputs_;
-  /// @brief Transmit outputs to be passed to the inference context
-  std::vector<std::string> transmit_outputs_;
 
-  /// Operator Identifier, used in reporting.
+  /// Operator identifier, used in reporting.
   const std::string module_{"Inference Operator"};
 
-  /// @brief Parameter to validate incoming tensor dimensions with model input dimensions
+  /// Stable storage for dynamically-declared ports (deque keeps element addresses stable across
+  /// growth, which OperatorSpec::input()/output() requires).
+  std::deque<Input<Tensor>> input_ports_;
+  std::deque<Output<Tensor>> output_ports_;
+
+  /// Name -> port lookup used by the glue layer in holoinfer_utils.
+  std::map<std::string, Input<Tensor>*> input_port_map_;
+  std::map<std::string, Output<Tensor>*> output_port_map_;
+
   bool validate_tensor_dimensions_ = true;
 
-  /// Persistent cache for the output GXF entity and per-tensor allocation metadata.
-  /// Avoids creating a new entity and allocating tensor buffers on every compute() call.
-  holoscan::utils::TensorTransmitCache transmit_cache_;
-
-  // @brief Cache of static output dimensions populated on first compute() call.
-  std::map<std::string, std::vector<std::vector<int64_t>>> cached_output_dims_;
-  bool cached_output_dims_valid_ = false;
-
-  // @brief Cache for the cached variant of data per model. When the operator is
-  // configured with dynamic_input_dims_ == false, this cache lets us skip dtype validation,
-  // dims rebuild and per-tensor map find/insert on every compute() call.
-  holoscan::utils::TensorExtractCache extract_cache_;
-
-  // @brief Cached single-model name used by the single-model fast paths.
+  /// @brief Cached single-model name used by the single-model fast paths (kFast / kDynFast).
   std::string fast_single_model_name_;
 
-  // @brief Seven-state dispatch enum. Selected automatically at start() from
-  // the operator's existing configuration (backend, model count, parallel_inference,
-  // dynamic_input_dims, activation_map, temporal_map, device_map).
-  // Fast paths are enabled ONLY when every model uses the "trt" backend and no
-  // advanced feature (activation_map / temporal_map / multi-GPU device_map) is in use.
-  //   STATIC-shape fast paths:
-  //     - kFast       : single-model, static shape
-  //     - kSeqFast    : multi-model, static shape, sequential
-  //     - kParFast    : multi-model, static shape, parallel
-  //   DYNAMIC-shape fast paths (chosen when dynamic_input_dims_ is true):
-  //     - kDynFast    : single-model, dynamic shape
-  //     - kDynSeqFast : multi-model, dynamic shape, sequential
-  //     - kDynParFast : multi-model, dynamic shape, parallel
-  //   Fallback:
-  //     - kStandard   : canonical execute_inference (handles non-TRT backends and
-  //                     advanced features)
-  enum class DispatchKind {
-    kFast,
-    kSeqFast,
-    kParFast,
-    kDynFast,
-    kDynSeqFast,
-    kDynParFast,
-    kStandard
-  };
-  DispatchKind dispatch_kind_ = DispatchKind::kStandard;
+  /// @brief Dispatch kind auto-selected in start() from the operator's configuration. See
+  /// fast_path_eligibility.hpp for the selection rule.
+  inference_eligibility::DispatchKind dispatch_kind_ =
+      inference_eligibility::DispatchKind::kStandard;
 
-  // @brief Snapshot of Parameter<bool>s read on the per-compute() call path.
-  bool cached_input_on_cuda_ = true;
-  bool cached_output_on_cuda_ = true;
-  bool cached_transmit_on_cuda_ = true;
-  bool cached_dynamic_input_dims_ = false;
+  /// @brief Streams leased from `cuda_stream_pool` for the lifetime of the operator. Pre-sized in
+  /// start() to `n_streams_needed` (1 for kFast, N for kParFast/kDynParFast) and slotted into by
+  /// index from `allocate_cuda_stream`'s callback (see inference.cpp). HoloInfer may invoke that
+  /// callback from multiple threads for kParFast/kDynParFast, so slots are claimed via
+  /// `stream_lease_idx_` rather than via `push_back`, which would race concurrent callers.
+  /// Each slot is `std::optional` because `StreamLease` cannot be safely default-constructed —
+  /// a default-constructed lease has no owning pool and its destructor would trip on release.
+  /// Leases are returned to the pool in stop()/destruction.
+  std::vector<std::optional<holoscan::CudaStreamPool::StreamLease>> stream_leases_;
 
-  // @brief Cached last upstream CUDA stream attached to the transmitter port.
-  cudaStream_t last_set_transmit_stream_ = nullptr;
+  /// @brief Next free index into `stream_leases_`, claimed with `fetch_add` by the
+  /// `allocate_cuda_stream` callback so concurrent HoloInfer-side callers each get a distinct,
+  /// non-overlapping slot without a lock (see M1 in inference.cpp::start()).
+  std::atomic<size_t> stream_lease_idx_{0};
 };
 
 }  // namespace holoscan::ops
-
-#endif /* HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP */

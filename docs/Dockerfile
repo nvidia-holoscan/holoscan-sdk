@@ -15,7 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
     python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# The SDK Camera source-fetch helper declares CMake 4.0 as its minimum.
+# This image is Debian-based; Kitware APT packages target Ubuntu. Keep the
+# CMake package pinned here without adding an Ubuntu APT source to Debian.
+RUN pip3 install --no-cache-dir --break-system-packages cmake==4.2.1
 
 RUN npm install -g fern-api@5.89.3 pnpm@9.15.9
 

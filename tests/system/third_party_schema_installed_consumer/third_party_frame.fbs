@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "third_party_common.fbs";
+
+namespace app3p;
+
+table Frame {
+  sequence: ulong (id: 0);
+  label: string (id: 1);
+  code: FrameCode (id: 2);
+}
+
+root_type Frame;
+file_identifier "3PFR";

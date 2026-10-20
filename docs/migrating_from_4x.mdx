@@ -1,0 +1,351 @@
+If you have built applications with Holoscan SDK 4.x, you already know the
+hard parts: wiring operators into a pipeline, keeping sensors at different
+rates in sync, and tuning schedulers and queue depths until the behavior you
+wanted emerged. Holoscan SDK 5.0 keeps the parts of that model that worked —
+operators, ports, `add_flow()` — and replaces the parts that made timing
+behavior emergent and unverifiable. The result is a smaller, more opinionated
+API: you declare *what* your pipeline needs (rates, alignment, freshness), and
+the framework computes *how* to execute it before the first sample flows.
+
+This page is an orientation map, not a mechanical porting recipe. It pairs
+each 4.x concept with its 5.x replacement, explains what changed in the
+programming model, and is explicit about what 5.x deliberately does not
+replicate. Each section links to the guide page that covers the 5.x concept in
+depth.
+
+If you are porting a Python application, use the dedicated
+[Python migration guide](/holoscan/sdk-user-guide/introduction/migrating-python-from-4x)
+alongside this language-neutral runtime map.
+
+<Note title="You will learn">
+  - How each major 4.x concept (Application/Fragment, Condition, Scheduler,
+    Resource, streams, parameters, lifecycle, exceptions) maps to its 5.x
+    replacement
+  - Why timing moved from runtime conditions into a declared, compiler-checked
+    temporal contract
+  - How the compiled execution plan replaces scheduler selection and tuning
+  - What 5.x intentionally leaves behind, so you do not search for a
+    replacement that does not exist
+</Note>
+
+<Warning>
+  **No automated migration tool exists yet.**
+  The concept-mapping table on this page is the migration contract: it tells
+  you where each piece of a 4.x application goes. This page will grow with
+  worked porting examples across upcoming releases, and the 5.x APIs it
+  references may still evolve.
+</Warning>
+
+## The shape of the change
+
+A 4.x application interleaved structure and timing: you composed operators,
+attached `Condition` objects to control when they ran, picked one of three
+schedulers, and observed the resulting behavior at runtime — often only with
+real hardware attached. Reading the code could not tell you whether the
+pipeline ran at 1 Hz or 10 kHz, because timing was synchronized to hardware
+events and scheduler heuristics rather than expressed declaratively.
+
+5.x separates those concerns into three phases: **compose → compile → run**.
+You compose a [`Graph`](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+of operators, each of which makes three declarations — `setup()` for
+structure, `contract()` for time, `compute()` for work. Then
+`holoscan::compile()` turns the graph into an immutable
+[execution plan](/holoscan/sdk-user-guide/getting-started/compile-and-check):
+thread partitioning, buffer sizing, and CUDA stream assignment are all decided
+and validated before the first activation. Each phase also fails differently:
+authoring errors throw, `compile()` returns a rejected plan you can inspect,
+and the run fails closed. Start with
+[Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts) if the
+three-phase model is new to you.
+
+## Concept map: 4.x to 5.x
+
+| 4.x concept | 5.x replacement | What changes for you |
+| --- | --- | --- |
+| `Application` + `Fragment` | `holoscan::Graph` (nestable, embeddable) | One top-level entity; process partitioning is computed by the compiled plan, not hand-assigned to fragments |
+| `Condition` (`PeriodicCondition`, `CountCondition`, `BooleanCondition`, …) | Temporal contract: trigger + input selection + missing-data policy | Timing intent is declared in `contract()` and validated at compile time |
+| Scheduler (`GreedyScheduler`, `MultiThreadScheduler`, `EventBasedScheduler`) | Compiled `ExecutionPlan` + dispatcher | No scheduler to choose or tune; you declare timing intent, the framework plans execution |
+| GXF resources and allocators (memory pools, unbounded allocators) | Preallocated pools + graph regions | All hot-path memory is sized and reserved before the run; exhaustion is a typed error, not a stall |
+| `InputContext::receive_cuda_stream()` per operator | One ordered compute stream per active execution partition and device by default, with automatic readiness | Received tensors are already ordered on your stream; use the shared process/device policy only when measurements favor serialization |
+| String-keyed parameters + runtime YAML | Typed `Params` struct + `HOLOSCAN_PARAM_SCHEMA` | Parameter errors surface at compile time, not at runtime dispatch |
+| `start()` / `stop()` virtuals | Lifecycle stage callbacks (`start()`/`stop()` remain the simple path) | Your existing overrides port directly; richer stages are opt-in |
+| Exceptions from `compute()` | `holoscan::expected<T, Error>` + `ErrorCode` | Hot-path failures are values you branch on, not stack unwinds |
+
+## Applications and Fragments become Graphs
+
+In 4.x, `Application::compose()` created operators and `add_flow()` connected
+them; `Fragment`s partitioned the application across nodes. In 5.x the graph
+itself is the top-level entity: you subclass `holoscan::Graph`, override
+`compose()`, create operators with `op<T>("name")`, and wire typed port
+references with `add_flow()`. Reuse comes from
+[subgraphs](/holoscan/sdk-user-guide/composing-applications/reusable-graphs):
+a `Graph` subclass with exported ports, embedded into a parent with
+`embed<SubGraph>("name")`. Sources and sinks outside the graph — UI processes,
+loggers, bridges — attach through
+[external topics](/holoscan/sdk-user-guide/composing-applications/external-topics)
+(`import_topic` / `export_topic`) with the same semantics as internal edges,
+instead of being forced into wrapper operators.
+
+Process partitioning is no longer a hand-drawn fragment boundary: the compiled
+plan assigns operators to process groups and materializes the channels between
+them. See [Graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition)
+for the full authoring surface.
+
+## Conditions become temporal contracts
+
+This is the deepest change. In 4.x, timing was assembled from condition
+objects attached at composition time, and the *interaction* of conditions,
+queue depths, and scheduler policy produced the actual behavior. In 5.x every
+operator declares one [temporal contract](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+— what the runtime must satisfy **before** invoking `compute()`: the
+**trigger** (what causes an activation), **input selection** (which samples
+participate), and the **missing-data policy** (what happens when inputs are
+absent or stale). `compute()` is intentionally oblivious to temporal concerns.
+
+<Tabs>
+<Tab title="4.x — conditions at composition time">
+```cpp
+// Timing lives outside the operator, attached where the graph is composed.
+auto camera = make_operator<CameraOp>(
+    "camera", make_condition<PeriodicCondition>("periodic", 20ms));
+```
+</Tab>
+<Tab title="5.x — a declared contract">
+```cpp
+// From the camera_imu_control example: the operator itself declares
+// its timing, and compilation validates it against the whole graph.
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result.trigger(holoscan::OnClock{.period = 20ms});
+  return result;
+}
+```
+</Tab>
+</Tabs>
+
+Rough correspondences for the common 4.x conditions:
+
+- `PeriodicCondition` → `OnClock{.period = ...}` — a fixed-phase periodic
+  trigger against a declared [clock](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+- Default message-available gating → `OnAnyInput` (fire when any connected
+  input accepts a sample) or `OnEach` (fire once per accepted sample on one
+  input), combined with per-input selectors such as `Exact`, `LatestWithin`,
+  `DrainAll`, and `BracketedWindow`.
+- Hand-rolled multi-rate synchronization (queue-depth tuning plus
+  message-available thresholds) → `OnAligned` (deterministic FIFO-head
+  alignment across a port set) or `OnWindow` (a bounded pending interval
+  anchored to one input) plus an explicit `on_missing()` policy (`Skip`,
+  `SafeDefault`, `ReuseLast`).
+- `BooleanCondition`-style gating → `OnPredicate`, a bounded predicate
+  evaluated on an input update or clock tick.
+- Asynchronous, event-driven wakeups → the readiness-source triggers:
+  `OnReadable` (file-descriptor readiness), `OnNotified` (counted external
+  notifications), `OnDoorbell` (device-completion doorbell), `OnSpin`
+  (polling edge).
+- A finite-source `CountCondition` use case maps to
+  `contract.trigger(OnClock{...}).complete_after(ComputeCalls{N})`.
+  The completion rule supplies no trigger and supports eligible zero-input
+  producers, not arbitrary inputful operators. It counts successful callbacks,
+  including successful no-op ticks. After the limit, accepted final-call
+  publications are delivered, outputs close, and downstream drains through EOS.
+  `ExecutionContext::request_completion()` instead requests immediate whole-run
+  success without a drain guarantee. See
+  [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+The multi-rate case that took careful queue tuning in 4.x becomes one
+declaration. This is the fusion operator from the
+[camera + IMU example](/holoscan/sdk-user-guide/examples/camera-imu-control),
+aligning periodic camera frames with a high-rate IMU:
+
+```cpp
+result
+    .trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U})
+    .input(camera, holoscan::Exact{})
+    .input(imu, holoscan::BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 16U})
+    .on_missing(imu, holoscan::SafeDefault{});
+```
+<Warning>
+  Do not port 4.x habits by polling or blocking inside `compute()` to wait for
+  data. In 5.x the contract is already satisfied when `compute()` runs — the
+  selected samples are present, chosen, and ordered. A `compute()` that waits
+  for more input is fighting the plan. If your operator needs different
+  samples, change the contract, not the callback. See
+  [Advanced temporal patterns](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns)
+  for contracts beyond the common cases.
+</Warning>
+
+## Schedulers become a compiled plan
+
+4.x shipped three schedulers — greedy, multithread, and event-based — and made
+choosing and tuning one (worker threads, polling intervals) part of your
+application. 5.x has no scheduler selection at all. `holoscan::compile()`
+consumes every operator's contract and produces an `ExecutionPlan`: thread
+partitioning, buffer sizes, CUDA stream assignment, and feasibility checks are
+all resolved before the first activation, and a dispatcher executes that plan
+at run time. If the declared timing cannot be satisfied, `compile()` returns a
+rejected plan with inspectable diagnostics — it does not throw, and it does
+not let the run start.
+
+You can read the plan (`plan.json()`, plus the
+[plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling)) to see exactly
+what the framework decided — the inspectability that 4.x scheduler heuristics
+never offered. How the plan maps onto threads and wake-up policy is covered in
+[the performance model](/holoscan/sdk-user-guide/performance/performance-model).
+
+## Resources and allocators become pools and regions
+
+4.x operators received GXF-backed `Resource` objects — memory pools,
+unbounded allocators — configured per operator, and an unbounded allocator
+could heap-allocate on the hot path. 5.x is bounded by construction: all
+hot-path memory lives in preallocated pools whose sizes the compiled plan
+derives from the declared contracts and connection options. Allocation becomes
+borrowing — `allocate_tensor()` borrows a slot from a preallocated pool, and
+when the pool is exhausted you get `ErrorCode::kResourceExhausted` as a typed,
+testable failure instead of a silent backpressure stall
+([Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101)).
+
+Graph **regions** are the new grouping surface: a named region carries
+backend-neutral constraints — static topology, bounded memory, a latency
+budget — that compilation must prove for every operator inside it. Where 4.x
+resource wiring described *mechanism* (which allocator, which block size),
+regions describe *intent* and let the compiler enforce it.
+
+## Partition compute streams, automatic readiness
+
+In 4.x, each operator that touched CUDA called
+`InputContext::receive_cuda_stream(port)` and got its **own** internal stream;
+the framework synced upstream work in with event record/wait pairs, and every
+operator ran on a distinct stream. It worked, but stream plumbing was part of
+every GPU operator's job.
+
+5.x instead makes the runtime own **one ordered compute stream per active
+execution partition and device** by default, exposed as
+`context.cuda_stream()` on the `ExecutionContext` passed to `compute()`.
+Unlike 4.x, this is not one stream per operator: serial operators in a partition
+share their stream, while independent partitions can submit work separately.
+Readiness is automatic in both directions—committing an output records
+readiness on the producer stream, and a received `Tensor` is already ordered
+on your compute stream before `compute()` runs. The compiled plan proves when
+a straight-line producer and consumer have the same final stream and elides
+the event record/wait pair entirely; a default-policy partition boundary keeps
+the fence. The event-based, non-blocking synchronization model you knew from
+4.x is still underneath; you just no longer manage it. See
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+<Warning>
+  **Never call `cudaStreamSynchronize` on the hot path.** In 4.x, defensive
+  stream syncs were a common workaround; in 5.x they are always redundant for
+  device-to-device dataflow and will stall the partition stream for every
+  operator that shares it. Host access is the one place blocking is
+  legitimate, and it is explicit: `synchronize_for_host()` or the
+  `copy_to_host` family — off the hot path.
+</Warning>
+
+## Parameters: from string keys to typed schemas
+
+4.x parameters were string-keyed: `Parameter<T>` members registered under
+names in `setup()`, populated from YAML at runtime, with mistakes surfacing
+only when the string lookup failed. In 5.x an operator's configuration is a
+plain C++ aggregate — `holoscan::Operator<MyParams>` names it as the
+operator's `Params` type — with a schema attached via
+`HOLOSCAN_PARAM_SCHEMA(MyParams, param_schema("id", version), ...field
+clauses...)`. Fields are typed, validated, and versioned; `compute()` reads
+the pinned generation through `context.params<MyParams>()`. Misspelled or
+mistyped configuration is now a compile-time or plan-validation failure, never
+a runtime dispatch surprise. Start with
+[Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
+and go deeper in
+[Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+Note what did **not** carry over: there is no runtime-loadable YAML.
+Configuration is compiled and immutable
+([Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications));
+controlled updates to running parameters exist as an explicit, staged
+mechanism ([Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates)),
+not as a config file re-read.
+
+## Lifecycle: `start()` and `stop()` carry over — and grow stages
+
+Your 4.x `start()` and `stop()` overrides port directly: 5.x keeps both
+virtuals with the same signatures as the simple path, lowering them onto the
+`kStart` and `kStop` checkpoints of a richer staged lifecycle. When an
+operator needs finer-grained cold preparation — validating configuration,
+discovering external capabilities, reserving resources, warming up before
+becoming activatable — it opts into the explicit forward stages (`kConfigure`,
+`kDiscover`, `kAllocate`, `kWarmUp`, `kArm`, `kStart`) and teardown stages
+(`kStop`, `kRelease`) through lifecycle callbacks. If you only ever needed
+`start()`/`stop()`, nothing changes; the stages are there when initialization
+order starts to matter. One rule connects the two paths: an override and an
+advanced callback fill the *same* checkpoint slot, so an operator that
+overrides `start()` cannot also register an advanced `kStart` callback (and
+likewise for `stop()`/`kStop`) — graph authoring rejects the conflict with
+`GRAPH_LIFECYCLE_CALLBACK_DUPLICATE`. Mixing across stages, such as an
+advanced `kStart` with a plain `stop()` override, is valid. See
+[Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).
+
+## Exceptions become error values
+
+In 4.x, a failing operator threw, and the exception unwound through the
+scheduler. In 5.x, `compute()` returns
+`holoscan::expected<void, holoscan::Error>`: failures are values, you branch
+on `ErrorCode` (`kResourceExhausted`, `kNotReady`, `kTimeout`, …), and
+`HOLOSCAN_TRY` keeps propagation terse. Exceptions still exist at genuine
+boundaries — authoring mistakes during composition throw — but the hot path is
+exception-free by design, which is what makes failure behavior testable and
+the runtime's fail-closed policy enforceable. See
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+for the idioms and
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+for how errors surface across the three phases.
+
+## Keep 4.x installed alongside 5.x
+
+The 4.x Debian package installs under `/opt/nvidia/holoscan`, and the 5.x
+packages install under `/usr`. The package names, files, and library versions
+don't overlap, so both can stay installed while you port. CMake searches `/usr`
+before `PATHS` hints, so a 4.x project that calls `find_package(holoscan)`
+resolves to 5.x unless you point it at 4.x:
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/nvidia/holoscan
+```
+
+You can also set `holoscan_DIR` to `/opt/nvidia/holoscan/lib/cmake/holoscan`,
+or request `find_package(holoscan 4.6...<5 REQUIRED)` in the project. The 4.x
+and 5.x Python wheels both install the `holoscan` import package, so install
+them in separate virtual environments.
+
+## What 5.x intentionally does not replicate
+
+Three 4.x capabilities have no 5.x equivalent, by decision rather than
+omission:
+
+- **GXF's general-purpose graph framework ambitions.** 5.x is deliberately
+  opinionated: a periodic sensor-processing runtime, not a generic graph
+  compute substrate. If a 4.x design leaned on GXF extensibility for
+  arbitrary execution models, it needs rethinking in 5.x terms, not a shim.
+- **`CudaStreamCondition`-style pre-dispatch readiness.** 4.x could delay
+  *scheduling* until GPU work completed. 5.x instead inserts the asynchronous
+  wait before your `compute()` touches the tensor — correctness never depends
+  on scheduler-visible GPU readiness, so there is deliberately no such
+  condition to attach.
+- **Runtime-loadable configuration.** There is no equivalent of editing a
+  YAML file and restarting into different behavior without recompiling the
+  plan. Configuration is part of the compiled, immutable artifact.
+
+## Recap
+
+- 4.x structure survives (operators, ports, `add_flow()`); timing moves from
+  runtime conditions and scheduler tuning into declared temporal contracts
+  checked by `compile()`.
+- The compiled execution plan plus dispatcher replaces scheduler selection;
+  memory becomes preallocated pools and constraint-carrying regions.
+- One ordered compute stream per active execution partition and device replaces
+  per-operator `receive_cuda_stream()`, with readiness handled for you; shared
+  process/device streams remain an explicit compatibility and tuning option.
+- Typed `Params` schemas replace string-keyed parameters; `expected`/`Error`
+  replaces hot-path exceptions; `start()`/`stop()` port directly.
+- There is no automated migration tool yet — the mapping table above is the
+  contract, and this page will grow worked examples across upcoming releases.
+
+Next: [Install the SDK](/holoscan/sdk-user-guide/setup/sdk-installation).

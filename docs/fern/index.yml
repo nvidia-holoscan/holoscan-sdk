@@ -1,161 +1,337 @@
 navigation:
   - section: Introduction
+    slug: introduction
     contents:
-      - page: Holoscan SDK Overview
+      - page: Overview
         path: ../overview.mdx
-        # Keep the published /introduction/overview URL that redirects and
-        # external links target, independent of the sidebar title.
         slug: overview
+      - page: Holoscan 5.0 Highlights
+        path: ../holoscan_5_highlights.mdx
+        slug: highlights
       - page: Relevant Technologies
         path: ../relevant_technologies.mdx
-      - page: Getting Started
-        path: ../getting_started.mdx
+        slug: relevant-technologies
+      - page: API Stability
+        path: ../api_stability.mdx
+        slug: api-stability
+      - page: HoloMQ ABI and Exports
+        path: ../holomq_abi_and_exports.mdx
+        slug: holomq-abi-and-exports
+      - page: Schema and Artifact Versions
+        path: ../schema_versioning.mdx
+        slug: schema-and-artifact-versions
+      - page: Migrating from Holoscan SDK 4.x
+        path: ../migrating_from_4x.mdx
+        slug: migrating-from-4x
+      - page: Migrating Python from Holoscan SDK 4.x
+        path: ../migrating_python_from_4x.mdx
+        slug: migrating-python-from-4x
 
   - section: Setup
+    slug: setup
     contents:
       - page: SDK Installation
         path: ../sdk_installation.mdx
+        slug: sdk-installation
       - section: Additional Setup
         path: ../additional_setup.mdx
+        slug: additional-setup
         collapsed: true
         contents:
           - page: Enabling GPUDirect RDMA
             path: ../set_up_gpudirect_rdma.mdx
+            slug: gpudirect-rdma
           - page: Enable G-SYNC
             path: ../enable_gsync.mdx
+            slug: gsync
           - page: Disable variable backlight
             path: ../disable_variable_backlight.mdx
+            slug: variable-backlight
           - page: Enable exclusive display
             path: ../enable_exclusive_display.mdx
+            slug: exclusive-display
           - page: Use iGPU with dGPU
             path: ../use_igpu_with_dgpu.mdx
+            slug: igpu-dgpu
           - page: Optimizing JetPack
             path: ../optimize_jetpack.mdx
-          - page: Deployment stack
-            path: ../deployment_stack.mdx
+            slug: jetpack
+          - page: Installing PyTorch
+            path: ../pytorch_installation.mdx
+            slug: pytorch
       - section: Third Party Hardware Setup
         path: ../third_party_hw_setup.mdx
+        slug: third-party-hardware
         collapsed: true
         contents:
           - page: Holoscan Sensor Bridge
             path: ../holoscan_sensor_bridge.mdx
+            slug: sensor-bridge
 
-  - section: Holoscan CLI
+  - section: Getting Started
+    slug: getting-started
+    path: ../getting_started.mdx
     contents:
-      - page: Holoscan CLI
-        path: ../holoscan_cli.mdx
+      - page: Core Concepts
+        path: ../core_concepts.mdx
+        slug: core-concepts
+      - page: Errors as Values
+        path: ../errors_as_values.mdx
+        slug: errors-as-values
+      - page: Time and Clocks
+        path: ../time_and_clocks.mdx
+        slug: time-and-clocks
+      - page: Writing Your First Operator
+        path: ../first_operator.mdx
+        slug: first-operator
+      - page: Typed Parameters
+        path: ../typed_parameters.mdx
+        slug: typed-parameters
+      - page: Composing a Graph
+        path: ../composing_a_graph.mdx
+        slug: composing-a-graph
+      - page: Compiling a Plan
+        path: ../compile_and_check.mdx
+        slug: compile-and-check
+      - page: Running and Stopping
+        path: ../running_and_stopping.mdx
+        slug: running-and-stopping
+      - page: "Tutorial: Your First Pipeline"
+        path: ../first_pipeline_tutorial.mdx
+        slug: first-pipeline
+      - page: Tensors 101
+        path: ../tensors_101.mdx
+        slug: tensors-101
 
-  - section: Using the SDK
+  - section: Python
+    slug: python
+    path: ../python_overview.mdx
     contents:
-      - page: Holoscan Core
-        path: ../holoscan_core.mdx
-      - page: GPU Resident Execution
-        path: ../gpu_resident.mdx
-      - section: Holoscan by Example
-        path: ../holoscan_by_example.mdx
+      - page: Installation
+        path: ../python_installation.mdx
+        slug: installation
+      - page: Registered Operators
+        path: ../python_registered_operators.mdx
+        slug: registered-operators
+      - page: Graph Configuration
+        path: ../python_graph_configuration.mdx
+        slug: graph-configuration
+      - page: Errors and Diagnostics
+        path: ../python_errors_and_diagnostics.mdx
+        slug: errors-and-diagnostics
+      - page: Running and Signals
+        path: ../python_running_and_signals.mdx
+        slug: running-and-signals
+# build_holoscan_docs.py removes this block from its temporary source-only
+# preview when generated APIs are unavailable. Keep both markers around this folder.
+# holoscan-tokenless-python-api-navigation:begin
+      - folder: ./generated/api-reference/python/holoscan
+        title: API reference
+        slug: api-reference/holoscan
+        availability: beta
         collapsed: true
-        contents:
-          - page: Hello World
-            path: ../examples/hello_world.mdx
-          - page: Ping Simple
-            path: ../examples/ping_simple.mdx
-          - page: Ping Custom Op
-            path: ../examples/ping_custom_op.mdx
-          - page: Ping Multi Port
-            path: ../examples/ping_multi_port.mdx
-          - page: Video Replayer
-            path: ../examples/video_replayer.mdx
-          - page: Video Replayer Distributed
-            path: ../examples/video_replayer_distributed.mdx
-          - page: BYOM
-            path: ../examples/byom.mdx
-          - page: Custom CUDA Kernel Sample
-            path: ../examples/custom_cuda_kernel_sample.mdx
-      - page: Create an Application
-        path: ../holoscan_create_app.mdx
-      - page: Create a Distributed Application
-        path: ../holoscan_create_distributed_app.mdx
-      - page: Create an Operator
-        path: ../holoscan_create_operator.mdx
-      - page: Create an Operator via Decorator
-        path: ../holoscan_create_operator_via_decorator.mdx
-      - page: Create a Condition
-        path: ../holoscan_create_condition.mdx
-      - page: Dynamic Flow Control
-        path: ../holoscan_dynamic_flow_control.mdx
-      - page: CUDA Stream Handling
-        path: ../holoscan_cuda_stream_handling.mdx
+# holoscan-tokenless-python-api-navigation:end
+
+  - section: Building Operators
+    slug: building-operators
+    contents:
+      - page: Operator Anatomy in Depth
+        path: ../operator_anatomy.mdx
+        slug: operator-anatomy
+      - page: Temporal Contracts
+        path: ../temporal_contracts.mdx
+        slug: temporal-contracts
+      - page: Parameter Schemas in Depth
+        path: ../parameter_schemas.mdx
+        slug: parameter-schemas
+      - page: Lifecycle Callbacks
+        path: ../lifecycle_callbacks.mdx
+        slug: lifecycle-callbacks
+
+  - section: Composing Applications
+    slug: composing-applications
+    contents:
+      - page: Graph Composition in Depth
+        path: ../graph_composition.mdx
+        slug: graph-composition
+      - page: CUDA Graph Regions
+        path: ../cuda_graph_regions.mdx
+        slug: cuda-graph-regions
+      - page: Reusable Graph Embedding
+        path: ../reusable_graphs.mdx
+        slug: reusable-graphs
+      - page: External Topic Boundaries
+        path: ../external_topics.mdx
+        slug: external-topics
+
+  - section: Holoscan Modules
+    slug: modules
+    path: ../holoscan_modules.mdx
+    contents:
+      - page: Inference
+        path: ../holoscan_inference.mdx
+        slug: inference
+      - page: Vision
+        path: ../holoscan_vision.mdx
+        slug: vision
+      - page: Visualization
+        path: ../holoscan_visualization.mdx
+        slug: visualization
+
+  - section: Data & Payloads
+    slug: data-and-payloads
+    contents:
+      - page: Payload Type Rules
+        path: ../payload_type_rules.mdx
+        slug: payload-type-rules
+      - page: Schema Payloads
+        path: ../schema_payloads.mdx
+        slug: schema-payloads
+      - page: Sensor Payloads
+        path: ../sensor_payloads.mdx
+        slug: sensor-payloads
+      - page: Custom FlatBuffer Schemas
+        path: ../custom_flatbuffer_schemas.mdx
+        slug: custom-flatbuffer-schemas
+      - page: Tensors in Depth
+        path: ../tensors_in_depth.mdx
+        slug: tensors-in-depth
+
+  - section: Configuration
+    slug: configuration
+    contents:
+      - page: Configuring Applications
+        path: ../configuring_applications.mdx
+        slug: configuring-applications
+
+  - page: Yocto on Jetson
+    path: ../yocto.mdx
+    slug: yocto
+
+  - section: Debugging & Testing
+    slug: debugging-and-testing
+    contents:
+      - page: Understanding Failures
+        path: ../understanding_failures.mdx
+        slug: understanding-failures
       - page: Logging
         path: ../holoscan_logging.mdx
-      - page: Data Logging
-        path: ../holoscan_data_logging.mdx
-      - page: Debugging
-        path: ../holoscan_debugging.mdx
-      - page: Python Operator Bindings
-        path: ../holoscan_create_operator_python_bindings.mdx
-
-  - section: Operators
-    contents:
-      - page: Operators and Extensions
-        path: ../holoscan_operators_extensions.mdx
-      - page: Visualization
-        path: ../visualization.mdx
-      - page: Inference
-        path: ../inference.mdx
+        slug: logging
       - page: Testing
         path: ../testing.mdx
-      - page: Video I/O Vendor Implementation Guide
-        path: ../video_io_vendor_implementation_guide.mdx
+        slug: testing
 
-  - section: Components
+  - section: Performance
+    slug: performance
     contents:
-      - page: Schedulers
-        path: ../components/schedulers.mdx
-      - page: Conditions
-        path: ../components/conditions.mdx
-      - page: Resources
-        path: ../components/resources.mdx
-      - page: Analytics
-        path: ../components/analytics.mdx
+      - page: Performance Model
+        path: ../performance_model.mdx
+        slug: performance-model
+      - page: Channel Benchmarks
+        path: ../benchmarks_channel.mdx
+        slug: channel-benchmarks
+      - page: Core Runtime Benchmarks
+        path: ../benchmarks_core_runtime.mdx
+        slug: core-runtime-benchmarks
+      - page: Performance Considerations
+        path: ../performance_considerations.mdx
+        slug: performance-considerations
+      - page: Nsight Profiling
+        path: ../nsight_profiling.mdx
+        slug: nsight-profiling
 
-  - section: AI Skills
+  - section: Examples
+    slug: examples
     contents:
-      - page: Ai Skills
-        path: ../ai_skills.mdx
+      - page: Holoscan by Example
+        path: ../holoscan_by_example.mdx
+        slug: holoscan-by-example
+      - page: Hello World
+        path: ../examples/hello_world.mdx
+        slug: hello-world
+      - page: Hello Series Tour
+        path: ../examples/hello_tour.mdx
+        slug: hello-tour
+      - page: Camera + IMU Control
+        path: ../examples/camera_imu_control.mdx
+        slug: camera-imu-control
+      - page: Slow/Fast Fusion
+        path: ../examples/slow_fast_fusion.mdx
+        slug: slow-fast-fusion
+      - page: External Clients
+        path: ../examples/external_clients.mdx
+        slug: external-clients
 
 # holoscan-tokenless-api-navigation:begin
   - section: API reference
+    slug: api-reference
     availability: beta
     contents:
       - folder: ./generated/api-reference/cpp/holoscan
         title: C++ API
+        slug: holoscan
         collapsed: true
+      - link: Python API
+        href: /holoscan/sdk-user-guide/python/api-reference/holoscan
+        target: _self
 # holoscan-tokenless-api-navigation:end
 
-  - section: Performance
+  - section: Advanced & Experimental
+    slug: advanced
+    collapsed: true
     contents:
-      - page: Performance Considerations
-        path: ../performance_considerations.mdx
-      - page: Flow Tracking
-        path: ../flow_tracking.mdx
-      - page: GXF Job Statistics
-        path: ../gxf_job_statistics.mdx
-      - page: Nsight Profiling
-        path: ../nsight_profiling.mdx
+      - page: Plan Tooling & CI
+        path: ../plan_tooling.mdx
+        slug: plan-tooling
+      - page: Lifecycle and Restart in Depth
+        path: ../lifecycle_in_depth.mdx
+        slug: lifecycle-in-depth
+      - page: Lifecycle Restart Control
+        path: ../restart_control.mdx
+        slug: restart-control
+      - page: Runtime Parameter Updates
+        path: ../runtime_parameter_updates.mdx
+        slug: runtime-parameter-updates
+      - page: Determinism & Replay
+        path: ../determinism_replay.mdx
+        slug: determinism-and-replay
+      - page: CUDA Green Contexts
+        path: ../green_contexts.mdx
+        slug: cuda-green-contexts
+      - page: Advanced Temporal Patterns
+        path: ../advanced_temporal_patterns.mdx
+        slug: advanced-temporal-patterns
+      - page: Interprocess Channels
+        path: ../interprocess_channels.mdx
+        slug: interprocess-channels
+      - page: Standalone Channel Clients
+        path: ../standalone_channel_clients.mdx
+        slug: standalone-channel-clients
+      - page: Standalone Python Channel Clients
+        path: ../standalone_python_channel_clients.mdx
+        slug: standalone-python-channel-clients
+      - page: Experimental Raw POD Payloads
+        path: ../experimental_pod_payloads.mdx
+        slug: experimental-pod-payloads
 
-  - section: HoloHub
-    contents:
-      - page: HoloHub Overview
-        path: ../holohub_overview.mdx
-
-  - section: FAQ
+  - section: Resources
+    slug: resources
     contents:
       - page: FAQ
         path: ../hsdk_faq.mdx
-
-  - section: Resources
-    collapsed: true
-    contents:
+        slug: faq
+      - page: Glossary
+        path: ../glossary.mdx
+        slug: glossary
+      - page: AI Coding Assistants
+        path: ../ai_coding_agents.mdx
+        slug: ai-coding-agents
+      - page: HoloHub Overview
+        path: ../holohub_overview.mdx
+        slug: holohub
+      - page: Holoscan CLI
+        path: ../holoscan_cli.mdx
+        slug: holoscan-cli
       - link: Developer page
         href: https://developer.nvidia.com/holoscan-sdk
       - link: Support forum

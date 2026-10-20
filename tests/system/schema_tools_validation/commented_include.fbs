@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+include "missing.fbs";
+*/
+include "included.fbs";
+
+namespace schema_tools;
+
+table CommentedIncludeRoot {
+  nested: Included (id: 0);
+}
+
+root_type CommentedIncludeRoot;
+file_identifier "CINC";

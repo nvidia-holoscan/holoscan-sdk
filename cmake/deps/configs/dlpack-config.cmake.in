@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Minimal package config for the header-only dlpack library, installed by the Holoscan SDK. dlpack is
+# a PUBLIC compile dependency of holoscan::core (core/domain/tensor.hpp and dlpack.hpp include
+# <dlpack/dlpack.h>). Its upstream CMake config is not installed because the CPM package is
+# EXCLUDE_FROM_ALL, so this defines the dlpack::dlpack INTERFACE target for installed consumers'
+# find_package(holoscan) -> find_dependency(dlpack). The headers and this config are installed
+# beneath Holoscan-owned paths.
+@PACKAGE_INIT@
+
+if(NOT TARGET dlpack::dlpack)
+  add_library(dlpack::dlpack INTERFACE IMPORTED)
+  set_and_check(_dlpack_include "@PACKAGE_HOLOSCAN_DEPENDENCY_INCLUDE_DIR@")
+  set_target_properties(dlpack::dlpack PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${_dlpack_include}")
+  unset(_dlpack_include)
+endif()

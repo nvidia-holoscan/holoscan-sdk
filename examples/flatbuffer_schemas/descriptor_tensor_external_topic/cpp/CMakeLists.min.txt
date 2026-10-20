@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_descriptor_tensor_external_topic LANGUAGES CXX)
+
+include(CTest)
+
+if(DEFINED HOLOSCAN_TEST_INSTALL_PREFIX AND NOT HOLOSCAN_TEST_INSTALL_PREFIX STREQUAL "")
+    list(PREPEND CMAKE_PREFIX_PATH "${HOLOSCAN_TEST_INSTALL_PREFIX}")
+    find_package(holoscan
+        PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}"
+        NO_DEFAULT_PATH
+        REQUIRED
+    )
+else()
+    find_package(holoscan
+        PATHS
+            "/opt/nvidia/holoscan"
+            "/workspace/holoscan-sdk/install"
+            "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+        REQUIRED
+    )
+endif()
+
+holoscan_add_flatbuffer_schema(
+    TARGET descriptor_tensor_external_topic_generated
+    SCHEMA external_frame.fbs
+    MAX_SERIALIZED_SIZE 512
+)
+
+set(DESCRIPTOR_TOPIC_TARGETS
+    descriptor_tensor_external_topic_graph
+    descriptor_tensor_external_topic_client
+)
+foreach(target IN LISTS DESCRIPTOR_TOPIC_TARGETS)
+    add_executable(${target} "${target}.cpp")
+    target_compile_features(${target} PRIVATE cxx_std_20)
+    target_link_libraries(${target}
+        PRIVATE holoscan::core descriptor_tensor_external_topic_generated)
+    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+endforeach()
+
+if(BUILD_TESTING)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/run_example.py"
+                    --graph $<TARGET_FILE:descriptor_tensor_external_topic_graph>
+                    --client $<TARGET_FILE:descriptor_tensor_external_topic_client>
+        )
+        set_tests_properties(EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST
+            PROPERTIES
+                PASS_REGULAR_EXPRESSION
+                    "descriptor Tensor external-topic round trip complete"
+                LABELS "examples;schema;tensor;multi-tensor;external-topic;interprocess"
+                TIMEOUT 60
+        )
+    endif()
+endif()

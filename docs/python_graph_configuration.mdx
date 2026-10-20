@@ -1,0 +1,93 @@
+Python configuration files are immutable input documents, not hidden global application state. Load
+YAML or JSON explicitly, bind document paths to graph-owned operator handles, and attach one atomic
+parameter transaction to the graph before compilation.
+
+The same registered parameter schema validates inline `graph.op()` keywords and file-backed
+configuration contributions.
+
+<Note title="You will learn">
+  - How to load and bind a YAML or JSON document
+  - What `params.set_params()` attaches and returns
+  - How sparse contributions preserve an operator's authored baseline
+  - Why successful attachment does not imply later plan admission
+</Note>
+
+## Load, bind, and attach
+
+Given a sparse configuration file:
+
+```yaml
+detector:
+  threshold: 9
+  gain: 2.5
+```
+
+author the operator with its complete baseline, then attach the supplied fields:
+
+```python
+import holoscan as hs
+from custom_holoscan.operators import Detector
+
+graph = hs.Graph("configured-pipeline")
+detector = Detector(
+    graph,
+    "detector",
+    threshold=6,
+    gain=1.0,
+    window=8,
+)
+
+document = hs.config.load("app.yaml")
+binding = hs.params.bind(detector, "/detector")
+provenance = hs.params.set_params(graph, document, [binding])
+```
+
+`config.load()` infers YAML or JSON from the filename. For an extensionless file, pass
+`hs.config.Format.YAML` or `hs.config.Format.JSON` explicitly. Binding paths are owning RFC 6901
+JSON Pointers; pass a string or parse one with `hs.config.Path.parse()`.
+
+`params.bind()` records the exact registered operator type and its field routes. `params.set_params()`
+attaches every binding as one transaction to that same graph. A binding from another or retired
+graph is rejected; configuration never floats independently of the graph it changes.
+
+## Preserve sparse baselines atomically
+
+A binding contributes only fields present below its document path. Omitted fields keep the
+operator's authored baseline or schema default. The example therefore changes `threshold` and
+`gain` while retaining `window=8`.
+
+Malformed paths, duplicate contributions, graph mismatches, unsupported manual registration rows,
+and decode failures reject the complete `set_params()` call. No partial attachment survives.
+
+Final constraints that depend on the resolved parameter aggregate are compile-time concerns. A
+successful attachment proves that the sparse transaction is well formed; it does not promise that a
+later compiled plan will be admitted. Inspect the plan as described in
+[Errors and diagnostics](/holoscan/sdk-user-guide/python/errors-and-diagnostics).
+
+## Inspect immutable provenance
+
+Successful attachment returns immutable `SetParamsProvenance`:
+
+```python
+assert provenance.mode is hs.params.RebindMode.SPARSE_CONTRIBUTIONS
+
+for field in provenance.config_fields:
+    print(field.source_path, "->", field.target_operator_path)
+    print(field.target_schema_id, field.target_schema_version)
+    print(field.document.semantic_digest)
+```
+
+Each field record identifies the source JSON Pointer, target operator and schema field, origin,
+source ordinal, and document identity. The returned objects remain useful for audit logs after the
+source `Document` wrapper leaves scope.
+
+Use a document's semantic digest to compare parsed configuration meaning. When raw-source evidence
+is available, its SHA-256 digest and byte size identify the exact loaded artifact separately.
+
+## Recap
+
+- Load an immutable document, bind its paths to handles from one graph, and attach it with
+  `params.set_params()`.
+- Sparse contributions preserve omitted authored values, and attachment is all-or-nothing.
+- Returned provenance records the source-to-target mapping and document identity.
+- Final aggregate admission belongs to compilation, not configuration attachment.

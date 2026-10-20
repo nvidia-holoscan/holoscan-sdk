@@ -1,0 +1,444 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+include(GoogleTest)
+
+add_library(runtime_test_graph_support OBJECT runtime_test_graph.cpp)
+holoscan_configure_test_clang_tidy(runtime_test_graph_support)
+holoscan_apply_logging_policy(runtime_test_graph_support)
+
+target_include_directories(runtime_test_graph_support
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(runtime_test_graph_support
+    PUBLIC
+        holoscan::core
+        Threads::Threads
+)
+
+add_executable(runtime_test
+    ../common/allocation_counter.cpp
+    ../support/direct_port_binding.cpp
+    test_max_start_delay_runtime.cpp
+    test_dispatcher.cpp
+    test_dispatcher_binding.cpp
+    test_endpoint_clock_health.cpp
+    test_endpoint_clock_health_runtime.cpp
+    test_lifecycle_control.cpp
+    parameter_update_test_support.cpp
+    test_parameter_updates.cpp
+    test_parameter_updates_runtime.cpp
+    test_physical_readiness_binding.cpp
+    test_runtime_materialization.cpp
+    test_runtime_fixture_observation.cpp
+    test_runtime_fanout_experiment.cpp
+    test_runtime_notification_source.cpp
+    test_runtime_rate_state.cpp
+    nvtx_emit_marker_capture.cpp
+    runtime_channel_binding_test_support.cpp
+    runtime_channel_binding_schema_tensor_test_support.cpp
+    test_runtime_channel_binding.cpp
+    test_runtime_channel_binding_delivery.cpp
+    test_runtime_channel_binding_fanout.cpp
+    test_runtime_channel_binding_publication.cpp
+    test_runtime_channel_binding_schema_tensor.cpp
+    test_runtime_channel_binding_schema_tensor_catalog.cpp
+    test_runtime_channel_binding_schema_tensor_terminal.cpp
+    test_runtime_channel_binding_schema_transport.cpp
+    test_runtime_channel_binding_tensor_selection.cpp
+    test_tensor_pool_budget.cpp
+    test_tensor_tick_freshness.cpp
+    test_runtime_channel_binding_temporal.cpp
+    test_runtime_channel_binding_freshness.cpp
+    test_runtime_channel_binding_lifecycle.cpp
+    test_runtime_cuda_graph_region_resources.cpp
+    test_runtime_cuda_context_placement.cpp
+    test_runtime_cuda_graph_tensor_resources.cpp
+    test_runtime_scalar_selection.cpp
+    test_borrowed_descriptor_graph.cpp
+    test_image_scratch_codec.cpp
+    test_prepared_schema_ingress.cpp
+    test_prepared_schema_alias.cpp
+    test_prepared_imu_graph.cpp
+    test_prepared_imu_temporal.cpp
+    test_prepared_descriptor_graph.cpp
+    test_prepared_descriptor_ingress.cpp
+    runtime_external_channel_test_support.cpp
+    test_runtime_external_channel.cpp
+    test_runtime_external_channel_export.cpp
+    test_runtime_external_channel_import.cpp
+    test_runtime_external_channel_rebind.cpp
+    test_runtime_external_pod.cpp
+    test_runtime_external_schema.cpp
+    test_runtime_package_capability.cpp
+    test_runtime_partition_execution.cpp
+    test_channel_lifecycle_restart.cpp
+    test_runtime_profile.cpp
+    test_operator_profile_labels.cpp
+    test_reusable_graph_clock.cpp
+    test_retained_tensor_readiness.cpp
+    test_tensor_stream_readiness.cpp
+    test_holomq_tensor_lifetime.cpp
+    test_temporal_freshness.cpp
+    test_runtime_inline_partition_execution.cpp
+    test_runtime_inline_tensor_execution.cpp
+    test_runtime_partition_owner_execution.cpp
+    test_runtime_boundary_causal_chain.cpp
+    runtime_inline_execution_test_support.cpp
+    test_runtime_diagnostic_sink.cpp
+    run_session_channel_execution_test_support.cpp
+    run_session_tensor_test_support.cpp
+    test_run_session.cpp
+    run_session_test_support.cpp
+    test_run_session_completion.cpp
+    test_run_session_diagnostics.cpp
+    test_run_session_fanout.cpp
+    test_run_session_reconstruction.cpp
+    test_runtime_wake_state.cpp
+    test_optional_inputs.cpp
+    test_run_session_channel_execution.cpp
+    test_run_session_cuda_graph.cpp
+    test_run_session_descriptor_output.cpp
+    test_run_session_lane_evidence.cpp
+    test_run_session_plan_ownership.cpp
+    test_run_session_tensor.cpp
+    test_run_session_tensor_completion.cpp
+    test_run_session_tensor_fanout.cpp
+    test_run_session_tensor_green_context.cpp
+    test_run_session_tensor_rate_lifecycle.cpp
+    test_run_session_tensor_stream_lifetime.cpp
+    test_execution_lane.cpp
+    test_foreign_operator.cpp
+
+    $<TARGET_OBJECTS:holoscan_runtime_channel_test_access_objects>
+)
+holoscan_configure_test_clang_tidy(runtime_test)
+holoscan_test_precompile_headers(runtime_test
+    <gtest/gtest.h>
+    <holoscan/core/compile.hpp>
+    <holoscan/core/run.hpp>
+    [["compiler/execution_plan_state.hpp"]]
+)
+# Defines NVTX implementation macros before including NVTX, so it must not see headers early.
+set_source_files_properties(nvtx_emit_marker_capture.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+target_sources(runtime_test
+    PRIVATE
+        test_borrowed_descriptor_cuda.cpp
+        test_prepared_descriptor_cuda.cpp
+        borrowed_descriptor_cuda.cu
+)
+holoscan_apply_logging_policy(runtime_test)
+
+target_include_directories(runtime_test
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(runtime_test
+    PRIVATE
+        holoscan_core_private_archive
+        holoscan::core
+        holoscan::schema
+        holoscan::sensor_io
+        holomq::holomq
+        runtime_test_graph_support
+        prepared_descriptor_schema_generated
+        GTest::gtest_main
+        Threads::Threads
+)
+
+# The long-park freshness test bounds staleness to one 2 ms publication across real 20 ms ticks, and
+# its HoloMQ-delivered arm relies on 1 ms owner scans; parallel CTest load can delay those scans
+# past the bound. Register it by name and run it alone.
+set(runtime_serial_gtest
+    TemporalFreshnessTest.LongParkedDrainAllSideInputSurvivesAPublicationRacingTheTick)
+gtest_discover_tests(runtime_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX RUNTIME.
+    TEST_FILTER "-${runtime_serial_gtest}"
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    PROPERTIES ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
+)
+add_test(NAME RUNTIME.${runtime_serial_gtest}
+    COMMAND runtime_test --gtest_filter=${runtime_serial_gtest}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
+set_tests_properties(RUNTIME.${runtime_serial_gtest} PROPERTIES
+    ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
+    RUN_SERIAL TRUE
+)
+
+# Exercise the exact native benchmark trace parser, including a real stop-before-claim run.
+add_executable(runtime_graph_phase_trace_test
+    test_runtime_graph_phase_trace.cpp
+    ${holoscan_SOURCE_DIR}/benchmark/runtime/runtime_graph_phase_trace.cpp
+)
+holoscan_configure_test_clang_tidy(runtime_graph_phase_trace_test)
+target_include_directories(runtime_graph_phase_trace_test PRIVATE
+    ${holoscan_SOURCE_DIR}/src
+    ${holoscan_SOURCE_DIR}/benchmark/runtime
+)
+target_link_libraries(runtime_graph_phase_trace_test PRIVATE
+    holoscan::core GTest::gtest_main Threads::Threads
+)
+gtest_discover_tests(runtime_graph_phase_trace_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX RUNTIME.
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    PROPERTIES LABELS "runtime;benchmark;phase-trace" TIMEOUT 15
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(runtime_benchmark_signal_admission_test test_benchmark_signal_admission.cpp)
+    holoscan_configure_test_clang_tidy(runtime_benchmark_signal_admission_test)
+    target_include_directories(runtime_benchmark_signal_admission_test
+        PRIVATE ${holoscan_SOURCE_DIR}/benchmark/runtime
+    )
+    target_link_libraries(runtime_benchmark_signal_admission_test
+        PRIVATE holoscan::core GTest::gtest_main Threads::Threads
+    )
+    gtest_discover_tests(runtime_benchmark_signal_admission_test
+        DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX RUNTIME.
+        PROPERTIES LABELS "runtime;signals"
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+
+    add_executable(runtime_signal_process_probe
+        runtime_signal_process_probe.cpp
+        ../support/direct_port_binding.cpp
+    )
+    holoscan_configure_test_clang_tidy(runtime_signal_process_probe)
+    holoscan_apply_logging_policy(runtime_signal_process_probe)
+    target_include_directories(runtime_signal_process_probe
+        PRIVATE
+            ${holoscan_SOURCE_DIR}/src
+            ${holoscan_SOURCE_DIR}/tests
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(runtime_signal_process_probe
+        PRIVATE
+            holoscan::core
+            runtime_test_graph_support
+            Threads::Threads
+    )
+
+    set(managed_signal_scenarios
+        complete
+        sigint
+        sigint-blocked
+        sigterm
+        domain-adopt
+        domain-adopt-spent-retry
+        async-managed
+        domain-required
+        caller-managed
+        async-plain
+        int-int
+        term-term
+        int-term
+        term-int
+        second-ignore
+        second-custom
+        persistent-second-default
+        persistent-second-ignore
+        persistent-second-custom
+        persistent-second-custom-originally-blocked
+        # REQ: RUNTIME-041
+        # REQ: RUNTIME-049
+        automatic-multi-owner-signals
+        automatic-multi-owner-child-failure
+        third-after-escalation-custom
+        asymmetric-mask
+        first-custom-preserved
+        close-after-wait
+        wrong-thread-close
+        owner-busy
+        caller-managed-domain
+        wrong-thread-bind
+        fork-rejected
+        exec-mask-inheritance-and-remedies
+        fork-locked-close-rejected
+        fork-locked-destroy-rejected
+        fork-locked-create-rejected
+        fork-locked-default-run-rejected
+        resource-loop
+        owner-busy-establishing
+        census-changed-during-setup
+        pending-during-establishment
+        pending-establishment-rollback
+        failure-adopt-binding
+        worker-start-failure
+        close-while-bound
+        unbound-destructor
+        generation-monotonic
+        generation-exhaustion
+        invalid-policy
+        failure-setup
+        failure-start-broker
+        failure-broker-task-open
+        failure-setup-cleanup
+        idle-bound-event-driven
+        idle-unbound-event-driven
+        terminal-wake-before-close
+        failure-bound-wait-no-spin
+        failure-unbound-wait-retires
+        failure-notify
+        notify-failure-blocked-controller
+        failure-drain
+        failure-fixed-state
+        failure-wait-cleanup
+        failure-persistent-drain
+        failure-poll
+        failure-read-signal
+        failure-final-drain
+        failure-terminal-release
+        failure-close-signal
+        failure-close-notification
+        failure-restore-mask
+        failure-close-domain
+        failure-join-broker
+        failure-broker-retirement
+        failure-delegate-signal
+        failure-second-restore-mask
+        failure-persistent-second-restore-mask
+        disposition-drift
+        disposition-drift-transient
+        signal-vs-failure
+        signal-vs-requested-completion
+        pending-before-attach
+        broker-thread-directed
+        same-signal-coalesced
+        mixed-signals-pending
+        signal-at-completed-candidate
+        signal-at-failed-candidate
+        signal-after-freeze-forwarded
+        blocked-signal-after-freeze-pending
+        liveness-cooperative
+        liveness-polling
+        liveness-uncooperative
+    )
+    foreach(scenario IN LISTS managed_signal_scenarios)
+        add_test(
+            NAME RUNTIME.RunSession.ManagedSignals.${scenario}
+            COMMAND runtime_signal_process_probe ${scenario}
+        )
+        set_tests_properties(RUNTIME.RunSession.ManagedSignals.${scenario}
+            PROPERTIES
+                LABELS "ea2;runtime;run-session;signals"
+                TIMEOUT 30
+        )
+    endforeach()
+endif()
+
+# REQ: CHAN-103
+add_test(
+    NAME RUNTIME.host_compute_cuda_fast_path
+    COMMAND ${CMAKE_COMMAND}
+        "-DRUN_SESSION_ACTIVATION_SOURCE=${holoscan_SOURCE_DIR}/src/runtime/run_session_activation.cpp"
+        "-DGRAPH_EXEC_HEADER=${holoscan_SOURCE_DIR}/src/runtime/graph_exec.hpp"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_host_compute_cuda_fast_path.cmake
+)
+set_tests_properties(
+    RUNTIME.host_compute_cuda_fast_path
+    PROPERTIES LABELS "runtime;channel;structural"
+)
+
+# Keep the two externally visible production-default parity gates while isolating
+# HoloMQ-backed semantics in fresh processes so one teardown cannot contaminate the next.
+set(parity_prefix holoscan_channel_partition_parity_source_chain)
+set(trigger_test ${parity_prefix}_all_triggers_and_selectors)
+set(cache_test ${parity_prefix}_cache_readiness_metadata_and_epochs)
+set(trigger_semantics
+    ChannelPartitionPlanParityTest.AllTriggersAndSelectors
+    ChannelPartitionPlanParityTest.InputAnyExecutesThroughChannelBinding
+    ChannelPartitionPlanParityTest.InputEachExecutesThroughChannelBinding
+    ChannelPartitionPlanParityTest.ScalarQueuePolicyDoesNotRedefineSelectionAndFreshRunResets
+    RunSessionTest.ChannelInputPredicateMatchesDirectOracleAcrossTheBehaviorMatrix
+    RunSessionTest.ChannelWindowSuccessorKeepsAnchorButUsesLaterActivationTime
+    RunSessionTest.ChannelWindowTimeoutInvokesWithMissingWindowSelection
+    ChannelLifecycleRestart.NextComputeLatestWithinUsesOnePinnedGenerationAcrossSelectorRoutes)
+set(cache_semantics
+    ChannelPartitionPlanParityTest.CacheReadinessMetadataAndEpochs)
+list(JOIN trigger_semantics "|" trigger_semantics_arg)
+list(JOIN cache_semantics "|" cache_semantics_arg)
+add_test(
+    NAME ${trigger_test}
+    COMMAND ${CMAKE_COMMAND}
+        "-DRUNTIME_TEST=$<TARGET_FILE:runtime_test>"
+        "-DSEMANTIC_FILTERS=${trigger_semantics_arg}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_channel_partition_parity.cmake
+)
+add_test(
+    NAME ${cache_test}
+    COMMAND ${CMAKE_COMMAND}
+        "-DRUNTIME_TEST=$<TARGET_FILE:runtime_test>"
+        "-DSEMANTIC_FILTERS=${cache_semantics_arg}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_channel_partition_parity.cmake
+)
+set_tests_properties(
+    ${trigger_test}
+    ${cache_test}
+    PROPERTIES
+        LABELS "runtime;channel;partition-parity"
+)
+
+add_executable(runtime_ready_policy_test
+    ../common/allocation_counter.cpp
+    test_ready_policy.cpp
+)
+holoscan_configure_test_clang_tidy(runtime_ready_policy_test)
+holoscan_apply_logging_policy(runtime_ready_policy_test)
+
+target_include_directories(runtime_ready_policy_test
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(runtime_ready_policy_test
+    PRIVATE
+        holoscan_core_private_archive
+        holoscan::core
+        GTest::gtest_main
+)
+
+gtest_discover_tests(runtime_ready_policy_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX holoscan_runtime_ready_policy_
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
+
+# These assertions need ERROR or WARN output regardless of inherited logger settings.
+foreach(logger_environment IN ITEMS OFF ERROR WARN)
+    add_test(NAME RUNTIME.diagnostic_logger_fixture_isolation_${logger_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_LOG_LEVEL=${logger_environment}"
+            "HOLOSCAN_LOG_FORMAT=inherited: %v"
+            "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
+            $<TARGET_FILE:runtime_test>
+            "--gtest_filter=RunSessionTest.PendingTerminalReportSamplesCurrentAutomaticPolicy:RunSessionTest.ExplicitTerminalReportRemainsAvailableAfterAutomaticOptOut:RunSessionTest.ExplicitHelperReportsPublishedWarningPrefixWithoutWaiting"
+            --gtest_shuffle --gtest_repeat=10
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()
+
+# Verify that an inherited ON/OFF setting in the launcher does not become the
+# immutable policy override in the API-toggle test process.
+foreach(policy_environment IN ITEMS ON OFF)
+    add_test(NAME RUNTIME.diagnostic_policy_toggle_isolation_${policy_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=${policy_environment}"
+            ${CMAKE_COMMAND} -E env --unset=HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING
+            $<TARGET_FILE:runtime_test>
+            "--gtest_filter=RunSessionTest.PendingTerminalReportSamplesCurrentAutomaticPolicy:RunSessionTest.ExplicitTerminalReportRemainsAvailableAfterAutomaticOptOut"
+            --gtest_shuffle --gtest_repeat=10
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()

@@ -1,18 +1,25 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Holoscan AI Coding-Assistant Skills
 
 A growing collection of agent-readable skills that help you install, run, and explore
 the Holoscan SDK from inside an AI coding assistant such as
 [Claude Code](https://www.anthropic.com/claude-code),
+[Codex](https://openai.com/codex/),
 [Cursor](https://cursor.com),
 or [GitHub Copilot CLI](https://github.com/github/copilot-cli).
 Each skill is a self-contained playbook the assistant invokes by name to perform
 a specific task on your behalf — for example, picking an install method that fits
 your platform, then running the install steps and verifying the result.
 
-The canonical home for the skills themselves is the
-[NVIDIA/skills](https://github.com/NVIDIA/skills) repository, where they are
-organized alongside skills from other NVIDIA teams. This directory mirrors a curated
-subset for local visibility.
+The Holoscan team publishes SDK skills in the public
+[Holoscan SDK skills directory](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/skills).
+The [NVIDIA/skills](https://github.com/NVIDIA/skills) catalog mirrors published
+skills from product repositories and makes them discoverable alongside skills
+from other NVIDIA teams.
 
 ## Installation
 
@@ -34,15 +41,32 @@ and integration with multiple assistants — see the
 
 ## What these skills do
 
-Available skills cover a range of Holoscan SDK tasks. Today they focus on
-installing the SDK — walking you through any supported install path (container,
-Debian package, Python wheel, Conda, or from source) and helping you pick the
-one that fits your platform.
+These skills target **Holoscan SDK 5.x**. They help assess your host and choose
+an installation method based on the requested release's available artifacts:
 
-The canonical list of skills — including each skill's full description,
-prerequisites, and versioning — lives in
-[`NVIDIA/skills`](https://github.com/NVIDIA/skills). Run the install command
-above to browse them interactively in the CLI.
+| Skill | Workflow |
+| --- | --- |
+| `holoscan-setup` | Check the host, release availability, and component needs |
+| `holoscan-install-container` | CUDA 13 development container with C++ and Python |
+| `holoscan-install-debian` | Native C++ metapackage or individual components |
+| `holoscan-install-wheel` | Python metapackage or component wheels in a venv |
+| `holoscan-install-source` | Build an explicit 5.x source ref with `./run` |
+| `holoscan-install-conda` | Check release-specific Conda availability and select an alternative |
+
+Holoscan SDK 5.0 has no Conda package. Binary options can be unavailable for a
+requested release; the skills check the selected release before installing and
+offer source when needed. See the
+[SDK installation guide](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation),
+selecting the documentation version that matches your SDK. The
+[checked-in installation guide](../docs/sdk_installation.mdx) provides the
+platform matrix for this checkout.
+
+Each published skill's `SKILL.md` describes its workflow and prerequisites.
+Check its supported SDK versions and platform requirements before using it with
+your SDK version.
+Browse the published collection in
+[`NVIDIA/skills`](https://github.com/NVIDIA/skills), or run the install command
+above to select skills interactively in the CLI.
 
 ## Feedback
 
@@ -73,7 +97,7 @@ route ideas and improvements through the forum link above.
 
 ## What's in this directory
 
-Today this directory contains only this README. The skill content lives in
-[NVIDIA/skills](https://github.com/NVIDIA/skills) and is installed via the `npx`
-command above. As skills stabilize, selected ones may be mirrored here for offline
-browsing.
+Each skill directory contains its `SKILL.md` and supporting artifacts, such as
+evaluation cases, a skill card, benchmark results, and a detached signature
+(`skill.oms.sig`). Keep each published skill package together and preserve its
+signed content when installing or redistributing it.

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "schemas": {
+    "prepared_schema_test.KeywordScalar": {
+      "max_prepared_bytes": 4096,
+      "fields": {
+        "namespace.template": {
+          "max_elements": 4
+        },
+        "namespace.switch": {
+          "max_elements": 2
+        },
+        "namespace.switch[]": {
+          "max_bytes": 64
+        },
+        "namespace.return": {
+          "max_bytes": 64
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "urn:holoscan:module:v2",
+  "module": {
+    "name": "holoscan-visualization",
+    "version": "5.0.0",
+    "description": "Holoscan SDK CUDA/Vulkan visualization module (HoloViz) and the HolovizOp operator",
+    "authors": [
+      {
+        "name": "Holoscan Team",
+        "affiliation": "NVIDIA"
+      }
+    ],
+    "license": "Apache-2.0",
+    "language": [
+      "C++",
+      "Python"
+    ],
+    "namespace": {
+      "cpp": "holoscan::visualization",
+      "python": "holoscan.visualization"
+    },
+    "holoscan_sdk": {
+      "minimum_required_version": "5.0.0",
+      "tested_versions": [
+        "5.0.0"
+      ]
+    },
+    "platforms": [
+      "x86_64",
+      "aarch64"
+    ],
+    "tags": [
+      "Visualization",
+      "Rendering",
+      "Vulkan",
+      "CUDA"
+    ],
+    "source_repository": "https://github.com/nvidia-holoscan/holoscan-sdk",
+    "operator_names": [
+      "HolovizOp"
+    ],
+    "binary_packages": {
+      "debian": "holoscan-visualization",
+      "pypi": "holoscan-visualization-cu13"
+    },
+    "documentation": {
+      "readme": "README.md"
+    }
+  }
+}

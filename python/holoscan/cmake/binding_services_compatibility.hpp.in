@@ -1,0 +1,26 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+
+#include <nanobind/nanobind.h>
+#include <nanobind/nb_platform.h>
+
+namespace holoscan::python {
+
+// Evaluate these ABI dimensions in each extension, so target-local differences also fail closed.
+inline constexpr const char* kBindingServicesCompatibility =
+    "@HOLOSCAN_PYTHON_BINDING_SERVICES_HASH@|" NB_PLATFORM_ABI_TAG "|domain=" NB_DOMAIN_STR
+#if defined(Py_LIMITED_API)
+    "|limited=" NB_TOSTRING(Py_LIMITED_API)
+#else
+    "|limited=none"
+#endif
+#if defined(NB_BACKEND_MODULE)
+    "|backend=" NB_TOSTRING(NB_BACKEND_MODULE)
+#else
+    "|backend=embedded"
+#endif
+    ;
+
+}  // namespace holoscan::python

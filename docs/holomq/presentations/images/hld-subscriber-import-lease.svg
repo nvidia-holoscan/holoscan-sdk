@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="298" viewBox="0 0 960 298" role="img" aria-labelledby="title desc">
+  <title id="title">holomq subscriber import lease flow</title>
+  <desc id="desc">import map and add_ref, ConstBuffer lease, enqueue_ready_wait arms defer, release_ref on stream.</desc>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+  </defs>
+  <style>
+    .b { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #1a1a1a; }
+    .s { font-family: Consolas, Menlo, monospace; font-size: 14px; fill: #0b5394; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <rect x="24" y="24" width="202.5" height="88" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="125.25" y="50" text-anchor="middle" class="b">Context::import_buffer</text>
+  <text x="125.25" y="70" text-anchor="middle" class="s">map handle</text>
+  <text x="125.25" y="90" text-anchor="middle" class="d">add_ref on construct</text>
+
+  <line x1="226.5" y1="68" x2="260.5" y2="68" stroke="#444" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="260.5" y="24" width="202.5" height="88" rx="6" fill="#fff" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="361.75" y="58" text-anchor="middle" class="s">ConstBuffer lease</text>
+  <text x="361.75" y="78" text-anchor="middle" class="d">import ref-count held</text>
+
+  <line x1="463" y1="68" x2="497" y2="68" stroke="#444" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="497" y="24" width="202.5" height="88" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="598.25" y="46" text-anchor="middle" class="b">WaitValue(&gt;=G)</text>
+  <text x="598.25" y="62" text-anchor="middle" class="d">import_buffer or</text>
+  <text x="598.25" y="76" text-anchor="middle" class="d">enqueue_ready_wait</text>
+  <text x="598.25" y="90" text-anchor="middle" class="d">arm defer release_ref</text>
+
+  <line x1="699.5" y1="68" x2="733.5" y2="68" stroke="#444" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="733.5" y="24" width="202.5" height="88" rx="6" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="834.75" y="52" text-anchor="middle" class="b">~ConstBuffer</text>
+  <text x="834.75" y="72" text-anchor="middle" class="d">lease ended locally;</text>
+  <text x="834.75" y="90" text-anchor="middle" class="d">release_ref deferred</text>
+
+  <rect x="24" y="140" width="912" height="138" rx="8" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="480" y="170" text-anchor="middle" class="b">Cross-process SHM ref-count segment</text>
+  <text x="44" y="200" class="d">InboundMessage / BufferHandle copy in payload does not increment ref_count</text>
+  <text x="44" y="224" class="d">Synchronized import_buffer enqueues WaitValue; unsynchronized path uses enqueue_ready_wait</text>
+  <text x="44" y="248" class="d">ref_count 0: no leases remain; deferred release has completed on bound streams</text>
+</svg>

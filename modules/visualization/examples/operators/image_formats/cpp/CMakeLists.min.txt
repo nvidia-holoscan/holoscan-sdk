@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_image_formats LANGUAGES CXX)
+
+find_package(Threads REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+find_package(holoscan COMPONENTS visualization
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+    REQUIRED
+)
+
+if(NOT TARGET holoscan::visualization::op_holoviz)
+    message(FATAL_ERROR
+        "image_formats needs holoscan::visualization::op_holoviz; install the SDK with the "
+        "visualization module enabled (HOLOSCAN_BUILD_VISUALIZATION=ON) including the "
+        "holoscan-visualization component.")
+endif()
+
+add_executable(image_formats
+    image_formats.cpp
+)
+target_compile_features(image_formats PRIVATE cxx_std_20)
+target_link_libraries(image_formats
+    PRIVATE
+        CUDA::cudart
+        holoscan::core
+        holoscan::visualization::op_holoviz
+        Threads::Threads
+)

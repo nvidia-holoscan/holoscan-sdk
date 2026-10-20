@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_contract_selectors LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+add_executable(contract_selectors contract_selectors.cpp)
+target_link_libraries(contract_selectors PRIVATE holoscan::core)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-013
+    add_test(NAME EXAMPLE_CPP_CONTRACT_SELECTORS_TEST COMMAND contract_selectors)
+    set_tests_properties(EXAMPLE_CPP_CONTRACT_SELECTORS_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "\\[selectors\\] assertions=pass"
+            LABELS "examples;temporal-contract"
+            TIMEOUT 30)
+endif()

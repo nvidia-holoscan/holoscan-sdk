@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace native_schema_benchmark;
+
+struct Calibration {
+  scale: float;
+  revision: uint;
+}
+
+table Child {
+  label: string (id: 0);
+}
+
+table Metadata {
+  label: string (id: 0);
+  tags: [string] (id: 1);
+  calibration: Calibration (id: 2);
+  child: Child (id: 3);
+}
+
+// Application-owned descriptor shape, independent of the built-in Image codec.
+table Packet {
+  sequence: ulong (id: 0);
+  label: string (id: 1);
+  readings: [float] (id: 2);
+  tags: [string] (id: 3);
+  metadata: Metadata (id: 4);
+  calibration: Calibration (id: 5);
+  first: holoscan.schema.Tensor (id: 6);
+  second: holoscan.schema.Tensor (id: 7);
+}
+
+root_type Packet;
+file_identifier "NSBM";

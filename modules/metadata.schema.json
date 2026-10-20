@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:holoscan:module:v2",
+  "title": "Holoscan Core Module metadata",
+  "description": "Catalog metadata for an SDK-owned module under modules/. Field names and value constraints match the HoloHub urn:holohub:module:v2 schema so the same file validates in both catalogs.",
+  "type": "object",
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(\\.(0|[1-9]\\d*))*$"
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "C++",
+        "Python",
+        "GXF"
+      ]
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "properties": {
+    "$schema": {
+      "const": "urn:holoscan:module:v2"
+    },
+    "module": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^holoscan-[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "affiliation": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "affiliation"
+            ]
+          }
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "license": {
+          "type": "string"
+        },
+        "language": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/language"
+          }
+        },
+        "namespace": {
+          "type": "object",
+          "properties": {
+            "cpp": {
+              "type": "string"
+            },
+            "python": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "aarch64"
+            ]
+          }
+        },
+        "tags": {
+          "$ref": "#/$defs/string_list"
+        },
+        "holoscan_sdk": {
+          "type": "object",
+          "properties": {
+            "minimum_required_version": {
+              "$ref": "#/$defs/version"
+            },
+            "tested_versions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/version"
+              }
+            }
+          },
+          "required": [
+            "minimum_required_version",
+            "tested_versions"
+          ]
+        },
+        "homepage": {
+          "type": "string",
+          "format": "uri"
+        },
+        "source_repository": {
+          "type": "string"
+        },
+        "operator_names": {
+          "$ref": "#/$defs/string_list"
+        },
+        "binary_packages": {
+          "type": "object",
+          "properties": {
+            "debian": {
+              "type": "string"
+            },
+            "pypi": {
+              "type": "string"
+            },
+            "install_commands": {
+              "$ref": "#/$defs/string_list"
+            }
+          },
+          "required": [
+            "debian"
+          ],
+          "additionalProperties": false
+        },
+        "documentation": {
+          "type": "object",
+          "properties": {
+            "readme": {
+              "type": "string"
+            },
+            "assets": {
+              "$ref": "#/$defs/string_list"
+            }
+          },
+          "required": [
+            "readme"
+          ],
+          "additionalProperties": false
+        },
+        "testing": {
+          "type": "object",
+          "properties": {
+            "cpp": {
+              "enum": [
+                "ctest"
+              ]
+            },
+            "python": {
+              "enum": [
+                "pytest"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "authors",
+        "version",
+        "license",
+        "language",
+        "namespace",
+        "platforms",
+        "tags",
+        "holoscan_sdk",
+        "source_repository",
+        "binary_packages",
+        "documentation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "$schema",
+    "module"
+  ],
+  "additionalProperties": false
+}

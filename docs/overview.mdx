@@ -1,37 +1,189 @@
-[NVIDIA Holoscan](https://developer.nvidia.com/holoscan-sdk) is the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including medical devices, high-performance computing at the edge, industrial inspection, and more.
+NVIDIA Holoscan SDK 5 is a sensor-processing framework for **physical AI** —
+systems such as robots, medical instruments, and industrial inspection lines
+that sense the physical world, run AI on what they sense, and act on the result
+within tight time budgets. It is built for pipelines that combine multiple
+sensors running at different rates and that must hold strict latency bounds
+from sensor input to actuator or display output.
 
-The Holoscan SDK assists developers by providing:
+This page is orientation: what the SDK is, how it is layered, and what ships
+today. For *why* the framework looks the way it does — and what changed for
+developers coming from earlier Holoscan releases — see
+[Highlights](/holoscan/sdk-user-guide/introduction/highlights).
 
-1. **Various installation strategies**
+<Note>
+  **You will learn**
 
-   From containers, to Python wheels, to source, and from development to deployment environments, the Holoscan SDK comes in many packaging flavors to adapt to different needs. Find more information in the [sdk installation](/holoscan/sdk-user-guide/setup/sdk-installation) section.
+  - The class of applications Holoscan SDK 5 targets
+  - The layered picture: a zero-copy transport underneath, an opinionated
+    sensor-processing runtime on top, and domain operator modules to come
+  - The **compose → compile → run** shape of every Holoscan application
+  - What the SDK provides today: a C++ API, examples, and benchmarks
+  - Where each topic is covered in the rest of this guide
+</Note>
 
-2. **C++ and Python APIs**
+## Built for multi-rate sensor pipelines
 
-   These APIs are now the recommended interface for the creation of application pipelines in the Holoscan SDK. See the [Using the SDK](/holoscan/sdk-user-guide/using-the-sdk/holoscan-core) section to learn how to leverage those APIs, or the [C++ API reference](/holoscan/sdk-user-guide/api-reference/holoscan) for specific API documentation.
+Physical AI workloads share a common shape. A camera delivers frames at 60 Hz
+while an IMU delivers samples at a much higher rate; fusion has to combine
+them coherently; and a control or display output must react within a bounded
+time. In pipelines like these, correctness depends as much on *when* things run
+as on *what* they compute.
 
-3. **Built-in Operators**
+Holoscan SDK 5 makes that timing explicit and checkable. Each operator declares
+a **temporal contract**: what triggers it, which input samples participate in
+an activation, and what happens when data is missing or stale. The runtime
+validates the whole pipeline against those declarations before the first
+operator ever fires, instead of letting scheduling behavior emerge at runtime
+from queue depths and timing luck. The full treatment lives in
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+and [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
 
-   The units of work in Holoscan applications are implemented within Operators, as described in the [core concepts](/holoscan/sdk-user-guide/using-the-sdk/holoscan-core) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies). This guide provides more information on the operators provided within the SDK [here](/holoscan/sdk-user-guide/operators/operators-and-extensions).
+## The layered picture
 
-4. **Minimal Examples**
+The SDK is organized as layers you can adopt independently. From the bottom up:
 
-   The Holoscan SDK provides a list of examples to illustrate specific capabilities of the SDK. Their source code can be found in the [GitHub repository](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme). The [Holoscan by Example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example) section provides step-by-step analysis of some of these examples to illustrate the inner workings of the Holoscan SDK.
+### A fast interprocess transport underneath
 
-5. **Repository of Operators and Applications**
+The foundation is **HoloMQ**, a zero-copy interprocess transport:
+shared-memory publish–subscribe over named channels, designed for low latency
+and aware of GPU memory. Payloads move between processes without copies.
 
-   [HoloHub](https://github.com/nvidia-holoscan/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community. Being open-source, these operators and applications can also be used as reference implementations to complete the built-in operators and examples available in the SDK.
+The transport is useful on its own. A standalone process — a sensor daemon, a
+recorder, a UI — can publish into or subscribe to Holoscan channels through the
+`ChannelRuntime` client API without adopting anything else from the SDK. Inside
+a graph, by contrast, you never touch the transport directly: the runtime
+materializes channels from your port wiring. See
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels)
+and
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
 
-6. **Performance tools**
+### An opinionated sensor-processing runtime on top
 
-   As highlighted in the relevant technologies section, the soul of the Holoscan project is to achieve peak performance by leveraging hardware and software developed at NVIDIA or provided by third parties. To validate this, Holoscan provides performance tools to help users and developers track their application performance. They currently include:
+The Holoscan runtime is a **periodic sensor-processing runtime**, deliberately
+opinionated rather than a general-purpose graph-compute framework. An
+application is a graph of operators connected through statically typed ports
+(`Input<T>`/`Output<T>`), and every operator is three declarations: `setup()`
+describes structure, `contract()` describes time, and `compute()` does the
+work — intentionally oblivious to temporal concerns.
 
-   - the [Data Flow Tracking](/holoscan/sdk-user-guide/performance/flow-tracking) feature to profile your application and analyze the data flow between operators in its graph.
+Every application then follows the same three-phase shape,
+**compose → compile → run**:
 
-7. **Documentation**
+```cpp
+class MyPipeline final : public holoscan::Graph {
+ protected:
+  void compose() override {
+    const auto camera = op<CameraSource>("camera");
+    const auto fusion = op<WindowFusion>("fusion");
+    add_flow(camera->frame, fusion->camera);  // typed ports, checked at wiring time
+  }
+};
 
-   The Holoscan SDK documentation is composed of:
+int main() {
+  MyPipeline graph;                                               // compose
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);  // compile
+  return holoscan::run(plan);                                     // run
+}
+```
 
-   - This user guide, in a [webpage](https://docs.nvidia.com/holoscan/sdk-user-guide/) format
-   - Build and run instructions specific to each [installation strategy](/holoscan/sdk-user-guide/setup/sdk-installation)
-   - [Release notes](https://github.com/nvidia-holoscan/holoscan-sdk/releases) on GitHub
+On Linux, plain blocking `run(plan)` owns SIGINT/SIGTERM by default and admits
+transient ownership only when both process-task census reads observe exactly
+one live task. Multithreaded hosts should establish an early
+`ManagedShutdownSignals` domain or choose
+`RunSignalPolicy::kCallerManaged`; see
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+Each phase has its own failure style: authoring mistakes throw while you
+compose, `compile()` returns rejected plans that explain what is infeasible,
+and a running pipeline fails closed. On the hot path the runtime is bounded by
+construction — preallocated pools and bounded queues rather than on-demand
+allocation — and runtime APIs report failures as values
+(`holoscan::expected<T, Error>`) rather than exceptions. Start with
+[Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts) for the
+model and
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+for the failure discipline.
+
+### Domain operator modules
+
+[Holoscan Modules](/holoscan/sdk-user-guide/modules) are separately
+selectable libraries of operators that extend the core runtime with a domain
+capability. Holoscan SDK 5.x ships three core modules:
+[Inference](/holoscan/sdk-user-guide/modules/inference) (`InferenceOp`, backed
+by TensorRT), [Vision](/holoscan/sdk-user-guide/modules/vision) (nine
+CV-CUDA and NPP image and detection operators), and
+[Visualization](/holoscan/sdk-user-guide/modules/visualization) (`HolovizOp`,
+backed by the HoloViz renderer). Further domains — multimedia, networking,
+robotics, sensor bridge — are planned as additional modules in upcoming
+releases. You can always write your own operators (see
+[Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)),
+and community modules and reference applications live on
+[HoloHub](/holoscan/sdk-user-guide/resources/holohub).
+
+## What the SDK provides today
+
+- **A C++ API.** One umbrella header, `#include <holoscan/holoscan.hpp>`,
+  covers graph composition, operators and temporal contracts, typed
+  parameters, tensors and payload schemas, channels, time and clocks, and
+  logging. C++ is the API surface of this release; see
+  [API stability](/holoscan/sdk-user-guide/introduction/api-stability) for what
+  may still evolve. The generated
+  [C++ API reference](/holoscan/sdk-user-guide/api-reference/holoscan)
+  documents the core public API.
+- **Core modules.** [Inference](/holoscan/sdk-user-guide/modules/inference)
+  runs one or more TensorRT models behind a single operator;
+  [Vision](/holoscan/sdk-user-guide/modules/vision) provides GPU-resident
+  Bayer demosaic, resizing, cropping, borders, remapping, normalization, type conversion,
+  layout conversion, and non-maximum suppression;
+  [Visualization](/holoscan/sdk-user-guide/modules/visualization) renders
+  layered image and geometry output at a fixed display rate.
+- **Examples.** A graded `hello_*` series (core runtime, logging, schemas,
+  tensors, MatX and CCCL interop) plus fuller reference applications:
+  `camera_imu_control` (camera + IMU fusion driving a control output),
+  `slow_fast_fusion`, and `external_clients`.
+  [Holoscan by example](/holoscan/sdk-user-guide/examples/holoscan-by-example)
+  walks through them, and the
+  [camera + IMU pipeline](/holoscan/sdk-user-guide/examples/camera-imu-control)
+  doubles as this guide's running example.
+- **Benchmarks.** Microbenchmarks in the source tree's `benchmark/` directory
+  cover the channel layer (POD, schema, and tensor payloads, including
+  interprocess paths), the core runtime, temporal contracts, graph
+  composition, and time; they register under the `benchmark` CTest label.
+  Measured figures — and the caveats that go with them — live in
+  [Channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks)
+  and
+  [Core runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks).
+
+## Where to go next
+
+- **Why the framework looks like this** —
+  [Highlights](/holoscan/sdk-user-guide/introduction/highlights), then
+  [Relevant technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies)
+  for the surrounding stack.
+- **Install the SDK** —
+  [SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation).
+- **Build a Jetson image with Yocto** —
+  [Yocto on Jetson](/holoscan/sdk-user-guide/yocto).
+- **Learn the model** —
+  [Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts),
+  then build up to
+  [your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline).
+- **Coming from Holoscan SDK 4.x** —
+  [Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x).
+- **Understand the performance story** —
+  [Performance model](/holoscan/sdk-user-guide/performance/performance-model).
+
+## Recap
+
+- Holoscan SDK 5 is the sensor-processing framework for physical AI: multi-rate
+  sensor pipelines with strict latency bounds, for robotics, medical imaging,
+  and industrial inspection.
+- It is layered: the HoloMQ zero-copy transport underneath, an opinionated
+  periodic sensor-processing runtime on top, and separately selectable domain
+  modules — Inference, Vision, and Visualization in 5.x.
+- Every application follows **compose → compile → run**; timing is declared per
+  operator in a temporal contract and validated before the pipeline starts.
+- Today the SDK ships a C++ API, three core modules, a graded
+  example set, and channel and runtime benchmarks.
+- Next:
+  [Highlights](/holoscan/sdk-user-guide/introduction/highlights).

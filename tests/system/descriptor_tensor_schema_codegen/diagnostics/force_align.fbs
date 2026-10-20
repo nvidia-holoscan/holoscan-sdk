@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+struct AlignedValue (force_align: 16) {
+  value: ulong;
+}
+
+table ForceAlignDescriptor {
+  tensor: holoscan.schema.Tensor (id: 0);
+  aligned: AlignedValue (id: 1);
+}
+
+root_type ForceAlignDescriptor;
+file_identifier "DFA1";

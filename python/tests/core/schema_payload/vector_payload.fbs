@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace python.fixture;
+
+table VectorPayload {
+  sequence: ulong (id: 0);
+  gain: float = 1.0 (id: 1);
+  labels: [string] (id: 2);
+  blob: [ubyte] (id: 3);
+  signed_bytes: [byte] (id: 4);
+  shorts: [short] (id: 5);
+  ushorts: [ushort] (id: 6);
+  ints: [int] (id: 7);
+  uints: [uint] (id: 8);
+  longs: [long] (id: 9);
+  ulongs: [ulong] (id: 10);
+  floats: [float] (id: 11);
+  doubles: [double] (id: 12);
+  bools: [bool] (id: 13);
+}
+
+root_type VectorPayload;
+file_identifier "PYVP";

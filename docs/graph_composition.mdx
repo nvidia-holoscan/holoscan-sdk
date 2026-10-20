@@ -1,0 +1,506 @@
+You composed your first graph by constructing a `holoscan::Graph`, adding
+operators with `op<Op>()`, and wiring typed ports with `add_flow()`. This page
+goes deeper: packaging a subgraph as a reusable component with its own typed
+interface, tuning individual ports and edges with configurators, grouping
+operators into policy regions, declaring graph-scope clocks and lifecycle
+ordering, and reading everything back through an immutable `GraphView`
+snapshot.
+
+Throughout, remember the three-phase model: **compose → compile → run**. A
+`Graph` is cold authoring state — it describes a pipeline but never runs one.
+Everything on this page happens before `compile()`, and the failure style here
+is distinct: authoring throws, while compile and run report failures as
+values.
+
+**Complete C++ example:** [`examples/graph_composition/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/graph_composition/cpp).
+The Python tabs below show the corresponding composition API.
+
+**Partitioning example:** [`examples/automatic_partitioning/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/automatic_partitioning/cpp)
+
+<Note title="You will learn">
+  - How to derive a reusable graph from `holoscan::Graph` and author its body in `compose()`
+  - How to expose a subgraph's interface with `export_input()`/`export_output()` — and why to prefer them over raw same-direction `add_flow()`
+  - How to tune ports and edges with `configure()`/`try_configure()` configurators
+  - How to group operators into named regions with `region(name).add(...)`
+  - How automatic, hybrid, and `include_all()` partitioning define serial execution ownership
+  - How to inspect the accepted partition cover with `ExecutionPlan::partitions()`
+  - How to declare graph-scope clocks and lifecycle ordering
+  - How `view()` freezes an immutable `GraphView` you can inspect safely
+</Note>
+
+## Derived reusable graphs
+
+A `Graph` subclass is a reusable building block. Declare input/output members
+as its public interface, and author the private body by overriding `compose()`:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    class FusionStage final : public holoscan::Graph {
+     public:
+      holoscan::Input<Frame> camera{"camera"};
+      holoscan::Input<Imu> imu{"imu"};
+      holoscan::Output<Pose> pose{"pose"};
+
+     protected:
+      void compose() override {
+        auto fusion = op<FusionOperator>("fusion");
+        export_input(camera, fusion->camera);
+        export_input(imu, fusion->imu);
+        export_output(pose, fusion->pose);
+      }
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python reusable-graph ports are class attributes carrying payload tokens:
+
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import WindowFusion
+
+    class FusionGraph(hs.Graph):
+        camera = hs.Input("camera", hs.payload.Tensor)
+        imu = hs.Input("imu", hs.payload.uint32)
+        control = hs.Output("control", hs.payload.uint32)
+
+        def compose(self) -> None:
+            fusion = self.op(WindowFusion, "fusion")
+            self.export_input(self.camera, fusion.camera)
+            self.export_input(self.imu, fusion.imu)
+            self.export_output(self.control, fusion.control)
+    ```
+  </Tab>
+</Tabs>
+
+A containing graph embeds the component with `embed<G>("instance-name")` and
+wires only its exported interface — the internal operators stay private. The
+`camera_imu_control` example nests a `FusionGraph` inside a
+`CameraImuGraph` exactly this way.
+`compose()` runs **lazily, exactly once** — the first time the graph is
+observed (for example by `view()` or by an outer graph embedding it). This has
+two consequences:
+
+<Warning>
+  **Do not author from the constructor, and do not re-enter composition.**
+  Build the body only inside `compose()`. Calling an observer such as `view()`
+  or `default_clock()` from *within* `compose()` re-enters the composition
+  gate and throws with the `GRAPH_COMPOSE_REENTRANT` diagnostic. A terminal
+  `compose()` failure is retained and replayed on every later observation —
+  the graph does not silently half-compose.
+</Warning>
+
+Execution partitions are also the default ordinary CUDA-stream parallelism
+boundary. Every CUDA-active `(process group, partition, device)` tuple receives
+one runtime-owned stream; host-only partitions receive none. Separate streams
+permit independent GPU submission but do not guarantee concurrent execution,
+and Tensor readiness/release fences preserve ordering across partition
+boundaries. Applications that have measured a benefit from serialized
+submission can set
+`CompileOptions::cuda_execution.compute_stream_policy` to
+`CudaComputeStreamPolicy::kSharedProcessDevice`; that policy changes stream
+sharing, not callback ownership or Tensor pool sizing.
+
+The `Graph` itself is non-copyable and non-movable: handles into it are tied
+to that one instance. Handles (`OperatorHandle<Op>`, flow handles, and
+friends) are **weak** — they do not keep the graph alive, and they go invalid
+when it is destroyed. If you retain a handle beyond the composition scope,
+check `graph_valid()` before using it.
+
+## Exporting an interface: prefer `export_input` / `export_output`
+
+`export_input(public_port, internal_port)` and
+`export_output(public_port, internal_port)` bind a derived graph's public
+interface port to an internal operator port. Both take the **public port
+first**, and both require the two ports to carry the same payload type `T`.
+
+Under the hood these are thin wrappers over same-direction `add_flow()`
+interface-alias overloads — `add_flow(Input<T>, Input<T>)` and
+`add_flow(Output<T>, Output<T>)`. You may see those raw overloads in older
+code, but avoid writing them:
+
+<Warning>
+  **Raw same-direction `add_flow()` is easy to reverse silently.** The
+  `(Input, Input)` overload takes the public port first, while the
+  `(Output, Output)` overload takes the internal port first — and because both
+  endpoints share the same type `T`, a call with the arguments swapped
+  compiles cleanly and authors the wrong binding. `export_input()` and
+  `export_output()` normalize both directions to one clear
+  `(public, internal)` order. Use them.
+</Warning>
+
+Queue edges are different: `add_flow(Output<S>, Input<T>)` between two
+operator ports remains the one and only way to author a dataflow edge, and it
+stays fully type- and direction-checked. The alias overloads exist solely for
+interface plumbing.
+
+## Per-port and per-edge configurators
+
+Structural wiring goes through `add_flow()`; *policy* on a port or edge goes
+through fluent configurators returned by `configure()`:
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    g.configure(worker->input).queue_depth(4);
+    g.configure(worker->output).max_emits_per_compute(2);
+    g.configure(worker->output).late_joiner_history_depth(8);
+    g.configure(worker->input).diagnostic_alias("frames-in");
+
+    auto flow = g.add_flow(camera->output, worker->input);
+    g.configure(flow).queue_depth(4);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.configure(sink.input).queue_depth(1).diagnostic_alias("frames-in")
+
+    flow = graph.add_flow(source.output, sink.input)
+    graph.configure(flow).queue_policy(hs.QueuePolicy.DROP_OLDEST)
+    ```
+  </Tab>
+</Tabs>
+
+You can also pass initial edge options directly at wiring time —
+`add_flow(src, dst, holoscan::ConnectionOptions{.queue_depth = 4U})` — and
+refine later through the flow configurator. `add_flow()` returns a
+`[[nodiscard]]` flow handle; keep it if you intend to `configure(flow)` later,
+or discard it explicitly with `(void)`.
+
+Unlike the rest of the authoring surface, configurators have a non-throwing
+twin: `try_configure(...)` returns
+`holoscan::expected<Configurator, Error>`, which suits generated or
+data-driven composition code:
+
+```cpp
+if (auto cfg = g.try_configure(worker->input)) {
+  cfg->queue_depth(4);
+}
+```
+
+<Warning>
+  **Configurators are short-lived.** A configurator is valid only while the
+  port, flow, and `Graph` remain alive and composition is still open. Apply it
+  where you obtain it; never stash one for later.
+</Warning>
+
+## Regions: coarse policy over groups of operators
+
+A **region** names a group of operators (or embedded graphs) so that constraints
+and profiles can be authored once at graph scope instead of per operator.
+`region(name)` returns a fluent `RegionHandle`:
+
+```cpp
+g.region("gpu-stage")
+    .add(preprocess)
+    .add(fusion)
+    .constrain(RegionConstraint::cuda_graph())
+    .profile(/* ... */);
+```
+
+`RegionHandle` offers `add(...)` for membership (operator handles and
+embedded-graph handles alike), `constrain(...)` for placement or resource
+constraints, and `profile(...)` for a named profile. CUDA Graph execution is
+optional and explicitly requested with `RegionConstraint::cuda_graph()`;
+regions without it use ordinary execution. If the compiler cannot safely lower
+a requested CUDA Graph region, compilation fails instead of silently ignoring
+the request. Regions are pure authoring metadata here; the compiler consumes
+them when it lowers the graph to an executable plan.
+
+CUDA Graph regions have a deliberately strict contract: capture-eligible
+operators in a linear Tensor chain, exact Runtime-owned Tensor storage, one
+process and CUDA context, and capture-safe `compute()` callbacks. See
+[CUDA Graph Regions](/holoscan/sdk-user-guide/composing-applications/cuda-graph-regions)
+for the complete authoring pattern, supported triggers, Tensor and placement
+rules, backpressure behavior, diagrams, and troubleshooting guide.
+
+## Execution partitions
+
+An **execution partition** owns an exact set of executable graph vertices.
+Callback-bearing partitions give their Operators one serial execution owner;
+endpoint-only partitions retain topology without manufacturing a callback
+owner. Regions remain analysis and placement metadata; they do not implicitly
+define execution ownership.
+
+<Warning>
+  Operators in distinct execution partitions may run callbacks concurrently on
+  stable owner threads, and there is no total callback order across partitions.
+  Synchronize any shared mutable state. `include_all()` places the complete
+  executable application in one partition and gives all of its Operators one
+  serial owner, but it does not make callbacks run on the caller thread.
+  Inspect `plan.partitions()` to confirm the accepted ownership and topology.
+</Warning>
+
+With no partition declarations, the production
+`holoscan.partition.source_chain/1` planner produces a complete automatic
+cover. The name is a stable algorithm identity, not a promise that only source
+Operators are inspected: the planner walks the complete canonical DAG and
+starts a linear execution chain at each source or other mandatory boundary.
+
+```cpp
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+const auto partitions = plan.partitions();
+
+for (const auto partition : partitions) {
+  for (const auto& path : partition.operator_paths()) {
+    std::cout << path << '\n';
+  }
+}
+
+const auto source_partition = partitions.of(source);  // root handle retained during composition
+const auto join_partition = partitions.lookup_for_path("join");
+```
+
+The retained `partitions()` view reports the accepted mode, authored and
+automatic counts, canonical order, execution lane, origin, and logical
+Operator paths. It also supports exact lookup by dense ID, authored name, and
+canonical path. Automatic partitions deliberately have no public generated
+name; use their ID, path, or an Operator handle instead. Dynamic lookup
+returns a typed error for an invalid or missing key.
+
+Operator paths are exact lookup keys over decoded Graph and Operator identity
+segments. Each segment is UTF-8 byte-wise percent-encoded with uppercase hex
+before `/` separators are inserted, so decoded names such as `a/b` cannot
+collide with separate `a` and `b` segments. Every key uses the same
+no-leading-slash `OperatorPath` grammar as Parameter records and Tensor output
+placement. Pass the published spelling back to
+`lookup_for_path()` unchanged—the lookup does not decode or normalize input.
+For example, root Operator `camera/left%` publishes
+`camera%2Fleft%25`, while Operator `b/c` in embedded Graph `a` publishes
+`a/b%2Fc`.
+
+The planner considers the whole DAG. A fan-out starts separate successor legs,
+and a fan-in starts its own join partition rather than collapsing multiple
+predecessor chains. A diamond therefore exposes both branch legs and the join
+boundary. A linear successor can join its one predecessor only when the
+execution domain and edge-collapse rules permit it. Two edges between the same
+ordered Operators are parallel edges, not a structural branch.
+
+```text
+source ──┬── left ──┐
+         └── right ─┴── join       fan-out, fan-in, and diamond
+source ──────────────── join      parallel edges: one structural successor
+```
+
+### Exact manual and hybrid covers
+
+Manual declarations remain an exact, disjoint cover:
+
+```cpp
+graph.partition("capture").add(camera).add(normalize);
+graph.partition("inference").add(preprocess).add(inference).add(postprocess);
+```
+
+An incomplete manual cover is rejected unless the application explicitly opts
+into a bounded hybrid cover. Exact named anchors remain unchanged and the
+compiler partitions only the uncovered remainder:
+
+```cpp
+graph.partition("capture").add(camera).add(normalize);
+graph.auto_partition_remaining();
+```
+
+The frozen authoring view exposes this directive directly through
+`graph.view().automatic_partition_remaining()`, alongside the exact manual
+declarations returned by `graph.view().partitions()`.
+
+A named partition can also select an embedded Graph without enumerating its
+internal Operators:
+
+```cpp
+graph.partition("fusion-owner").add(fusion);  // GraphHandle returned by embed<G>().
+graph.auto_partition_remaining();
+```
+
+The selection includes all nested descendants and may contain independent
+sources. The selected subtree must have no internal partition declarations,
+even empty ones. Chaining adds sibling instances or direct Operators to the
+same exact set; direct-Operator-only partitions keep their single-root rule.
+The retained `graph_members()` view reports selected instance roots, while
+`members()` and `operator_paths()` report resolved work. See
+[atomic instance placement](/holoscan/sdk-user-guide/composing-applications/reusable-graphs#assigning-an-instance-to-one-thread-partition)
+for ownership, conflict and lifetime rules.
+
+Use `partition(name).include_all()` on the compile root when one explicit
+serial owner should cover the complete composed application, including
+embedded Graph descendants:
+
+```cpp
+graph.partition("application").include_all();
+```
+
+`include_all()` is manual intent and bypasses automatic partitioning. It is
+mutually exclusive with another root partition declaration or an automatic
+remainder request. Use the exact authored name with
+`CompileOptions::deployment.bind_thread_placement(...)` or a Green Context
+binding when deployment placement is required; names select an authored
+partition and never select a planner.
+
+### Serialization domains
+
+Operators in one serialization domain never run their callbacks concurrently.
+Python Operators share the `python.gil` domain, because each callback holds the
+Python GIL. Automatic partitioning keeps a domain's Operators in one partition
+when it can. An authored cover, a mandatory boundary, or an acyclic partition
+order can still split a domain across partitions, and compilation then reports
+`OPERATOR_SERIALIZATION_DOMAIN_SPLIT_ADVISORY` for that domain, because the
+extra partition threads mostly wait on each other.
+
+A split can be intentional, for example when callbacks release the GIL during
+long native calls, or when one partition needs its own thread placement. Select
+the policy in the compile options:
+
+```cpp
+holoscan::CompileOptions options;
+options.serialization_domain_splits = holoscan::SerializationDomainSplitPolicy::kAllow;
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+```
+
+```python
+options = hs.CompileOptions(
+    serialization_domain_splits=hs.execution.SerializationDomainSplitPolicy.ALLOW
+)
+plan = hs.compile(graph, options)
+```
+
+`kWarn` (`WARN`), the default, admits each split domain with the advisory.
+`kAllow` admits it without a diagnostic, and `kReject` fails compilation with
+`OPERATOR_SERIALIZATION_DOMAIN_SPLIT_REJECTED`. The policy never changes the
+partition cover; inspect `plan.partitions()` to see where a domain is split.
+
+## Graph-scope clocks
+
+Clocks are declared on the graph and read from operators at run time (see
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)).
+Three verbs cover the authoring side:
+
+```cpp
+// Own a clock: the graph stores a replayable factory, not a live instance.
+const holoscan::ClockKey clock =
+    g.add_clock<holoscan::RealtimeClock>("capture-clock");
+
+// Bind an externally owned clock instance shared with other components.
+g.set_default_clock(g.bind_shared_clock("shared", shared_clock));
+
+// Nominate the default the runtime hands to operators that don't ask by name.
+g.set_default_clock(clock);
+```
+
+`add_clock<C>(name, args...)` captures a factory for an owned clock —
+`bind_shared_clock(name, std::shared_ptr<Clock>)` is the only form that
+retains a live instance. `set_default_clock(key)` nominates the graph's
+default, and `default_clock()` reads the nomination back (it is an observer,
+so calling it triggers — and must not re-enter — composition). When a
+pipeline spans clock domains, `add_clock_conversion(from, to, conversion)`
+declares a directed affine mapping between two declared clocks.
+
+The `camera_imu_control` example opens its `compose()` with exactly this
+pattern:
+
+```cpp
+const holoscan::ClockKey clock = add_clock<holoscan::RealtimeClock>(
+    "capture-clock", holoscan::RealtimeClock::Config{.use_time_since_epoch = true});
+set_default_clock(clock);
+```
+
+## Lifecycle ordering
+
+Most pipelines never need explicit lifecycle ordering — the runtime already
+runs every stage behind global barriers, with a deterministic default order
+within each stage. When one operator's start-up genuinely must precede
+another's *within* a stage (a device owner before its consumers, say), author
+it on the graph's lifecycle builder:
+
+```cpp
+g.lifecycle().before(producer, consumer, holoscan::LifecycleStage::kStart);
+```
+
+`before(first, second, stage)` orders the two operators within one lifecycle
+stage. The same builder is where the three deny-by-default restart permissions
+are granted — `allow_self_restart(op)`, `allow_external_restart(op)`, and
+`allow_restart_request(requester, op)`; see
+[Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+for the operator-side view and
+[Restart control](/holoscan/sdk-user-guide/advanced/restart-control) for
+restart semantics. Both endpoints must belong to the declaring graph's scope
+or a descendant scope — sibling graphs cannot order one another's operators —
+and duplicates and ordering cycles are rejected as you author.
+
+## GraphView: immutable snapshots
+
+`view()` freezes the composed graph into a `GraphView` — an immutable,
+deep-owning snapshot that stays valid even after you mutate or destroy the
+source `Graph`:
+
+```cpp
+const holoscan::GraphView view = g.view();
+
+for (const auto& vertex : view.vertices()) { /* ... */ }
+const auto edges    = view.edges();
+const auto identity = view.identity();   // instance + version + content hash
+```
+
+`GraphView` exposes read-only spans over every authored fact: `graphs()`,
+`vertices()`, `ports()`, `edges()`, `interface_bindings()`,
+`external_topics()`, `readiness_sources()`, `regions()`, `partitions()`, `clocks()`,
+`clock_conversions()`, `lifecycle_dependencies()`, and
+`lifecycle_restart_permissions()`, plus `identity()` and `generation()`.
+Copying a `GraphView` is cheap — copies share the frozen storage — but the
+spans borrow from it, so keep at least one sharing view alive while you hold
+a span.
+
+`identity()` returns the process-local graph instance, the frozen authoring
+version, and a deterministic content hash — enough to tell two snapshots of
+the same graph apart. One caution for later: these authoring IDs are **not**
+the compiler's canonical plan IDs. When you inspect a compiled plan, match
+records against the plan's own graph view, not against handles you kept from
+authoring (see
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)).
+
+## The authoring error model: throws here, values downstream
+
+Composition is the one place in the pipeline lifecycle where errors surface
+as exceptions. `op()`, `add_flow()`, `region()`, `add_clock()`,
+`lifecycle().before()`, and `view()` all throw `holoscan::RuntimeError` —
+carrying a structured `Error` with an `ErrorCode` and a stable diagnostic
+token such as `GRAPH_COMPOSE_REENTRANT` — when a request is structurally
+invalid: a duplicate name, input fan-in, a directed cycle, a stale handle.
+
+This is deliberate, and it is the opposite of the runtime surfaces. An
+authoring rejection is a programming bug in code you control, detected cold,
+before any resource is committed — the natural response is to fail loudly at
+the exact call site. Once past authoring, the model inverts:
+`holoscan::compile()` returns a rejected plan as a value, `compute()` reports
+failures through `holoscan::expected<T, Error>`, and the running pipeline
+fails closed. There is accordingly no `try_op` or `try_add_flow`; the only
+non-throwing authoring family is `try_configure(...)`, because configuration
+is the one surface data-driven composition code routinely probes. If you
+generate graphs programmatically from external input, wrap the composition
+block in a single try/catch and treat any `RuntimeError` as a rejected
+description. See
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+for the full boundary rules.
+
+## Recap
+
+- Derive from `holoscan::Graph`, author in `compose()` (lazy, exactly once),
+  and never observe the graph from inside its own composition.
+- Expose a subgraph's interface with `export_input()`/`export_output()` —
+  their `(public, internal)` order is consistent, unlike the raw
+  same-direction `add_flow()` overloads.
+- Tune ports and edges with `configure()`/`try_configure()` configurators;
+  apply them immediately, never stash them.
+- Group operators with `region(name).add(...)` for graph-scope policy.
+- Use `partition(name).add(...)` for exact direct-Operator or atomic embedded-instance ownership.
+- Declare clocks with `add_clock`/`bind_shared_clock`/`set_default_clock`;
+  order lifecycle work with `lifecycle().before(...)`.
+- `view()` freezes an immutable `GraphView` — spans over vertices, edges,
+  regions, partitions, and every other authored fact, plus a stable
+  `identity()`.
+- C++ authoring throws `RuntimeError`, while Python authoring raises
+  `HoloscanError`; compile and run report failures as values.
+
+Next: package and version these components properly in
+[Reusable graphs](/holoscan/sdk-user-guide/composing-applications/reusable-graphs),
+or connect your graph to the outside world in
+[External topics](/holoscan/sdk-user-guide/composing-applications/external-topics).

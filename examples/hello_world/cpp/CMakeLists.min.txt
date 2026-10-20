@@ -1,28 +1,24 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.20)
-project(holoscan_hello_world CXX)
+cmake_minimum_required(VERSION 4.0)
 
-# Finds the package holoscan
-find_package(holoscan REQUIRED CONFIG
-             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+project(holoscan_hello_world LANGUAGES CXX)
 
-add_executable(hello_world
-  hello_world.cpp
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
 )
 
-target_link_libraries(hello_world
-  PRIVATE
-  holoscan::core
-)
+add_executable(hello_world hello_world.cpp)
+target_link_libraries(hello_world PRIVATE holoscan::core)
 
-# Testing
 if(BUILD_TESTING)
-  add_test(NAME EXAMPLE_CPP_HELLO_WORLD_TEST
-           COMMAND hello_world
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_CPP_HELLO_WORLD_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Hello World!")
+    add_test(NAME EXAMPLE_CPP_HELLO_WORLD_TEST COMMAND hello_world)
+    set_tests_properties(EXAMPLE_CPP_HELLO_WORLD_TEST
+        PROPERTIES PASS_REGULAR_EXPRESSION "Hello Holoscan!")
 endif()

@@ -1,0 +1,7 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace holoscan.test;
+table ByteChannelPayload { blob: [ubyte] (id: 0); }
+root_type ByteChannelPayload;
+file_identifier "HSBC";

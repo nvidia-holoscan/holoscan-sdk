@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_borrowed_image_transform LANGUAGES CXX)
+include(CTest)
+find_package(holoscan COMPONENTS sensor_io
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}" REQUIRED)
+
+add_executable(borrowed_image_transform borrowed_image_transform.cpp)
+target_compile_features(borrowed_image_transform PRIVATE cxx_std_20)
+target_link_libraries(borrowed_image_transform PRIVATE holoscan::sensor_io)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_BORROWED_IMAGE_TRANSFORM_TEST COMMAND borrowed_image_transform)
+    set_tests_properties(EXAMPLE_CPP_BORROWED_IMAGE_TRANSFORM_TEST PROPERTIES
+        PASS_REGULAR_EXPRESSION "borrowed image transform: pixels, metadata, and provenance verified"
+        LABELS "examples;sensor-io"
+        TIMEOUT 30)
+endif()

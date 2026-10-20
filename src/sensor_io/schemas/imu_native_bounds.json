@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schemas": {
+    "holoscan.schema.Imu": {
+      "max_prepared_bytes": 4096,
+      "fields": {
+        "header.frame_id": {
+          "max_bytes": 512
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+namespace holoscan.test;
+table ByteTensorPayload {
+  blob: [ubyte] (id: 0);
+  data: holoscan.schema.Tensor (id: 1);
+}
+root_type ByteTensorPayload;
+file_identifier "HSBT";

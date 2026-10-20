@@ -1,0 +1,38 @@
+HoloMQ's direct backend API and shared-library ABI are **Evolving**. They may
+change between SDK releases without a guaranteed deprecation cycle. Upgrading
+direct consumers may require source changes and rebuilding applications or
+plugins. This classification describes upgrade compatibility separately from
+testing and release qualification.
+
+## Source, binary, and protocol boundaries
+
+| Boundary | What direct consumers must match |
+| --- | --- |
+| Source API | Public declarations, templates, option aggregates, and enum values used when rebuilding an application. |
+| Shared-library ABI | Exported symbols, signatures, layouts, vtables, calling conventions, and the compiler and dependency ABI. |
+| Cross-process protocol | Payload layout, endpoint contracts, and transport configuration used by independently running peers. |
+
+Use supported public `<holomq/...>` headers and build applications and plugins
+against matching SDK headers and libraries. Installed headers under
+`holomq/detail/` remain implementation details. Direct consumers link the
+installed `holoscan::holomq` CMake target or its `holomq::holomq` compatibility
+alias; HoloMQ is an SDK-owned library rather than a separate CMake package.
+
+## What the export inventory checks
+
+The `ci/abi/holomq.exports.baseline.txt` inventory compares exported symbol names
+for the reference Linux/GNU shared build. It detects additions and removals,
+including accidental export leaks. The inventory also contains SDK-private
+implementation bridges and toolchain-generated symbols; appearing in it does
+not make a symbol a supported application API or classify it as Stable.
+
+The check does not compare class layouts, enum values, inline or template
+behavior, or wire protocols. An unchanged symbol list or library SONAME alone
+does not establish binary compatibility across SDK releases. Public option
+aggregates and enums remain source-facing contracts even when they add no
+out-of-line shared-library symbol; consumers must rebuild against matching
+headers and libraries when those contracts change.
+
+Consult release notes for release-specific compatibility and rebuild
+requirements. For the SDK-wide source API policy, see
+[API Stability](/holoscan/sdk-user-guide/introduction/api-stability).

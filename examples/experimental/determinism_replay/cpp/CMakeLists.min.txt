@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_determinism_replay LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+add_executable(determinism_replay determinism_replay.cpp)
+target_link_libraries(determinism_replay PRIVATE holoscan::core)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-015
+    add_test(NAME EXAMPLE_CPP_DETERMINISM_REPLAY_TEST COMMAND determinism_replay)
+    set_tests_properties(EXAMPLE_CPP_DETERMINISM_REPLAY_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "determinism_replay: manual_replay_match=yes realtime_tagtime_differs=yes wall_clock_replayed=no ticks=6 termination=stopped"
+            LABELS "examples;deterministic;experimental"
+            TIMEOUT 30)
+endif()

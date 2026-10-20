@@ -1,0 +1,839 @@
+Most operators get by with the temporal vocabulary from
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts):
+one trigger (`OnEach`, `OnClock`, `OnAligned`, `OnWindow`), one selector per
+input (`Exact`, `LatestWithin`, `DrainAll`), and a missing-data policy. This
+page covers the advanced tier for pipelines where that vocabulary is not
+enough: predicate-driven activation with `OnPredicate`, all-or-nothing batch
+selection with `BracketedWindow`, and composition recipes for multi-rate
+graphs where different inputs arrive at very different cadences.
+
+<Warning>
+  **Beta temporal policies.** The patterns on this page — `OnPredicate`,
+  `BracketedWindow`, and the multi-rate composition recipes — are the most
+  recently promoted parts of the temporal contract API. They are functional
+  today, but field names, admission rules, and diagnostics may evolve in
+  upcoming releases. Prefer the basic trigger/selector vocabulary wherever it
+  expresses your intent; reach for this tier only when it does not.
+</Warning>
+
+**Complete C++ examples:** [`examples/temporal_contracts/on_predicate/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_predicate/cpp)
+and [`examples/temporal_contracts/on_window/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_window/cpp)
+
+<Note title="You will learn">
+  - When `OnPredicate` is the right trigger, and why its callables must be
+    bounded and nonthrowing
+  - How predicate identity, firing rules, and evaluation sources fit together
+  - How `BracketedWindow` selects an all-or-nothing bracket of samples around
+    consecutive anchors, and what happens when a window cannot complete
+  - Recipes for composing multi-rate pipelines: fast-anchor fusion, symmetric
+    alignment, windowed integration, and clock-paced batch drains
+</Note>
+
+## When the basics run out
+
+The core trigger vocabulary answers "activate on a sample", "activate on a
+schedule", or "activate when heads align". Two situations fall outside it:
+
+- **Data-dependent activation.** You want to run `compute()` only when the
+  *content* of the inputs satisfies a condition — a threshold crossing, a
+  state-machine edge, a match between two streams — not merely when a sample
+  arrives.
+- **Neighborhood selection.** One activation needs a *bracket* of samples from
+  a fast input over the interval between two slow anchors, plus readings
+  just outside that interval — rather than one freshest sample or a queue drain.
+
+`OnPredicate` addresses the first; `BracketedWindow` the second. Both lower to
+explicit records in the compiled plan, so they stay inspectable with the same
+[plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling) as everything
+else, and both keep the runtime's bounded-by-construction guarantees.
+
+## OnPredicate: data-dependent activation
+
+`OnPredicate` evaluates a typed callable — the *predicate* — and creates a
+compute candidate when it returns `true`. The trigger has three parts:
+
+```cpp
+holoscan::Contract contract() const override {
+  auto evaluator = holoscan::predicate(
+      "pressure-threshold",
+      [](const holoscan::PredicateEvaluationContext&,
+         const holoscan::PredicateInputView<Reading>& driver_view) noexcept {
+        return driver_view.sample().data.pressure > 90.0F;
+      });
+
+  holoscan::Contract c;
+  c.trigger(holoscan::OnPredicate{
+       .evaluate_on = holoscan::OnInputUpdate{sensor},
+       .predicate = std::move(evaluator),
+       .firing = holoscan::PredicateFiring::kOnFalseToTrue,
+   })
+   .input(sensor, holoscan::Exact{});
+  return c;
+}
+```
+
+- **`evaluate_on`** names when the predicate runs. There are exactly two
+  sources: `OnInputUpdate{port}` evaluates once for every accepted sample on a
+  driver input, and `OnClock{.period = ...}` evaluates on a periodic
+  schedule. The driver's sample is pinned as the first typed view the
+  evaluator sees.
+- **`predicate`** is a binding built with `holoscan::predicate(...)`. The
+  factory copies your callable into a cold descriptor — the contract owns its
+  own deep copy, so no authoring address ever enters a plan or a run session.
+- **`firing`** decides when a `true` result becomes an activation.
+  `PredicateFiring::kOnFalseToTrue` (the default) fires only on the edge —
+  the remembered result must change from false to true. Use
+  `PredicateFiring::kOnEveryTrueEvaluation` when every satisfied evaluation
+  should activate.
+
+To evaluate over more than the driver, declare additional scalar inputs with
+`holoscan::predicate_inputs(...)`; the evaluator then receives one frozen
+`PredicateInputView<T>` per declared input, in declaration order, after the
+driver view:
+
+```cpp
+auto evaluator = holoscan::predicate(
+    "match-condition",
+    holoscan::predicate_inputs(reference),
+    [](const holoscan::PredicateEvaluationContext&,
+       const holoscan::PredicateInputView<Reading>& driver_view,
+       const holoscan::PredicateInputView<Reading>& reference_view) noexcept {
+      return driver_view.sample().data.id == reference_view.sample().data.id;
+    });
+```
+
+Selector and missing-policy semantics for predicate inputs are still declared
+through the ordinary `.input(...)` / `.on_missing(...)` calls on the contract;
+the predicate only reads what the contract selected.
+
+### Bounded, nonthrowing callables
+
+A predicate runs inside the scheduler's hot decision path, so the API is
+designed to keep evaluation cheap and safe:
+
+- **Return `bool` (or `expected<bool, Error>`), take `noexcept` seriously.**
+  Evaluators return `true`/`false`; a fallible evaluator returns
+  `holoscan::expected<bool, holoscan::Error>` and its errors follow the
+  ordinary failure path — there is no throwing escape hatch from evaluation.
+- **State is transactional.** If your predicate carries mutable state (for
+  edge detection across evaluations, say), declare it as a type parameter.
+  The runtime evaluates against a candidate copy and commits or discards it
+  atomically, so a failed evaluation never corrupts the committed state. The
+  state type must be default-initializable with nothrow copy, swap, and
+  destruction — the compiler enforces this as a concept, so an unsuitable
+  type fails at the `predicate(...)` call site.
+- **Callable form is classified for admission.** The factory records what
+  kind of callable you supplied — a free function, a noncapturing lambda, a
+  fixed-size inspectable functor, or an opaque capturing closure. Constrained
+  deployment profiles admit only the forms whose cost and behavior they can
+  bound; an opaque closure that is fine in a development profile may be
+  rejected when the plan is compiled for a constrained one. Prefer
+  noncapturing lambdas or small trivially copyable functors, and move any
+  tunable values into the explicit `config` argument of `predicate(...)` —
+  configuration is copied, immutable, and identity-hashed for the plan.
+- **Identity is part of the contract.** The first argument to
+  `predicate(...)` is a stable name. For predicates whose decisions must be
+  attributable across runs and replays, use a qualified
+  `holoscan::PredicateKey{.qualified_name = "...", .semantic_version = {1, 0, 0}}`
+  instead of a bare string; the version is recorded as replay evidence. See
+  [Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay)
+  for how that evidence is used.
+
+<Warning>
+  **Do not hide work in a predicate.** The evaluator is invoked on the
+  scheduler's path for every driver sample or clock tick, before any
+  activation exists. Heavy computation, allocation, or blocking inside it
+  degrades the whole graph, not just your operator. If the condition needs
+  real work to decide, activate unconditionally and make the cheap early-exit
+  the first line of `compute()` instead.
+</Warning>
+
+## BracketedWindow: all-or-nothing neighborhoods
+
+`BracketedWindow` selects a bounded, all-or-nothing batch around the **closed
+capture-time interval between consecutive anchors**. It is paired with the
+`OnWindow` trigger. The first camera anchor establishes the starting boundary.
+The second opens the first interval. This describes the interval between
+frames, not the exposure duration of either frame.
+
+```cpp
+holoscan::Contract contract() const override {
+  using namespace std::chrono_literals;
+  holoscan::Contract result;
+  result
+      .trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U})
+      .input(camera, holoscan::Exact{})
+      .input(imu, holoscan::BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 16U})
+      .on_missing(imu, holoscan::SafeDefault{});
+  return result;
+}
+```
+
+This is the contract shape in the
+[camera + IMU walkthrough](/holoscan/sdk-user-guide/examples/camera-imu-control).
+The anchor must use `Exact`. The IMU batch includes:
+
+| Part | Selection rule |
+|---|---|
+| Before the interval | The nearest `lookbehind` samples **strictly before** the previous anchor |
+| Inside the interval | Every retained sample from the previous through the current anchor, **including both endpoints** |
+| After the interval | The earliest `lookahead` samples **strictly after** the current anchor |
+
+### A complete bracket, then an overlapping bracket
+
+The numbers below are **capture timestamps in illustrative units, not sample
+indices**. Every IMU sample in this trace is shown, with no intermediate samples
+omitted. Use `lookbehind = lookahead = 1` and `max_samples = 8`.
+Anchor 10 primes, then anchor 20 creates
+`[10, 20]`. IMU 20 is an interior sample, so it cannot supply the required
+successor. The bracket closes when IMU 25 arrives:
+
+<svg viewBox="0 0 340 364" role="img" aria-labelledby="atp-bracket-overlap-title" aria-describedby="atp-bracket-overlap-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="atp-bracket-overlap-title">Consecutive IMU brackets share retained samples</title>
+  <desc id="atp-bracket-overlap-desc">One capture-time axis in illustrative units. The numbers are capture timestamps, not sample indices. Camera anchors are at 10, 20 and 30. The trace has IMU samples at 5, 10, 15, 20, 25 and 35, and every one of them is drawn. There is no IMU sample at 30. Window W1 covers the interval from 10 through 20 and selects 5 samples: 5, 10, 15, 20 and 25. Window W2 covers 20 through 30 and selects 4 samples: 15, 20, 25 and 35. Green-outlined circles are selected interior samples inside the inclusive interval. Diamonds are the selected strict outer samples: the predecessor before the interval and the successor after it. Both shapes belong to the selected batch. Sample 15 is interior in W1 and the outer predecessor in W2, so its shape changes. Samples 15, 20 and 25 belong to both selections, and 20 is interior to both. max_samples 8 counts outer and interior samples, so neither window reaches it.</desc>
+  {/* x = 40 + 8 * capture time: 5, 10, 15, 20, 25, 30, 35 map to 80, 120, 160, 200, 240, 280, 320. */}
+  {/* Legend and axis, matching the window-selection figures */}
+  <rect x="14" y="6" width="12" height="10" rx="2" fill="currentColor"/>
+  <circle cx="160" cy="11" r="6" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.75"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="32" y="16">camera anchor</text>
+    <text x="172" y="16">IMU sample</text>
+    <text x="14" y="40">capture</text>
+    <text x="14" y="62">time</text>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="80" y="40">5</text>
+    <text x="120" y="40">10</text>
+    <text x="160" y="40">15</text>
+    <text x="200" y="40">20</text>
+    <text x="240" y="40">25</text>
+    <text x="280" y="40">30</text>
+    <text x="320" y="40">35</text>
+  </g>
+  {/* Camera anchors with boundary guides through both windows */}
+  <g fill="currentColor">
+    <rect x="114" y="52" width="12" height="10" rx="2"/>
+    <rect x="194" y="52" width="12" height="10" rx="2"/>
+    <rect x="274" y="52" width="12" height="10" rx="2"/>
+  </g>
+  <path d="M 120,62 V 194 M 200,62 V 194 M 280,62 V 194" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" fill="none"/>
+  {/* Shared sample identities */}
+  <path d="M 160,93 V 186 M 200,93 V 186 M 240,93 V 186" stroke="currentColor" strokeWidth="1.25" strokeDasharray="3 3" fill="none"/>
+  {/* Every IMU sample in this trace: nothing at 30 */}
+  <g fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.75">
+    <circle cx="80" cy="86" r="6.5"/>
+    <circle cx="120" cy="86" r="6.5"/>
+    <circle cx="160" cy="86" r="6.5"/>
+    <circle cx="200" cy="86" r="6.5"/>
+    <circle cx="240" cy="86" r="6.5"/>
+    <circle cx="320" cy="86" r="6.5"/>
+  </g>
+  {/* W1 interval [10, 20] and W2 interval [20, 30] */}
+  <rect x="120" y="114" width="80" height="28" fill="#76B900" fillOpacity="0.18"/>
+  <rect x="200" y="158" width="80" height="28" fill="#76B900" fillOpacity="0.18"/>
+  <path d="M 120,114 H 200 M 120,142 H 200 M 200,158 H 280 M 200,186 H 280" stroke="#5F9000" strokeWidth="2.5" fill="none"/>
+  {/* Selected samples: diamonds outside each interval, circles inside it. The two legend marks repeat the encoding. */}
+  <g fill="currentColor" stroke="#5F9000" strokeWidth="2.5" strokeLinejoin="round">
+    <polygon points="80,119 89,128 80,137 71,128"/>
+    <circle cx="120" cy="128" r="6.5"/>
+    <circle cx="160" cy="128" r="6.5"/>
+    <circle cx="200" cy="128" r="6.5"/>
+    <polygon points="240,119 249,128 240,137 231,128"/>
+    <polygon points="160,163 169,172 160,181 151,172"/>
+    <circle cx="200" cy="172" r="6.5"/>
+    <circle cx="240" cy="172" r="6.5"/>
+    <polygon points="320,163 329,172 320,181 311,172"/>
+    <circle cx="20" cy="213" r="6.5"/>
+    <polygon points="20,226 29,235 20,244 11,235"/>
+  </g>
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="133" fontWeight="600">W1</text>
+    <text x="14" y="177" fontWeight="600">W2</text>
+    <text x="36" y="218">selected interior, inclusive</text>
+    <text x="36" y="240">selected outer, strict</text>
+    <text x="14" y="266">W1: 5, 10, 15, 20, 25 (5 samples)</text>
+    <text x="14" y="288">W2: 15, 20, 25, 35 (4 samples)</text>
+    <text x="14" y="310">Dashed lines join shared 15, 20, 25</text>
+    <text x="14" y="332">15 is interior in W1, outer in W2</text>
+    <text x="14" y="354"><tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">max_samples</tspan> = 8 counts both shapes</text>
+  </g>
+</svg>
+
+- **Green-outlined circles:** selected samples inside the interval, including
+  its endpoints.
+- **Green-outlined diamonds:** selected strict predecessors or successors
+  outside the interval.
+
+Both shapes belong to the batch. The sample captured at 15 changes from a
+circle in W1 to a diamond in W2 because it becomes a strict predecessor.
+`max_samples` counts **all** selected samples, including the outer diamonds.
+W1 selects five samples and W2 selects four, so the bound of eight constrains
+neither.
+
+After anchor 30 arrives, IMU 35 completes W2. No IMU sample at 30 is required.
+This is an engine-level membership trace, with no clock or deadline claim.
+
+Each selection is a **non-destructive snapshot** of retained samples. The two
+batches share the samples captured at 15, 20 and 25. The sample at 20 is interior
+to both intervals. Application integration must account
+for interval endpoints and shared support samples rather than blindly accumulating
+every value in every batch. `DrainAll` instead consumes a finite FIFO survivor
+cut. Accepted drains do not overlap and do not use this capture-time interval.
+
+### Pending, selected, or terminally missing
+
+A pending window has not yet failed. It holds no worker in a waiting callback
+and does not invoke the missing policy on every readiness pass.
+
+<svg viewBox="0 0 340 600" role="img" aria-labelledby="atp-bracket-steps-title" aria-describedby="atp-bracket-steps-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="atp-bracket-steps-title">One IMU bracket, from pending to selected</title>
+  <desc id="atp-bracket-steps-desc">Four snapshots share one capture-time axis with positions 5, 10, 15, 20 and 25. Snapshot 1: camera 10 arrives while IMU sample 5 is already retained. The anchor only sets the starting boundary, so no window exists yet. Snapshot 2: camera 20 arrives while IMU samples 5, 10 and 15 are retained. The interval from 10 through 20 opens and is pending, because no IMU sample after 20 exists. Snapshot 3: IMU 20 arrives. It is an endpoint inside the interval, not the successor, so the window stays pending. Snapshot 4: IMU 25 arrives and supplies the successor. The successor, history and size checks pass in that order. The size check passes because 5 samples is within the limit of 8. The selected IMU batch is 5, 10, 15, 20 and 25. Samples 5 and 25 are the outer samples. Samples 10, 15 and 20 are interior, including both endpoints. The camera input uses Exact and selects anchor 20.</desc>
+  <defs>
+    <marker id="atp-bracket-steps-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Shared x positions: x = 30 + 10 * capture time, so 5, 10, 15, 20 and 25 map to 80, 130, 180, 230 and 280. */}
+  {/* Legend and capture-time axis, repeated at the bottom */}
+  <rect x="14" y="6" width="12" height="10" rx="2" fill="currentColor"/>
+  <circle cx="160" cy="11" r="6" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.75"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="32" y="16">camera anchor</text>
+    <text x="172" y="16">IMU sample</text>
+    <text x="14" y="40">capture</text>
+    <text x="14" y="592">capture</text>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="80" y="40">5</text>
+    <text x="130" y="40">10</text>
+    <text x="180" y="40">15</text>
+    <text x="230" y="40">20</text>
+    <text x="280" y="40">25</text>
+    <text x="80" y="592">5</text>
+    <text x="130" y="592">10</text>
+    <text x="180" y="592">15</text>
+    <text x="230" y="592">20</text>
+    <text x="280" y="592">25</text>
+  </g>
+  {/* Step numbers */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="22" cy="61" r="11"/>
+    <circle cx="22" cy="151" r="11"/>
+    <circle cx="22" cy="273" r="11"/>
+    <circle cx="22" cy="399" r="11"/>
+  </g>
+  <g fontSize="15" fontWeight="600" fill="currentColor" textAnchor="middle">
+    <text x="22" y="66">1</text>
+    <text x="22" y="156">2</text>
+    <text x="22" y="278">3</text>
+    <text x="22" y="404">4</text>
+  </g>
+  {/* Step captions */}
+  <g fontSize="15" fill="currentColor">
+    <text x="42" y="66"><tspan fontWeight="600">Camera 10 arrives</tspan>: no window yet</text>
+    <text x="42" y="156"><tspan fontWeight="600">Camera 20 arrives</tspan>: window pending</text>
+    <text x="42" y="278"><tspan fontWeight="600">IMU 20 arrives</tspan>: still pending</text>
+    <text x="42" y="298">20 is an endpoint, not a successor</text>
+    <text x="42" y="404"><tspan fontWeight="600">IMU 25 arrives</tspan>: bracket selected</text>
+  </g>
+  {/* Camera anchors: glyph, then a boundary mark down to the interval */}
+  <g fill="currentColor">
+    <rect x="124" y="78" width="12" height="10" rx="2"/>
+    <rect x="124" y="168" width="12" height="10" rx="2"/>
+    <rect x="224" y="168" width="12" height="10" rx="2"/>
+    <rect x="124" y="310" width="12" height="10" rx="2"/>
+    <rect x="224" y="310" width="12" height="10" rx="2"/>
+    <rect x="124" y="416" width="12" height="10" rx="2"/>
+    <rect x="224" y="416" width="12" height="10" rx="2"/>
+  </g>
+  <path d="M 130,88 V 124 M 130,178 V 192 M 230,178 V 192 M 130,220 V 228 M 230,220 V 228 M 130,320 V 334 M 230,320 V 334 M 130,362 V 370 M 230,362 V 370 M 130,426 V 440 M 230,426 V 440 M 130,468 V 476 M 230,468 V 476" stroke="currentColor" strokeWidth="2" fill="none"/>
+  {/* Pending interval [10, 20] in steps 2 and 3 */}
+  <rect x="130" y="192" width="100" height="28" fill="currentColor" fillOpacity="0.07"/>
+  <rect x="130" y="334" width="100" height="28" fill="currentColor" fillOpacity="0.07"/>
+  <path d="M 130,192 H 230 M 130,220 H 230 M 130,334 H 230 M 130,362 H 230" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4" fill="none"/>
+  {/* Required successor, still absent in steps 2 and 3 */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2 4">
+    <rect x="240" y="192" width="90" height="28" rx="4"/>
+    <rect x="240" y="334" width="90" height="28" rx="4"/>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="285" y="211">needed</text>
+    <text x="285" y="353">needed</text>
+  </g>
+  {/* Selected interval in step 4 */}
+  <rect x="130" y="440" width="100" height="28" fill="#76B900" fillOpacity="0.18"/>
+  <path d="M 130,440 H 230 M 130,468 H 230" stroke="#5F9000" strokeWidth="2.5" fill="none"/>
+  {/* Retained IMU samples */}
+  <g fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.75">
+    <circle cx="80" cy="116" r="6.5"/>
+    <circle cx="80" cy="206" r="6.5"/>
+    <circle cx="130" cy="206" r="6.5"/>
+    <circle cx="180" cy="206" r="6.5"/>
+    <circle cx="80" cy="348" r="6.5"/>
+    <circle cx="130" cy="348" r="6.5"/>
+    <circle cx="180" cy="348" r="6.5"/>
+    <circle cx="230" cy="348" r="6.5"/>
+  </g>
+  {/* Selected IMU samples: diamonds outside the interval, circles inside it */}
+  <g fill="currentColor" stroke="#5F9000" strokeWidth="2.5" strokeLinejoin="round">
+    <polygon points="80,445 89,454 80,463 71,454"/>
+    <circle cx="130" cy="454" r="6.5"/>
+    <circle cx="180" cy="454" r="6.5"/>
+    <circle cx="230" cy="454" r="6.5"/>
+    <polygon points="280,445 289,454 280,463 271,454"/>
+  </g>
+  {/* New arrival in each step */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3">
+    <rect x="118" y="72" width="24" height="22" rx="5"/>
+    <rect x="218" y="162" width="24" height="22" rx="5"/>
+    <circle cx="230" cy="348" r="12"/>
+    <circle cx="280" cy="454" r="14"/>
+  </g>
+  {/* Camera Exact selection in step 4 */}
+  <rect x="218" y="410" width="24" height="22" rx="5" fill="none" stroke="#5F9000" strokeWidth="2.5"/>
+  <text x="248" y="426" fontSize="15" fill="currentColor">Exact</text>
+  {/* Region and role labels */}
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="80" y="246">before 10</text>
+    <text x="180" y="246">[10, 20]</text>
+    <text x="285" y="246">after 20</text>
+    <text x="80" y="494">outer</text>
+    <text x="180" y="494">interior</text>
+    <text x="280" y="494">outer</text>
+    <text x="180" y="530">selected IMU batch: 5, 10, 15, 20, 25</text>
+  </g>
+  <path d="M 70,502 V 509 H 290 V 502" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+  {/* Close checks, in engine order */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="31" y="542" width="102" height="26" rx="13"/>
+    <rect x="151" y="542" width="80" height="26" rx="13"/>
+    <rect x="249" y="542" width="58" height="26" rx="13"/>
+    <line x1="135" y1="555" x2="146" y2="555" markerEnd="url(#atp-bracket-steps-arrow)"/>
+    <line x1="233" y1="555" x2="244" y2="555" markerEnd="url(#atp-bracket-steps-arrow)"/>
+  </g>
+  <path d="M 115,555 L 119,559 L 126,550 M 212,555 L 216,559 L 223,550 M 288,555 L 292,559 L 299,550" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="39" y="560">successor</text>
+    <text x="159" y="560">history</text>
+    <text x="257" y="560">size</text>
+  </g>
+</svg>
+
+Each step uses the same capture-time positions, with `lookbehind = 1`, `lookahead = 1` and `max_samples = 8`. Step captions give arrival order. Horizontal distance is capture time, not processing time. The window stays pending until a sample strictly after 20 exists. The engine then checks the successor, predecessor history and total size, in that order. The five selected samples are within the size limit.
+
+<svg viewBox="0 0 500 856" role="img" aria-labelledby="atp-bracket-variants-title" aria-describedby="atp-bracket-variants-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="atp-bracket-variants-title">Three single changes to the same IMU bracket, each with its result</title>
+  <desc id="atp-bracket-variants-desc">Three single changes to the same capture-time trace, each with its result to the right. Numbers are capture times in illustrative units. Case 1: IMU 25 arrives before camera 20, so the bracket is complete when camera 20 arrives. Result: selected, with the five IMU samples 5, 10, 15, 20 and 25. Case 2: there is no IMU sample before 10. After IMU 25 supplies the successor, the window closes with kInsufficientHistory. Case 3: max_samples is 4 and all five samples are present, so the window closes with kWindowSampleLimit and delivers no partial batch. Neither terminal case has a selected batch. Each one forks by the declared missing policy: SafeDefault permits a degraded path with no IMU samples, or Skip produces no activation. Any activation still needs the rest of the contract.</desc>
+  <defs>
+    <marker id="atp-bracket-variants-arrow" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto">
+      <path d="M 0,0 L 11,5.5 L 0,11 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Case lanes: x = 70 + 6.4 * (capture time - 5), so 5, 10, 15, 20 and 25 map to 70, 102, 134, 166 and 198. Results start at x = 258. Lane centers are y = 200, 412 and 696. */}
+  <g fontSize="22" fill="currentColor">
+    <text x="14" y="28">capture time</text>
+    <text x="258" y="28">result</text>
+  </g>
+  <g fontSize="22" fill="currentColor" textAnchor="middle">
+    <text x="70" y="60">5</text>
+    <text x="102" y="60">10</text>
+    <text x="134" y="60">15</text>
+    <text x="166" y="60">20</text>
+    <text x="198" y="60">25</text>
+  </g>
+  {/* Case captions span the width. Each lane and its result sit below its caption. */}
+  <g fontSize="22" fill="currentColor">
+    <text x="14" y="104" fontWeight="600">IMU 25 arrives before camera 20</text>
+    <text x="14" y="134">complete when camera 20 arrives</text>
+    <text x="14" y="286" fontWeight="600">No IMU sample before 10</text>
+    <text x="14" y="316">After 25 arrives: <tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">kInsufficientHistory</tspan></text>
+    <text x="14" y="570"><tspan fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">max_samples = 4</tspan><tspan fontWeight="600">, same five samples</tspan></text>
+    <text x="14" y="600">After 25 arrives: <tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">kWindowSampleLimit</tspan></text>
+  </g>
+  {/* Camera anchors 10 and 20 in each case, with interval boundary marks */}
+  <g fill="currentColor">
+    <rect x="93" y="150" width="18" height="15" rx="3"/>
+    <rect x="157" y="150" width="18" height="15" rx="3"/>
+    <rect x="93" y="362" width="18" height="15" rx="3"/>
+    <rect x="157" y="362" width="18" height="15" rx="3"/>
+    <rect x="93" y="646" width="18" height="15" rx="3"/>
+    <rect x="157" y="646" width="18" height="15" rx="3"/>
+  </g>
+  <path d="M 102,165 V 179.5 M 166,165 V 179.5 M 102,220.5 V 231 M 166,220.5 V 231 M 102,377 V 391.5 M 166,377 V 391.5 M 102,432.5 V 443 M 166,432.5 V 443 M 102,661 V 675.5 M 166,661 V 675.5 M 102,716.5 V 727 M 166,716.5 V 727" stroke="currentColor" strokeWidth="3" fill="none"/>
+  {/* Case 1: the bracket is complete, so it is selected */}
+  <rect x="102" y="179.5" width="64" height="41" fill="#76B900" fillOpacity="0.18"/>
+  <path d="M 102,179.5 H 166 M 102,220.5 H 166" stroke="#5F9000" strokeWidth="3.7" fill="none"/>
+  <g fill="currentColor" stroke="#5F9000" strokeWidth="3.7" strokeLinejoin="round">
+    <polygon points="70,187 83,200 70,213 57,200"/>
+    <circle cx="102" cy="200" r="9.5"/>
+    <circle cx="134" cy="200" r="9.5"/>
+    <circle cx="166" cy="200" r="9.5"/>
+    <polygon points="198,187 211,200 198,213 185,200"/>
+  </g>
+  {/* Cases 2 and 3: closed without a selected batch */}
+  <path d="M 102,391.5 H 166 M 102,432.5 H 166 M 102,675.5 H 166 M 102,716.5 H 166" stroke="currentColor" strokeWidth="1.8" fill="none"/>
+  <rect x="14" y="391.5" width="72" height="41" rx="6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeDasharray="3 6"/>
+  <g fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="2.6">
+    <circle cx="102" cy="412" r="9.5"/>
+    <circle cx="134" cy="412" r="9.5"/>
+    <circle cx="166" cy="412" r="9.5"/>
+    <circle cx="198" cy="412" r="9.5"/>
+    <circle cx="70" cy="696" r="9.5"/>
+    <circle cx="102" cy="696" r="9.5"/>
+    <circle cx="134" cy="696" r="9.5"/>
+    <circle cx="166" cy="696" r="9.5"/>
+    <circle cx="198" cy="696" r="9.5"/>
+  </g>
+  <path d="M 56,738 V 748 H 212 V 738" stroke="currentColor" strokeWidth="2.2" strokeDasharray="7 4.4" fill="none"/>
+  {/* The arrival that closes each case */}
+  <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeDasharray="4.4 4.4">
+    <rect x="150" y="143" width="32" height="29" rx="7"/>
+    <circle cx="198" cy="412" r="17.6"/>
+    <circle cx="198" cy="696" r="17.6"/>
+  </g>
+  {/* Each case points to its own result. Terminal cases fork by the declared missing policy. */}
+  <g fill="none" stroke="currentColor" strokeWidth="2.2">
+    <path d="M 220,200 H 251" markerEnd="url(#atp-bracket-variants-arrow)"/>
+    <path d="M 220,412 H 236 M 236,378 V 482 M 220,696 H 236 M 236,662 V 766"/>
+    <path d="M 236,378 H 251" markerEnd="url(#atp-bracket-variants-arrow)"/>
+    <path d="M 236,482 H 251" markerEnd="url(#atp-bracket-variants-arrow)"/>
+    <path d="M 236,662 H 251" markerEnd="url(#atp-bracket-variants-arrow)"/>
+    <path d="M 236,766 H 251" markerEnd="url(#atp-bracket-variants-arrow)"/>
+  </g>
+  {/* Result marks: a selected batch, a degraded activation without samples, and no activation */}
+  <rect x="258" y="184" width="56" height="32" rx="6" fill="none" stroke="currentColor" strokeWidth="2.6"/>
+  <g fill="#76B900" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="266" cy="200" r="4.4"/>
+    <circle cx="276" cy="200" r="4.4"/>
+    <circle cx="286" cy="200" r="4.4"/>
+    <circle cx="296" cy="200" r="4.4"/>
+    <circle cx="306" cy="200" r="4.4"/>
+  </g>
+  <g fill="none" stroke="currentColor" strokeWidth="2.6" strokeDasharray="7 4">
+    <rect x="258" y="362" width="56" height="32" rx="6"/>
+    <rect x="258" y="646" width="56" height="32" rx="6"/>
+  </g>
+  <g fill="none" stroke="currentColor" strokeWidth="2.6" strokeDasharray="2 5" strokeLinecap="round">
+    <rect x="258" y="466" width="56" height="32" rx="6"/>
+    <rect x="258" y="750" width="56" height="32" rx="6"/>
+  </g>
+  <path d="M 258,498 L 314,466 M 258,782 L 314,750" stroke="currentColor" strokeWidth="2.6" fill="none"/>
+  <g fontSize="22" fill="currentColor">
+    <text x="50" y="420" textAnchor="middle">none</text>
+    <text x="14" y="776">5 candidates, limit 4</text>
+    <text x="322" y="194" fontWeight="600">Selected</text>
+    <text x="322" y="224">5 IMU samples</text>
+    <text x="258" y="350">missing policy</text>
+    <text x="322" y="386" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">SafeDefault</text>
+    <text x="322" y="416">degraded path</text>
+    <text x="322" y="446">no IMU samples</text>
+    <text x="241" y="458">or</text>
+    <text x="322" y="490" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">Skip</text>
+    <text x="322" y="520">no activation</text>
+    <text x="258" y="634">missing policy</text>
+    <text x="322" y="670" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">SafeDefault</text>
+    <text x="322" y="700">degraded path</text>
+    <text x="322" y="730">no IMU samples</text>
+    <text x="241" y="742">or</text>
+    <text x="322" y="774" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">Skip</text>
+    <text x="322" y="804">no activation</text>
+    <text x="14" y="842">Activation still needs the rest of the contract</text>
+  </g>
+</svg>
+
+Each result appears beside its case. A complete bracket is selected. A terminal reason leaves no selected batch, and the declared missing policy decides what follows. `SafeDefault` permits a degraded activation with the reason and no IMU samples, while `Skip` produces no activation. Without a sample before 10, the engine still waits for 25 before reporting `kInsufficientHistory`. With `max_samples = 4`, the complete five-sample bracket reports `kWindowSampleLimit` instead of delivering a partial batch. That bound is valid because it is at least `lookbehind + lookahead + 1 = 3`. Any activation still depends on the rest of the contract.
+
+A closed result can become an activation subject to the rest of the contract.
+`Exact` selects the stored current camera anchor, 20 here. A close witness
+supplies the activation's logical close coordinate.
+
+| Terminal selection reason | When it is decided | Missing-policy effect |
+|---|---|---|
+| `kInsufficientHistory` | Successors are available, but the required strict predecessors are not | `Skip` suppresses activation. `SafeDefault` permits the degraded path |
+| `kWindowSampleLimit` | A complete bracket would exceed `max_samples` | Same policy, without a truncated batch |
+| `kWindowPendingLimit` | A new anchor arrives while the bounded pending set is full | Same policy for the new interval. Existing pending windows remain |
+| `kWindowTimeout` | A readiness pass observes timeout eligibility, described below | Same policy, without a partial bracket |
+| `kEndOfStream` | The bracketed stream ends with an incomplete pending window | Same policy for that terminal window |
+
+Declare `Skip{}` or `SafeDefault{}` explicitly for the bracketed input.
+`ReuseLast{}` is invalid for batch selectors and is rejected during contract
+validation. Both lookaround counts must be positive. `max_samples` counts the
+outer samples **and** the entire inclusive interior. It must admit at least
+`lookbehind + lookahead + 1`. Use a **blocking queue**: drop-oldest policy is
+rejected. An explicit queue depth must cover
+`max_samples * max_pending_windows`. An omitted depth is derived from that
+product. Size both bounds for
+the expected rates and burstiness: a 1 kHz IMU with a 60 Hz camera can require
+about 17 interval samples plus brackets, so a bound of 16 is too small.
+
+A pending-limit closure still advances the previous-anchor boundary to the
+new anchor. The following interval starts there, leaving the skipped interval
+separate.
+
+**Silent is different from ended.** While the IMU stream remains open but silent,
+windows can time out and `SafeDefault` can produce degraded camera-only
+activations. When the IMU ends, incomplete pending windows close with
+`kEndOfStream`. Closing a window does not itself guarantee an immediate
+activation. While the camera input remains open, the IMU end-of-stream event
+alone cannot trigger one.
+
+**Later camera anchors create no new intervals.** A later arrival can still
+trigger an activation for a previously pending window, using its terminal
+result and retained camera anchor. `SafeDefault` permits a degraded
+activation if the rest of the contract admits it. `Skip` suppresses it.
+After outstanding results are handled, `SafeDefault` cannot sustain camera-only
+fusion from new camera frames. The session and camera can keep running.
+
+<Warning>
+  **Current runtime limit: one bracketed input per operator.** Use exactly one
+  `BracketedWindow` input. Authoring and compilation currently accept more, but
+  the runtime rejects a second bracketed selector when preparing the first
+  activation and fails the run with `RUNTIME_PORT_BINDING_UNAVAILABLE`.
+</Warning>
+
+### Capture time, waiting, and compute time
+
+Capture time decides membership. The current implementation also derives
+**timeout eligibility** from the oldest pending window's current-anchor capture
+time, converted to its wait clock, plus `max_wait`. It does not restart the
+wait when the windowing logic ingests that anchor.
+
+The following worked example uses one admitted clock and a shorter wait than
+the 20 ms contract above:
+
+```cpp
+// In contract() above, with std::chrono_literals in scope:
+result.trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 10ms});
+```
+
+A camera frame captured at 10 ms has already primed the selector. The next
+frame is captured at 20 ms, and the windowing logic ingests it at 28 ms. No IMU
+sample after 20 ms has arrived, so the interval `[10, 20]` opens as a pending
+window. Its timeout threshold is 20 ms + 10 ms = 30 ms. At or after 30 ms, a
+readiness pass can find the window still pending and enqueue a timeout witness.
+When a later pass ingests that witness, the window closes with `kWindowTimeout`
+and the missing policy decides what follows. `SafeDefault` permits a degraded
+activation with no IMU samples. `Skip` suppresses the activation.
+
+{/*
+Mermaid equivalent of the worked timeout figure below.
+All times are on one admitted wait clock, in ms.
+
+flowchart TD
+  P["Primed by camera 10. No IMU sample after 20 ms yet"] --> C
+  C["Camera captures the frame at 20 ms"] --> I["Windowing ingests it at 28 ms. Window 10 to 20 opens, pending"]
+  C -.->|max_wait = 10 ms from capture| T["Timeout threshold at 30 ms"]
+  I --> O["A readiness pass at or after 30 ms finds the window still pending and enqueues a timeout witness"]
+  T --> O
+  O --> W["A later pass ingests the witness. The window closes with kWindowTimeout. Selection applies the missing policy"]
+  W -->|SafeDefault| S["Degraded activation, no IMU samples. compute runs later"]
+  W -->|Skip| K["No activation"]
+  N["Activation still needs the rest of the contract. No step has a promised time"]
+*/}
+<svg viewBox="0 0 340 584" role="img" aria-labelledby="atp-wait-clock-title" aria-describedby="atp-wait-clock-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="atp-wait-clock-title">Worked timeout example: from a pending window to a conditional activation</title>
+  <desc id="atp-wait-clock-desc">A worked timeout example on one admitted clock in milliseconds, with OnWindow max_wait 10 ms. The selector is already primed by camera 10, and no IMU sample after 20 ms has arrived. A camera frame is captured at 20 ms. The windowing logic ingests it at 28 ms, and the window from 10 to 20 opens and stays pending. The timeout threshold is capture plus max_wait: 20 plus 10 equals 30 ms. Then, in causal order and not to scale: at or after 30 ms, if the window is still pending, a readiness pass finds it pending and enqueues a timeout witness. A later pass ingests the witness, the window closes with kWindowTimeout, and selection applies the missing policy. With SafeDefault, a degraded activation with no IMU samples can follow, and compute() runs later. With Skip, there is no activation. Activation still needs the rest of the contract, and no step has a promised time.</desc>
+  <defs>
+    <marker id="atp-wait-clock-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Clock axis: x = 30 + 12 * (t - 16) for t in ms, so 20, 28 and 30 map to 78, 174 and 198. The flow below it is causal order, not to scale. */}
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="16" fontWeight="600">Same admitted clock, ms</text>
+    <text x="14" y="36">Primed by camera 10, no IMU after 20 yet</text>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="78" y="60">20</text>
+    <text x="174" y="60">28</text>
+    <text x="198" y="60">30</text>
+  </g>
+  <path d="M 20,72 H 326" stroke="currentColor" strokeWidth="1.75" fill="none" markerEnd="url(#atp-wait-clock-arrow)"/>
+  <path d="M 78,66 V 78 M 174,66 V 78 M 198,66 V 78" stroke="currentColor" strokeWidth="1.75" fill="none"/>
+  {/* Events on the clock: capture, windowing ingestion, capture-derived threshold */}
+  <rect x="72" y="91" width="12" height="10" rx="2" fill="currentColor"/>
+  <polygon points="168,120 180,120 174,131" fill="currentColor"/>
+  <polygon points="198,168 206,176 198,184 190,176" fill="currentColor" stroke="#5F9000" strokeWidth="2.5" strokeLinejoin="round"/>
+  <path d="M 78,198 V 206 H 198 V 198" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+  {/* Causal sequence for the still-pending path */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="14" y="262" width="312" height="72" rx="8"/>
+    <rect x="14" y="352" width="312" height="72" rx="8"/>
+    <rect x="14" y="456" width="182" height="72" rx="8"/>
+    <rect x="206" y="456" width="120" height="32" rx="8"/>
+  </g>
+  <g fill="none" stroke="currentColor" strokeWidth="1.75">
+    <path d="M 198,206 V 261" markerEnd="url(#atp-wait-clock-arrow)"/>
+    <path d="M 170,334 V 351" markerEnd="url(#atp-wait-clock-arrow)"/>
+    <path d="M 105,424 V 455" markerEnd="url(#atp-wait-clock-arrow)"/>
+    <path d="M 266,424 V 455" markerEnd="url(#atp-wait-clock-arrow)"/>
+  </g>
+  <g fontSize="15" fill="currentColor">
+    <text x="92" y="101">camera captures the frame</text>
+    <text x="162" y="130" textAnchor="end">windowing ingests it</text>
+    <text x="162" y="150" textAnchor="end">window pending</text>
+    <text x="212" y="181">threshold</text>
+    <text x="126" y="226" textAnchor="middle"><tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">max_wait</tspan> = 10 ms</text>
+    <text x="206" y="246">if still pending</text>
+    <text x="14" y="250">causal order, not to scale</text>
+    <text x="26" y="284">A readiness pass at or after 30 ms</text>
+    <text x="26" y="304">finds the window still pending</text>
+    <text x="26" y="324">and enqueues a timeout witness</text>
+    <text x="26" y="374">A later pass ingests the witness.</text>
+    <text x="26" y="394">The window closes: <tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">kWindowTimeout</tspan></text>
+    <text x="26" y="414">Selection applies the missing policy</text>
+    <text x="113" y="446" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">SafeDefault</text>
+    <text x="274" y="446" fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">Skip</text>
+    <text x="26" y="478">degraded activation</text>
+    <text x="26" y="498">no IMU samples</text>
+    <text x="26" y="518"><tspan fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">compute()</tspan> runs later</text>
+    <text x="218" y="477">no activation</text>
+    <text x="14" y="552">Activation still needs the rest of the contract</text>
+    <text x="14" y="574">No step has a promised time.</text>
+  </g>
+</svg>
+
+The figure follows the still-pending path. If ingestion is delayed beyond
+`max_wait`, the window is eligible for timeout immediately. If an IMU successor is ingested
+before the timeout witness is generated, the window closes through the usual
+successor, history and size checks instead. A complete bracket that is already
+cached closes as soon as the frame is ingested. The wait counts from capture
+time, so 28 ms + 10 ms = 38 ms is not the threshold. Eligibility, timeout
+observation and compute are separate events, and none has a promised time.
+
+<Warning>
+  **Current timing behavior.** Capture-based timeout eligibility is an
+  implementation detail that may change. It is not a wall-clock deadline or
+  an ingestion-to-compute latency bound. Use capture timestamps and admitted
+  clock conversions consistently. The current lowering uses the wait-clock
+  comparison domain for bracket membership. This same-clock illustration does
+  not qualify arbitrary cross-clock camera/IMU configurations.
+</Warning>
+
+A producer restart, a capture timestamp that goes backwards, or a clock-domain
+change resets retained history and pending windows. A discontinuous anchor
+primes again. After a sample-side reset, the next anchor primes. No interval
+bridges the reset. Do not rely on undelivered closed results surviving a
+producer restart. Lifecycle readiness and restart are separate from data
+alignment. See
+[Lifecycle and Restart in Depth](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth#three-meanings-of-in-sync).
+
+### Read the selected batch
+
+Use `selected_batch()` or `for_each_selected(...)`. `receive()` is scalar-only
+and reports a cardinality mismatch for a batch-selected input:
+
+```cpp
+if (imu.selection().state == holoscan::InputState::kSelected) {
+  auto batch = imu.selected_batch();
+  if (!batch) {
+    return holoscan::make_unexpected(std::move(batch).error());
+  }
+  // Application helper: use interval endpoints and avoid double-counting
+  // shared support samples. Its implementation depends on the sensor model.
+  process_window(*batch);
+}
+```
+
+`process_window` above is an illustrative application helper, not an SDK API.
+The immutable view is valid only during the current activation, is sized and
+indexable, and can be iterated repeatedly. It is not contiguous storage: there
+is no `data()` pointer or span conversion. Retain derived application state,
+not the view or references into it.
+
+## Multi-rate composition recipes
+
+The building blocks above compose into a small set of recurring shapes for
+graphs whose inputs run at different rates. Each recipe lowers to explicit
+plan records — read sets, sample bounds, timing — so `compile()` can check it
+and the tooling can show it.
+
+### Fast anchor, slow context
+
+One input owns the cadence; the others contribute their freshest value.
+Trigger on the fast input, select the slow ones with `LatestWithin`, and
+decide staleness policy explicitly:
+
+```cpp
+c.trigger(holoscan::OnEach{fast})
+ .input(slow, holoscan::LatestWithin{.max_age = 100ms})
+ .on_missing(slow, holoscan::ReuseLast{.max_age = 200ms});
+```
+
+This is the workhorse pattern — the
+[slow/fast fusion example](/holoscan/sdk-user-guide/examples/slow-fast-fusion)
+is built on it. `OnEach` pins the fast driver implicitly; only the side input
+needs an explicit selector. Use this pattern whenever one stream is clearly
+the beat-keeper.
+
+### Symmetric alignment
+
+When no input owns the cadence and you need samples that *belong together*,
+use `OnAligned` over a closed port set with an inclusive head-spread window,
+selecting every member with `Exact`:
+
+```cpp
+c.trigger(holoscan::OnAligned{.ports = holoscan::ports(camera, imu), .window = 2ms})
+ .input(camera, holoscan::Exact{})
+ .input(imu, holoscan::Exact{});
+```
+
+Alignment consumes deterministically from the FIFO heads; members not
+selected with `Exact` are rejected when the plan is compiled, not at the
+`.trigger(...)` call site.
+
+### Windowed integration
+
+When each slow anchor needs the *neighborhood* of a fast stream rather than
+one aligned sample, combine `OnWindow` with `BracketedWindow` as shown in the
+previous section. The first anchor primes history. Subsequent anchors define
+intervals. Window closure can make an activation eligible, without blocking a
+callback. `max_wait` controls timeout eligibility as described above, while
+`max_pending_windows` bounds simultaneously pending intervals.
+
+### Clock-paced batch drain
+
+For consumers that should run at their own rate and absorb everything that
+arrived since the last activation — statistics, logging, batch upload — pair
+a periodic trigger with a consume-all batch:
+
+```cpp
+c.trigger(holoscan::OnClock{.period = 33ms})
+ .input(events, holoscan::DrainAll{});
+```
+
+Late ticks coalesce (only the most recent due tick fires, preserving phase),
+and the batch bound is derived from the queue geometry at compile time. Read
+the result with `selected_batch()`; a valid empty batch is an empty view, not
+an error. For clock selection and time domains, see
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+### Derived and divided rates
+
+To run an operator at a fraction of an input's rate, prefer making the rate
+relationship a declared parameter of your operator and let the contract
+express it with the vocabulary above (for example, an `OnClock` period derived
+from a typed parameter) rather than counting samples imperatively inside
+`compute()`. A declared rate lands in the plan where tooling can see it; a
+hidden counter does not.
+
+## Recap
+
+- `OnPredicate` activates on a data-dependent condition: pick an evaluation
+  source (`OnInputUpdate` or `OnClock`), a firing rule (edge-triggered
+  `kOnFalseToTrue` by default), and keep the callable cheap, nonthrowing,
+  and admission-friendly — noncapturing or small and trivially copyable.
+- Predicate state is transactional and constrained to nothrow operations;
+  configuration is immutable and identity-hashed; qualified `PredicateKey`
+  identities feed replay evidence.
+- `BracketedWindow` delivers an all-or-nothing, non-destructive,
+  event-time-ordered bracket around consecutive anchors. Size `max_samples` for the
+  worst case, because overflow delivers nothing and reports
+  `kWindowSampleLimit`.
+- Batch-selected inputs are read with `selected_batch()` /
+  `for_each_selected(...)`, never `receive()`.
+- Four recipes cover most multi-rate graphs: fast anchor + `LatestWithin`,
+  `OnAligned` + `Exact`, `OnWindow` + `BracketedWindow`, and `OnClock` +
+  `DrainAll`.
+
+Next: [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).

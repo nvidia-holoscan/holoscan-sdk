@@ -6,13 +6,25 @@ The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/h
 
 - [Getting Started](#getting-started)
 - [Obtaining the Holoscan SDK](#obtaining-the-holoscan-sdk)
+- [Roadmap](#roadmap)
 - [AI Coding Assistants](#ai-coding-assistants)
 - [Troubleshooting and Feedback](#troubleshooting-and-feedback)
-- [Additional Notes](#additional-notes)
+- [Contributing to Holoscan SDK](#contributing-to-holoscan-sdk)
+- [Repository structure](#repository-structure)
+- [License](#license)
 
 ## Getting Started
 
-Visit the Holoscan User Guide to get started with the Holoscan SDK: <https://docs.nvidia.com/holoscan/sdk-user-guide/getting_started.html>
+Start with a prebuilt [NGC container](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#ngc-container),
+[Debian package](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#debian-package),
+or [Python wheel](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#python-wheel),
+then run a sample application from the user guide. Select the documentation version that
+matches your installed SDK. For this 5.x development branch, follow the checked-in
+[Getting Started guide](./docs/getting_started.mdx).
+
+Building from source is documented in [DEVELOP.md](./DEVELOP.md). Running the SDK
+test suite with `./run test` requires GPU access through the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 
 The Holoscan User Guide includes:
 
@@ -27,34 +39,43 @@ community projects and reusable components available for your Holoscan project.
 
 The Holoscan User Guide documents several options to install and run the Holoscan SDK:
 
-- As an [NGC Container 🐋](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#sd-tab-item-2)
-- As a [Debian Package 📦️](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#sd-tab-item-3)
-- As a [Python Wheel 🐍](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#sd-tab-item-4)
+- As an [NGC Container 🐋](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#ngc-container)
+- As a [Debian Package 📦️](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#debian-package)
+- As a [Python Wheel 🐍](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#python-wheel)
 
-Visit the [Holoscan User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#not-sure-what-to-choose) for
+Visit the [Holoscan User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#not-sure-what-to-choose) for
 guidance to help choose which installation option may be right for your use case.
 
 If the options above do not support your use case, you may prefer to [build the SDK from source](./DEVELOP.md).
 
-Please review [Holoscan SDK prerequisites](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#prerequisites)
+Please review [Holoscan SDK prerequisites](https://docs.nvidia.com/holoscan/sdk-user-guide/setup/sdk-installation#prerequisites)
 before getting started.
+
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for how monthly releases are planned, what the
+5.x series is aiming at, and where to follow live milestones.
+Release planning is tracked with [GitHub Milestones](https://github.com/nvidia-holoscan/holoscan-sdk/milestones).
+Issues labeled `needs triage` sit outside a milestone and are revisited each month.
+See the [GitHub Releases](https://github.com/nvidia-holoscan/holoscan-sdk/releases) page for what shipped in recent versions.
 
 ## AI Coding Assistants
 
-The Holoscan team publishes agent-readable skills that help you install, run, and explore
-the SDK from inside AI coding assistants such as Claude Code, Cursor, and GitHub Copilot CLI.
-The skills live in the public [NVIDIA/skills](https://github.com/NVIDIA/skills) repository
-and are installed with the bundled `skills` CLI, which runs through `npx` and prompts you
-to choose a skill and an install destination; no manual cloning required:
+The Holoscan SDK user guide includes
+[AI Coding Assistants](./docs/ai_coding_agents.mdx)
+guidance for grounding AI coding assistants in the 5.x API, examples, and
+compile-time diagnostics.
+
+Holoscan also publishes coding-assistant skills in [`skills/`](./skills/README.md).
+Install them from the NVIDIA catalog with the `skills` CLI:
 
 ```bash
 npx skills add nvidia/skills
 ```
 
-See [`skills/`](./skills/README.md) for the list of available skills and a feedback link,
-or the [AI Coding-Assistant Skills](https://docs.nvidia.com/holoscan/sdk-user-guide/ai_skills.html)
-page in the user guide. Advanced install options are documented in the
-[skills CLI advanced install guide](https://docs.nvidia.com/skills/advanced-install).
+Check each skill's supported SDK versions before using it with this development
+branch. See [skills/README.md](./skills/README.md) for install options, supported
+workflows, and contribution limits.
 
 ## Troubleshooting and Feedback
 
@@ -68,20 +89,28 @@ We appreciate community discussion and feedback in support of Holoscan platform 
 
 Holoscan SDK is developed internally and released as open source software. We welcome community contributions
 and may include them in Holoscan SDK releases at our discretion. Please refer to the Holoscan SDK
-[Contributing Guide](/CONTRIBUTING.md) for more information.
+[Contributing Guide](./CONTRIBUTING.md) for more information.
 
 ## Repository structure
 
 The repository is organized as such:
 
+- `benchmark/`: SDK performance coverage
+- `ci/`: ABI export-macro allowlists and related CI artifacts
 - `cmake/`: CMake configuration files
-- `data/`: directory where data will be downloaded
+- `data/`: created during the build when dataset download is enabled
+- `docs/`: user-guide MDX sources and images
 - `examples/`: source code for the examples
-- `gxf_extensions/`: source code for the holoscan SDK gxf codelets
 - `include/`: source code for the holoscan SDK core
-- `modules/`: source code for the holoscan SDK modules
-- `patches/`: patch files applied to dependencies
+- `modules/`: source code for optional SDK modules, including Inference, Vision, and Visualization
 - `python/`: python bindings for the holoscan SDK
+- `schemas/`: FlatBuffers schema definitions
 - `scripts/`: utility scripts
+- `skills/`: agent-readable skills for installing and using the SDK from an AI coding assistant
 - `src/`: source code for the holoscan SDK core
 - `tests/`: tests for the holoscan SDK
+
+## License
+
+Holoscan SDK is licensed under the [Apache License, Version 2.0](./LICENSE.txt).
+Third-party notices are listed in [NOTICE.txt](./NOTICE.txt).

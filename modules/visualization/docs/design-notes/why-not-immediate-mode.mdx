@@ -1,0 +1,57 @@
+# Why not 4.x immediate mode
+
+*File references are to the HoloViz 4.x tree on `main`, not `main-5x`.*
+
+HoloViz 4.x is an immediate-mode API: the application redescribes the whole scene
+every frame and the renderer works out at runtime which resources it can reuse. That
+buys flexibility, and charges for it every frame:
+
+- Layer objects are constructed and compared each frame, with reuse decided by a
+  runtime matching cache (`modules/visualization/src/context.cpp`, `end_layer` /
+  `can_be_reused`).
+- Every image and geometry buffer carries its own external-memory import and its own
+  pair of external semaphores, driven through a per-resource access state machine
+  (`modules/visualization/src/vulkan/resource.cpp`).
+- The host blocks on per-image fences before reusing command buffers
+  (`vulkan_app.cpp`, `prepare_frame`).
+- A structural change — new tensor name, size, or format — triggers fresh Vulkan
+  allocation and fresh CUDA import mid-frame.
+- CPU-visible staging uploads and transfer passes are part of normal rendering.
+- Pitch-linear output requires a framebuffer read plus an extra copy, and the read
+  blocks the host on a fence (`vulkan_app.cpp`, `read_framebuffer`).
+- Parts of the surface over-promise: `ImageCudaArray` has always been a stub that
+  throws "Not implemented" (`image_layer.cpp`).
+
+## Why that cost is misplaced
+
+It does not match how HoloViz is actually used. In the applications surveyed, scene
+*structure* is stable from startup: which layers exist, their order, their formats,
+and their maximum capacities are all known before the first frame. What changes per
+frame is pixels, coordinates, labels, counts, colors, and a little layer state.
+
+Those applications pay, every frame, for structural dynamism they never exercise.
+
+## The consequence for this module
+
+Declare the scene once, then execute it. That single decision is why the current
+headers look the way they do:
+
+- `LayerStack` is captured at construction, and every layer states its bounds
+  (`max_width`, `max_primitives`, `max_glyphs`), so the full resource set is knowable
+  before the first frame.
+- `RenderBackend` splits into `allocate()` (all GPU allocation) → `build()` (all
+  pipeline compilation) → per-frame record/submit that does neither.
+- Beneath that, HoloViz is built for the same shape: `DevicePolicy::kSealed`,
+  usage-flag-free buffers, deduplicated sampler values, and `kReusable` command lists
+  that are recorded once and replayed.
+
+The trade is deliberate: a scene that cannot be restructured at runtime, in exchange
+for a frame path with no allocation, no pipeline creation, and no host
+synchronization. Applications that genuinely need per-frame structural change are not
+this module's target, as per our explicit and focused design goals.
+
+A second gap motivated the split as much as the first: 4.x has no supported
+lower-level rendering foundation. An application needing an unusual pipeline could
+not reuse HoloViz's interop and frame-lifecycle machinery without also taking its
+immediate-mode layer API. Hence a rendering substrate (`holoviz`) that stands on
+its own beneath the layer renderer.

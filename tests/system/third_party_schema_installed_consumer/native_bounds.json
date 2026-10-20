@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schemas": {
+    "app3p.Frame": {
+      "max_prepared_bytes": 1024,
+      "fields": {
+        "label": {
+          "max_bytes": 128
+        }
+      }
+    }
+  }
+}

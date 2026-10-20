@@ -1,0 +1,45 @@
+From a2497c64fca32d74970b9a708b7f5f8372c8eaed Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Mon, 2 Mar 2026 08:46:11 -0800
+Subject: [PATCH] build: install tl-expected for Holoscan packaging
+
+Holoscan packages tl-expected alongside SDK libraries and CMake package
+files. Route its nested install metadata through the SDK library layout
+used by the dependency package.
+
+Upstream-Status: Inappropriate [holoscan specific]
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ddab64e3..4d0a4a8d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -39,7 +39,7 @@ endif()
+ configure_package_config_file(
+   "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}-config.cmake.in"
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+-  INSTALL_DESTINATION "share/cmake/${PROJECT_NAME}")
++  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+ 
+ write_basic_package_version_file(
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+@@ -48,17 +48,17 @@ write_basic_package_version_file(
+ 
+ install(TARGETS expected
+   EXPORT ${PROJECT_NAME}-targets
+-  INCLUDES DESTINATION "${CMAKE_INSTALL_DATADIR}")
++  INCLUDES DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+ 
+ install(EXPORT ${PROJECT_NAME}-targets
+-  DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}"
++  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+   NAMESPACE tl::
+   FILE "${PROJECT_NAME}-targets.cmake")
+ 
+ install(FILES
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+-  DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}")
++  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+ 
+ install(DIRECTORY "include/" TYPE INCLUDE)
+ 

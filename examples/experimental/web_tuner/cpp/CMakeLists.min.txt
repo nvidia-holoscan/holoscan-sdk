@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_web_tuner LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+# holoscan::experimental_params_web_tuner is exported only when the SDK was
+# built with -DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON (the default).
+if(TARGET holoscan::experimental_params_web_tuner)
+    add_executable(web_tuner web_tuner.cpp)
+    target_link_libraries(web_tuner
+        PRIVATE
+            holoscan::core
+            holoscan::experimental_params_web_tuner
+    )
+
+    if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # REQ: SYSTEM-015
+        add_test(NAME EXAMPLE_CPP_WEB_TUNER_TEST COMMAND web_tuner)
+        set_tests_properties(EXAMPLE_CPP_WEB_TUNER_TEST
+            PROPERTIES
+                PASS_REGULAR_EXPRESSION
+                    "web_tuner: stopped accepted_edits=0 published_edits=0 catalog_schemas=2 samples=ok"
+                LABELS "examples;parameter;runtime-update;experimental"
+                TIMEOUT 30)
+    endif()
+else()
+    message(STATUS
+        "web_tuner example excluded: this SDK install was built without "
+        "-DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON, so the tuner "
+        "library is absent.")
+endif()

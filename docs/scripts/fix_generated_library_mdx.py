@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Post-process MDX emitted by `fern docs md generate` for C++ library docs.
+Post-process MDX emitted by `fern docs md generate` for library docs.
 
 1) ParamField `type="const T &"` / `type="T &&"`: bare `&` in JSX strings
    breaks MDX; escape as `&amp;` inside the type attribute only.
@@ -22,16 +22,14 @@ Post-process MDX emitted by `fern docs md generate` for C++ library docs.
 6) Quoted C++ placeholders such as `"<code name>: &lt;message&gt;"` are not HTML
    elements. Escape their raw angle brackets so MDX does not parse them as JSX.
 
-7) Fern cross-links transitive nvidia::gxf types to unpublished
-   ``api-reference/nvidia/namespaces/gxf/...`` pages. There is no public GXF API
-   reference, so unwrap those hyperlinks and keep the visible type names.
-
-8) Fern can reuse a derived page's inheritance links for inherited signatures,
+7) Fern can reuse a derived page's inheritance links for inherited signatures,
    leaving types in a signature unlinked or linked to the wrong page. Reconcile
    each C++ CodeBlock link map against uniquely named generated pages and the
-   current page's inner-type headings. See "Generated C++ CodeBlock links" in
-   ``docs/README.md`` for the input provenance, matching heuristic, ambiguity
-   handling, and an example.
+   current page's inner-type headings.
+
+8) Flatten the single Python package to `api-reference/python/holoscan`,
+   matching the C++ namespace layout. Map Python slugs and cross-links to
+   `python/api-reference/holoscan` without changing C++ routes.
 """
 
 from __future__ import annotations
@@ -106,19 +104,6 @@ def fix_mdx_void_br_tags(text: str) -> str:
 _QUOTED_CPP_PLACEHOLDER = re.compile(
     r'(?<=")<([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)+)>'
 )
-
-# Unpublished Fern routes for nvidia::gxf types (not holoscan::gxf wrappers).
-_GXF_API_TARGET = (
-    r"(?:(?:\.\./)+|/holoscan/sdk-user-guide/api-reference/(?:cpp/)?|"
-    r"/api-reference/(?:cpp/)?)nvidia/namespaces/gxf/[^)\s\"'>]*"
-)
-_MD_GXF_API_LINK = re.compile(rf"\[([^\]]+)\]\({_GXF_API_TARGET}/?\)")
-_HTML_GXF_API_LINK = re.compile(
-    rf'<a\b[^>]*\bhref=["\']{_GXF_API_TARGET}/?["\'][^>]*>(.*?)</a>',
-    flags=re.IGNORECASE | re.DOTALL,
-)
-_GXF_API_TARGET_RE = re.compile(rf"{_GXF_API_TARGET}/?")
-_CODEBLOCK_TAG = re.compile(r"<CodeBlock\b[^>]*>", flags=re.DOTALL)
 _CODEBLOCK_LINKS = re.compile(
     r'\s+links=\{(?P<mapping>\{(?:[^{}"]|"(?:\\.|[^"\\])*")*\})\}',
     flags=re.DOTALL,
@@ -141,48 +126,8 @@ _ATX_HEADING = re.compile(
 _EXPLICIT_HEADING_ANCHOR = re.compile(r"\s+(?:\\)?\[#(?P<anchor>[A-Za-z0-9_-]+)\]\s*$")
 
 
-def _remove_codeblock_gxf_api_links(tag: re.Match[str]) -> str:
-    """Remove unpublished nvidia::gxf targets from one CodeBlock tag."""
-    text = tag.group(0)
-    links = _CODEBLOCK_LINKS.search(text)
-    if links is None:
-        return text
-
-    try:
-        mapping = json.loads(links.group("mapping"))
-    except json.JSONDecodeError:
-        return text
-    if not isinstance(mapping, dict):
-        return text
-
-    filtered = {
-        label: target
-        for label, target in mapping.items()
-        if not isinstance(target, str) or _GXF_API_TARGET_RE.fullmatch(target) is None
-    }
-    if filtered == mapping:
-        return text
-
-    replacement = (
-        "" if not filtered else " links={" + json.dumps(filtered, ensure_ascii=False) + "}"
-    )
-    return text[: links.start()] + replacement + text[links.end() :]
-
-
-def unwrap_gxf_api_links(text: str) -> str:
-    """Replace unpublished nvidia::gxf hyperlinks with their visible labels."""
-    text = _CODEBLOCK_TAG.sub(_remove_codeblock_gxf_api_links, text)
-    text = _HTML_GXF_API_LINK.sub(lambda match: match.group(1), text)
-    return _MD_GXF_API_LINK.sub(lambda match: match.group(1), text)
-
-
 def collect_holoscan_api_targets(root: Path) -> dict[str, Path]:
-    """Return uniquely titled generated ``holoscan::...`` pages under root.
-
-    The frontmatter title is authoritative for every generated page kind; this
-    deliberately does not infer class, struct, enum, or function kinds from paths.
-    Duplicate titles are excluded because they cannot produce a deterministic target.
-    """
+    """Return uniquely titled generated ``holoscan::...`` pages under root."""
     candidates: dict[str, list[Path]] = {}
     for path in root.rglob("*.mdx"):
         match = _FRONTMATTER_TITLE.search(path.read_text(encoding="utf-8"))
@@ -438,7 +383,6 @@ def fix_file_content(text: str) -> str:
     text = fix_html_comments_for_mdx(text)
     text = fix_mdx_void_br_tags(text)
     text = fix_quoted_cpp_placeholders(text)
-    text = unwrap_gxf_api_links(text)
     text = _DEFAULT_STRING_LITERAL.sub(lambda m: "default='\"" + m.group(1) + "\"'", text)
     lines = text.splitlines(keepends=True)
     lines = [_fix_description_line(line) for line in lines]
@@ -454,8 +398,53 @@ def find_unfixed_cpp_string_defaults(text: str) -> list[tuple[int, str]]:
     return hits
 
 
+def fix_python_routes(text: str) -> str:
+    """Align generated Python slugs and links with the user-guide route."""
+    text = re.sub(
+        r"^(\s*slug:\s*)(?:holoscan-python|py-api-reference|python-api-reference)"
+        r"/holoscan(?=/|\s|$)",
+        r"\1python/api-reference/holoscan",
+        text,
+        flags=re.MULTILINE,
+    )
+    # Markdown links and CodeBlock link maps need the full site-root path;
+    # frontmatter slugs above are relative to Fern's configured site prefix.
+    return re.sub(
+        r"(?<=[(\"'])/(?:holoscan/sdk-user-guide/)?"
+        r"(?:holoscan-python|py-api-reference|python-api-reference)/holoscan(?=[/#\"')\s]|$)",
+        "/holoscan/sdk-user-guide/python/api-reference/holoscan",
+        text,
+    )
+
+
+def normalize_python_layout(root: Path, *, check: bool = False) -> None:
+    """Remove Fern's library-ID directory and align generated navigation."""
+    python_root = root / "api-reference" / "python"
+    library = python_root / "holoscan-python"
+    package = library / "holoscan"
+    destination = python_root / "holoscan"
+    navigation = python_root / "_navigation.yml"
+    if library.exists():
+        if not package.is_dir() or set(library.iterdir()) != {package}:
+            raise ValueError(f"unexpected Python library layout: {library}")
+        if destination.exists():
+            raise ValueError(f"refusing to overwrite Python API output: {destination}")
+
+    text = navigation.read_text(encoding="utf-8") if navigation.is_file() else ""
+    normalized = re.sub(r"(\bpageId:\s*)holoscan-python/holoscan/", r"\1holoscan/", text)
+    normalized = fix_python_routes(normalized)
+    if check and (library.exists() or normalized != text):
+        raise ValueError("Python API layout needs post-processing; run without --check")
+    if library.exists():
+        package.rename(destination)
+        library.rmdir()
+        print("Normalized Python API output to api-reference/python/holoscan.")
+    if normalized != text:
+        navigation.write_text(normalized, encoding="utf-8")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Post-process C++ API MDX generated by Fern.")
+    parser = argparse.ArgumentParser(description="Post-process API MDX generated by Fern.")
     parser.add_argument(
         "--root",
         type=Path,
@@ -465,7 +454,7 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Fail without writing if any generated MDX file still requires processing.",
+        help="Fail without writing if the generated layout or MDX still requires processing.",
     )
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
@@ -474,6 +463,12 @@ def main() -> int:
         print(f"{prefix}: generated MDX directory not found: {root}", file=sys.stderr)
         return 1 if args.check else 0
 
+    try:
+        normalize_python_layout(root, check=args.check)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     holoscan_api_targets = collect_holoscan_api_targets(root)
     changed_files = 0
     changed_paths: list[str] = []
@@ -481,6 +476,8 @@ def main() -> int:
     for path in sorted(root.rglob("*.mdx")):
         text = path.read_text(encoding="utf-8")
         new_text = fix_file_content(text)
+        if path.is_relative_to(root / "api-reference" / "python"):
+            new_text = fix_python_routes(new_text)
         new_text = reconcile_codeblock_holoscan_links(
             new_text, path=path, targets=holoscan_api_targets
         )

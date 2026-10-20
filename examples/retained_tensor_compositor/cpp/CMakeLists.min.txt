@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_retained_tensor_compositor LANGUAGES CXX)
+
+include(CTest)
+
+find_package(CUDAToolkit REQUIRED)
+find_package(Threads REQUIRED)
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+add_executable(retained_tensor_compositor retained_tensor_compositor.cpp)
+target_compile_features(retained_tensor_compositor PRIVATE cxx_std_20)
+target_link_libraries(retained_tensor_compositor
+    PRIVATE
+        CUDA::cudart
+        holoscan::core
+        Threads::Threads
+)
+
+if(BUILD_TESTING)
+    # REQ: CHAN-078
+    # REQ: CHAN-102
+    # REQ: EXTERNAL-003
+    # REQ: RUNTIME-017
+    # REQ: RUNTIME-034
+    # REQ: SYSTEM-018
+    add_test(
+        NAME EXAMPLE_RETAINED_TENSOR_COMPOSITOR_HOST
+        COMMAND retained_tensor_compositor
+    )
+    set_tests_properties(EXAMPLE_RETAINED_TENSOR_COMPOSITOR_HOST
+        PROPERTIES
+            LABELS "examples;tensor;temporal;runtime"
+            PASS_REGULAR_EXPRESSION "retained Tensor compositor complete"
+            TIMEOUT 20
+    )
+
+    # REQ: COMPILE-048
+    # REQ: SYSTEM-018
+    add_test(
+        NAME EXAMPLE_RETAINED_TENSOR_COMPOSITOR_CUDA
+        COMMAND retained_tensor_compositor --cuda --device 0
+    )
+    set_tests_properties(EXAMPLE_RETAINED_TENSOR_COMPOSITOR_CUDA
+        PROPERTIES
+            LABELS "cuda;examples;tensor;temporal;runtime"
+            PASS_REGULAR_EXPRESSION "retained Tensor compositor complete"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 30
+    )
+
+    # REQ: SYSTEM-018
+    add_test(
+        NAME EXAMPLE_RETAINED_TENSOR_COMPOSITOR_INVALID_DEVICE
+        COMMAND "${CMAKE_COMMAND}"
+            "-DHOLOSCAN_RETAINED_TENSOR_COMPOSITOR_EXECUTABLE=$<TARGET_FILE:retained_tensor_compositor>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run_invalid_device.cmake"
+    )
+    set_tests_properties(EXAMPLE_RETAINED_TENSOR_COMPOSITOR_INVALID_DEVICE
+        PROPERTIES
+            LABELS "cuda;diagnostics;examples;tensor"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 30
+    )
+endif()

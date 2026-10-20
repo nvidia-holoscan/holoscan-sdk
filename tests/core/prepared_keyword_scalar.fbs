@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace prepared_schema_test;
+
+table KeywordChild {
+  template:[int] (id: 0);
+  switch:[string] (id: 1);
+  return:string (id: 2);
+}
+table KeywordScalar {
+  class:int = 7 (id: 0);
+  namespace:KeywordChild (id: 1);
+}
+root_type KeywordScalar;
+file_identifier "PKSC";

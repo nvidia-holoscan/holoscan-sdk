@@ -1,0 +1,131 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
+
+add_subdirectory(include) # header-only interface for public holoinfer headers
+
+set(holoinfer_utils_src
+    utils/infer_utils.cpp
+    utils/infer_buffer.cpp
+    utils/work_queue.cpp
+)
+add_library(holoinfer_utils ${holoinfer_utils_src})
+add_library(holoscan::holoinfer_utils ALIAS holoinfer_utils)
+
+target_include_directories(holoinfer_utils
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+
+target_link_libraries(holoinfer_utils
+    PUBLIC
+        CUDA::cuda_driver
+        CUDA::nvrtc
+        holoscan::infer::headers
+    PRIVATE
+        CUDA::cudart
+        $<BUILD_INTERFACE:holoscan_security_flags>
+        $<BUILD_INTERFACE:yaml-cpp::yaml-cpp>
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:
+            $<INSTALL_INTERFACE:holoscan::_inference_yaml_private>>
+)
+target_compile_definitions(holoinfer_utils
+    PUBLIC $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOINFER_STATIC_DEFINE>
+)
+
+set_target_properties(holoinfer_utils PROPERTIES
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    VERSION ${PROJECT_VERSION}
+)
+# Keep static dependencies such as yaml-cpp out of the exported symbols, as other SDK libraries do.
+holoscan_configure_linux_shared_link(holoinfer_utils)
+
+set(holoinfer_src
+    infer/trt/core.cpp
+    infer/trt/utils.cpp
+    params/infer_param.cpp
+    manager/infer_manager.cpp
+    manager/infer_manager_setup.cpp
+    manager/infer_manager_dispatch.cpp
+    manager/infer_manager_fast_paths.cpp
+    manager/infer_context.cpp
+)
+
+add_library(${PROJECT_NAME} ${holoinfer_src})
+add_library(holoscan::infer ALIAS ${PROJECT_NAME})
+
+target_compile_definitions(${PROJECT_NAME}
+    PRIVATE
+        PROJECT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    PUBLIC
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOINFER_STATIC_DEFINE>
+)
+
+target_include_directories(${PROJECT_NAME}
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/manager>
+)
+
+target_link_libraries(${PROJECT_NAME}
+    PUBLIC
+        dlpack::dlpack
+        holoscan::infer::headers
+        holoscan::holoinfer_utils # [1]
+        magic_enum::magic_enum
+        tl::expected
+    PRIVATE
+        ${CMAKE_DL_LIBS} # to dlclose backend plugin handles
+        CUDA::cudart
+        holoscan::core # [2]
+        holoscan::logger
+        TensorRT::nvinfer
+        TensorRT::nvinfer_plugin
+        TensorRT::nvonnxparser
+        $<BUILD_INTERFACE:holoscan_security_flags>
+        $<BUILD_INTERFACE:yaml-cpp::yaml-cpp>
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:
+            $<INSTALL_INTERFACE:holoscan::_inference_yaml_private>>
+)
+
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    OUTPUT_NAME holoscan_infer
+    EXPORT_NAME infer
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    VERSION ${PROJECT_VERSION}
+)
+holoscan_configure_linux_shared_link(${PROJECT_NAME})
+
+# Generated export header (HOLOINFER_EXPORT) — see include/holoinfer/holoinfer_export.h.
+# Replaces the hand-rolled `_HOLOSCAN_EXTERNAL_API_` visibility attribute.
+include(GenerateExportHeader)
+generate_export_header(${PROJECT_NAME}
+    BASE_NAME HOLOINFER
+    EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/include/holoinfer/holoinfer_export.h
+    STATIC_DEFINE HOLOINFER_STATIC_DEFINE
+)
+target_include_directories(${PROJECT_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/holoinfer/holoinfer_export.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoinfer
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
+)
+
+install(TARGETS holoinfer_utils
+    EXPORT ${HOLOSCAN_PACKAGE_NAME}-inference-exports
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
+)
+
+install(TARGETS ${PROJECT_NAME}
+    EXPORT ${HOLOSCAN_PACKAGE_NAME}-inference-exports
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
+)

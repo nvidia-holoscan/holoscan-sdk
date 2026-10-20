@@ -1,164 +1,276 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
-#define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
+#pragma once
 
-#include <memory>
-#include <string>
-#include <vector>
+#include <cuda/stream>
 
-// Forward declaration to avoid including <cuda_runtime.h>
-extern "C" {
-typedef struct CUstream_st* cudaStream_t;
-}
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <string_view>
+#include <type_traits>
 
-#include <holoscan/profiler/profiler.hpp>
-#include "./common.hpp"
-#include "./errors.hpp"
-#include "./expected.hpp"
-#include "./operator_status.hpp"
-
-namespace holoscan {
-// Forward declarations to break circular dependency with io_context.hpp
-class InputContext;
-class OutputContext;
-}  // namespace holoscan
-
-// ExecutionContext CUDA stream profiling events (use same green color for consistency)
-PROF_DEFINE_EVENT(event_allocate_cuda_stream, "allocate_cuda_stream", 0x99, 0xFF, 0x00);
-PROF_DEFINE_EVENT(event_synchronize_streams, "synchronize_streams", 0x99, 0xFF, 0x00);
-PROF_DEFINE_EVENT(event_device_from_stream, "device_from_stream", 0x99, 0xFF, 0x00);
+#include <holoscan/holoscan_core_export.h>
+#include <holoscan/core/activation.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/lifecycle.hpp>
+#include <holoscan/core/operator_ref.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/parameter_compute_control.hpp>
+#include <holoscan/core/rate.hpp>
+#include <holoscan/core/sample.hpp>
+#include <holoscan/core/tag.hpp>
+#include <holoscan/time/clock_registry.hpp>
+#include <holoscan/time/time_point.hpp>
 
 namespace holoscan {
 
-/**
- * @brief Class to hold the execution context.
- *
- * This class provides the execution context for the operator.
- */
-class ExecutionContext {
+namespace detail {
+struct ExecutionContextState;
+class SyntheticOperatorBinding;
+class OperatorRuntimeAccess;
+}  // namespace detail
+
+/// @brief Borrow the runtime services and immutable evidence for one Operator callback.
+///
+/// The facade contains one hidden-state pointer and is valid only during \c compute(). All queries
+/// are O(1), nonblocking, and allocation-free. It exposes no graph mutation, scheduler wait, clock
+/// registry lookup, or \c reference_time() operation. Restart methods enqueue only through an
+/// active lifecycle-transaction binding and otherwise return a typed disabled error.
+/// During startup CUDA Graph capture, an eligible member receives only the services needed to
+/// record its GPU work. Activation time, rate queries, parameter updates, lifecycle restart, and
+/// termination requests are unavailable; the Operator author must not depend on them during
+/// capture.
+/// Retaining or using the facade, or any view borrowed from it, after \c compute() returns is
+/// invalid; no post-callback safety or no-op behavior is promised.
+class HOLOSCAN_CORE_EXPORT ExecutionContext {
  public:
-  /**
-   * @brief Construct a new Execution Context object.
-   */
-  ExecutionContext() = default;
+  /// @brief Return the activation identity.
+  /// @return Tag frozen for this callback.
+  [[nodiscard]] Tag tag() const noexcept;
 
-  virtual ~ExecutionContext() = default;
+  /// @brief Return the Runtime-owned CUDA stream assigned to this activation.
+  /// @return Borrowed stream reference kept alive by the RunSession through framework-managed
+  /// readiness, publication, and deallocation ordering.
+  /// @note Enqueue callback CUDA work on this stream to use automatic Tensor input waits and
+  /// release ordering. A deliberately selected different stream remains caller-owned and requires
+  /// explicit Tensor synchronization and deallocation registration.
+  /// @warning The callback must not destroy the returned stream or retain its borrowed reference
+  /// beyond the callback. A saved raw handle has the same restriction: do not submit through it
+  /// from start(), stop(), a destructor, or another thread.
+  [[nodiscard]] ::cuda::stream_ref cuda_stream() noexcept;
 
-  /**
-   * @brief Get the input context.
-   *
-   * @return The shared pointer to the input context.
-   */
-  std::shared_ptr<InputContext> input() const { return input_context_; }
+  /// @brief Return the admitted default activation clock.
+  /// @return Borrowed generation-scoped clock reference.
+  [[nodiscard]] ClockRef clock() const noexcept;
 
-  /**
-   * @brief Get the output context.
-   *
-   * @return The shared pointer to the output context.
-   */
-  std::shared_ptr<OutputContext> output() const { return output_context_; }
+  /// @brief Return the deterministic logical activation coordinate.
+  /// @return Tag time frozen for this callback.
+  [[nodiscard]] TagTime tag_time() const noexcept;
 
-  /**
-   * @brief Get the context.
-   *
-   * @return The pointer to the context.
-   */
-  void* context() const { return context_; }
+  /// @brief Return the dispatch activation time.
+  /// @return Time in the admitted activation clock, distinct from source capture time.
+  /// @note Returns an invalid time during CUDA Graph member capture because capture is not a
+  /// runtime activation.
+  [[nodiscard]] TimePoint activation_time() const noexcept;
 
-  /**
-   * @brief Allocate a CUDA stream from the operator's CudaStreamPool.
-   *
-   * Streams are cached by name — calling with the same name returns the same stream on subsequent
-   * calls within the same operator. This is useful for root operators that need to allocate a
-   * stream (rather than receiving one from upstream).
-   *
-   * Streams allocated this way are **not** automatically emitted on output ports. Call
-   * `OutputContext::set_cuda_stream()` before `emit()` if you need to propagate the stream.
-   *
-   * @param stream_name A name for the stream. The same name returns the same stream on subsequent
-   * calls. Defaults to an empty string.
-   * @returns The allocated cudaStream_t, or an error if no CudaStreamPool is available.
-   */
-  virtual expected<cudaStream_t, RuntimeError> allocate_cuda_stream(
-      [[maybe_unused]] const std::string& stream_name = "") {
-    return make_unexpected(RuntimeError(
-        ErrorCode::kFailure, "allocate_cuda_stream not implemented in base ExecutionContext"));
+  /// @brief Return the immutable trace context for this callback.
+  /// @return Callback-lifetime trace reference.
+  [[nodiscard]] const TraceContext& trace() const noexcept;
+
+  /// @brief Return the trace identity for this callback.
+  /// @return Equivalent to `trace().trace_id`.
+  [[nodiscard]] TraceId trace_id() const noexcept;
+
+  /// @brief Return the operator-level activation and violation outcome.
+  /// @return Frozen status; reading it emits no witness and changes no state.
+  [[nodiscard]] ActivationStatus activation() const noexcept;
+
+  /// @brief Return the callback-lifetime cooperative cancellation view.
+  /// @return Borrowed monotonic stop view.
+  [[nodiscard]] CancellationView cancellation() const noexcept;
+
+  /// @brief Return the current run-bound Operator identity.
+  /// @return Run- and plan-generation-stamped identity for this callback, or an invalid reference
+  /// when the context is inert.
+  /// @note This identity lets fixed compute-originated control records name their own Operator
+  /// without retaining an authoring handle or a runtime object address.
+  [[nodiscard]] OperatorRef self() const noexcept;
+
+  /// @brief Return the canonical path of the Operator executing this callback.
+  /// @return Nonempty canonical percent-encoded path with no leading slash for a Runtime-bound
+  /// callback, or an empty view when the context is inert or otherwise unbound.
+  /// @warning The returned view is valid only for the active \c compute() callback and must not be
+  /// retained after callback return.
+  [[nodiscard]] std::string_view operator_path() const noexcept;
+
+  /// @brief Return the immutable parameter aggregate pinned for this callback.
+  /// @tparam ParamsT Exact unqualified aggregate type declared by the Operator.
+  /// @return Callback-lifetime reference from the coherent pinned parameter header.
+  /// @warning A wrong exact type is a Core contract violation and terminates through a bounded
+  /// noexcept handler; cv/ref, convertible, base/derived, and layout-compatible substitutes reject
+  /// at compile time or terminate rather than receiving a recoverable error.
+  template <typename ParamsT>
+    requires std::same_as<ParamsT, std::remove_cvref_t<ParamsT>> &&
+             std::default_initializable<ParamsT> && std::copy_constructible<ParamsT> &&
+             std::is_aggregate_v<ParamsT>
+  [[nodiscard]] const ParamsT& params() const noexcept {
+    const void* const address =
+        parameter_address(param_type_descriptor<ParamsT>().local_type_token);
+    if (address == nullptr) {
+      detail::parameter_type_contract_violation();
+    }
+    return *static_cast<const ParamsT*>(address);
   }
 
-  /**
-   * @brief Synchronize multiple CUDA streams to a target stream (non-blocking).
-   *
-   * Uses `cudaEventRecord` and `cudaStreamWaitEvent` to create GPU-side dependencies without
-   * blocking the CPU. This is the same mechanism used internally by `receive_cuda_stream`.
-   *
-   * When using `receive_cuda_stream`, synchronization is handled automatically and this method
-   * is not needed. It is provided for advanced manual stream handling use cases.
-   *
-   * @param cuda_streams Vector of streams to synchronize. `std::nullopt` elements are skipped.
-   * @param target_cuda_stream The stream that will wait for all other streams to complete.
-   */
-  virtual void synchronize_streams(
-      [[maybe_unused]] const std::vector<std::optional<cudaStream_t>>& cuda_streams,
-      [[maybe_unused]] cudaStream_t target_cuda_stream) {
-    HOLOSCAN_LOG_ERROR("synchronize_streams not implemented in base ExecutionContext");
+  /// @brief Return the generation of the parameter aggregate pinned here.
+  /// @return Stable callback generation; `NoParams` uses zero.
+  [[nodiscard]] ParamGeneration params_generation() const noexcept;
+
+  /// @brief Borrow the compute-originated fixed parameter-update seam.
+  /// @return Callback-lifetime facade for nonblocking preallocated submissions.
+  /// @note The returned facade does not expose general reads, owning submission, waits, session
+  /// ingress closure, or lifecycle restart authority. It becomes invalid when this callback
+  /// returns, and every accepted update targets a future immutable generation rather than the
+  /// generation pinned by this context.
+  /// @note During CUDA Graph member capture, the returned facade rejects submissions with
+  /// `ParamUpdateStatus::kUpdatesDisabled`.
+  [[nodiscard]] ParamComputeControl param_control() const noexcept;
+
+  /// @brief Request a bounded lifecycle restart of the current Operator.
+  /// @param options Requested first forward stage and registered bounded reason; defaults to
+  /// `kConfigure`.
+  /// @return Run-bound receipt after enqueue admission, or a typed error without state change.
+  /// @retval ErrorCode::kStaleOperatorRef The callback's self reference is not bound to an active
+  /// run.
+  /// @retval ErrorCode::kLifecycleTransactionsDisabled No active restart ingress is bound.
+  /// @retval ErrorCode::kLifecycleInvalidRestartStage The requested stage is not a forward stage.
+  /// @retval ErrorCode::kLifecycleRestartUnauthorized Self-restart was not admitted by the plan.
+  /// @retval ErrorCode::kLifecycleRestartQueueFull The bounded request or successor capacity is
+  /// exhausted.
+  /// @retval ErrorCode::kLifecycleRunState The run cannot accept the request in its current phase.
+  /// @retval ErrorCode::kClosed Lifecycle restart ingress has begun stopping or has retired.
+  /// @note This call never invokes lifecycle code, traverses the graph, dynamically allocates, or
+  /// waits for completion. Acceptance only queues the request and installs its activation fence;
+  /// restart execution begins after this compute callback retires and before this Operator can
+  /// begin another compute callback.
+  /// @note During CUDA Graph member capture, no restart binding exists; an otherwise-valid request
+  /// returns `ErrorCode::kLifecycleTransactionsDisabled`.
+  [[nodiscard]] expected<LifecycleRestartReceipt, Error> request_restart(
+      LifecycleRestartOptions options = {}) noexcept;
+
+  /// @brief Request a bounded lifecycle restart of an authorized Operator.
+  /// @param target Same-session generation-stamped target.
+  /// @param options Requested first forward stage and registered bounded reason.
+  /// @return Run-bound receipt after enqueue admission, or a typed error before state change.
+  /// @retval ErrorCode::kStaleOperatorRef The target or callback self reference is unbound, or the
+  /// target belongs to a different plan generation.
+  /// @retval ErrorCode::kCrossSessionOperatorRef The target belongs to another run generation of
+  /// the same plan.
+  /// @retval ErrorCode::kLifecycleTransactionsDisabled No active restart ingress is bound.
+  /// @retval ErrorCode::kLifecycleInvalidRestartStage The requested stage is not a forward stage.
+  /// @retval ErrorCode::kLifecycleRestartUnauthorized Cross-target authority, the target, or the
+  /// requested stage was not admitted by the plan.
+  /// @retval ErrorCode::kLifecycleRestartQueueFull The bounded request or successor capacity is
+  /// exhausted.
+  /// @retval ErrorCode::kLifecycleRunState The run cannot accept the request in its current phase.
+  /// @retval ErrorCode::kClosed Lifecycle restart ingress has begun stopping or has retired.
+  /// @warning The call cannot grant authority, choose a closure, or wait for its own receipt.
+  /// @note This call is nonblocking and does not dynamically allocate. Acceptance only queues the
+  /// request and installs its activation fence. A target already computing finishes that callback
+  /// before restart execution; an idle target restarts at the control safe point before its next
+  /// compute callback.
+  /// @note During CUDA Graph member capture, no restart binding exists; an otherwise-valid request
+  /// returns `ErrorCode::kLifecycleTransactionsDisabled`.
+  [[nodiscard]] expected<LifecycleRestartReceipt, Error> request_restart(
+      OperatorRef target, LifecycleRestartOptions options = {}) noexcept;
+
+  /// @brief Return the atomically published rate view for one owned input.
+  /// @tparam T Exact published payload type.
+  /// @param input Exact \c Input member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or output declaration does
+  /// not carry query authority.
+  /// @return Current published rate view for \p input, or a typed error without state change.
+  /// @retval ErrorCode::kInvalidArgument The context is not bound, the declaration is not the
+  /// exact registered member subobject, the port is not owned by this Operator, or its direction
+  /// is not input.
+  /// @retval ErrorCode::kNotReady No rate generation has been published for this run.
+  /// @note Call only during the active \c compute() callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  /// @note During CUDA Graph member capture, this returns `ErrorCode::kInvalidArgument` because no
+  /// runtime rate generation is bound.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Input<T>& input) const noexcept {
+    return rate_port(static_cast<const void*>(&input), false);
   }
 
-  /**
-   * @brief Get the CUDA device ID for a given stream.
-   *
-   * Only works with Holoscan-managed streams (those returned by `receive_cuda_stream`,
-   * `receive_cuda_streams`, or `allocate_cuda_stream`).
-   *
-   * @param stream The CUDA stream to query.
-   * @returns The device ID, or an error if the stream is not managed by Holoscan.
-   */
-  virtual expected<int, RuntimeError> device_from_stream([[maybe_unused]] cudaStream_t stream) {
-    return make_unexpected(RuntimeError(
-        ErrorCode::kFailure, "device_from_stream not implemented in base ExecutionContext"));
+  /// @brief Return the atomically published rate view for one owned output.
+  /// @tparam T Exact published payload type.
+  /// @param output Exact \c Output member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or input declaration does
+  /// not carry query authority.
+  /// @return Current published rate view for \p output, or a typed error without state change.
+  /// @retval ErrorCode::kInvalidArgument The context is not bound, the declaration is not the
+  /// exact registered member subobject, the port is not owned by this Operator, or its direction
+  /// is not output.
+  /// @retval ErrorCode::kNotReady No rate generation has been published for this run.
+  /// @note Call only during the active \c compute() callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  /// @note During CUDA Graph member capture, this returns `ErrorCode::kInvalidArgument` because no
+  /// runtime rate generation is bound.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Output<T>& output) const noexcept {
+    return rate_port(static_cast<const void*>(&output), true);
   }
 
-  /// @brief check if GPU capability is present on the system
-  virtual bool is_gpu_available() const {
-    throw std::runtime_error("is_gpu_available is not implemented");
-  }
+  /// @brief Request explicit immediate whole-run success.
+  /// @note This call is bounded, nonblocking, and allocation-free. It closes the session-wide
+  /// callback-admission gate at one monotonic publication point. Callbacks admitted before that
+  /// point may retire; no callback is admitted afterward. After mandatory cleanup, Runtime reports
+  /// \c RunTermination::kRequestedCompleted unless a stop or failure takes precedence.
+  /// @warning Requested completion is imperative cancellation, not EOS or natural completion. It
+  /// does not guarantee source closure, downstream drain, or delivery of queued samples.
+  /// @warning This method may be called only through the \c ExecutionContext of the active
+  /// \c compute() callback. Using a retained context after callback return is invalid.
+  /// @note This has no effect during CUDA Graph member capture. Use the fused source's temporal
+  /// contract for completion policy.
+  void request_completion() noexcept;
 
-  /**
-   * @brief Find an operator by name.
-   *
-   * If the operator name is not provided, the current operator is returned.
-   *
-   * @param op_name The name of the operator.
-   * @return A shared pointer to the operator or nullptr if the operator is not found.
-   */
-  virtual std::shared_ptr<Operator> find_operator(
-      [[maybe_unused]] const std::string& op_name = "") {
-    return nullptr;
-  }
+  /// @brief Request cooperative stop of the current run.
+  /// @note This call is bounded, nonblocking, and allocation-free. It closes the same session-wide
+  /// callback-admission gate and reports \c RunTermination::kStopped after mandatory cleanup unless
+  /// a failure occurs. A stop request promotes an earlier completion request; completion never
+  /// weakens stop.
+  /// @note Once the stop is accepted, a blocking publication to a full recipient returns its
+  /// publication-pressure error at once instead of waiting out the graph blocking budget. Its
+  /// message begins with \c RUNTIME_PUBLICATION_STOPPED. A callback that returns that error
+  /// unchanged still ends the run stopped, with a warning-level
+  /// \c RUNTIME_OPERATOR_PUBLICATION_STOPPED diagnostic.
+  /// @warning This method may be called only through the \c ExecutionContext of the active
+  /// \c compute() callback. Using a retained context after callback return is invalid.
+  /// @note This has no effect during CUDA Graph member capture. Request stop outside the captured
+  /// region.
+  void request_stop() noexcept;
 
-  /**
-   * @brief Get the status of the operator.
-   *
-   * If the operator name is not provided, the status of the current operator is returned.
-   *
-   * @param op_name The name of the operator.
-   * @return The status of the operator or an error if the operator is not found.
-   */
-  virtual expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(
-      [[maybe_unused]] const std::string& op_name = "") {
-    return make_unexpected(RuntimeError(
-        ErrorCode::kFailure, "get_operator_status not implemented in base ExecutionContext"));
-  }
+ private:
+  explicit ExecutionContext(detail::ExecutionContextState* state) noexcept : state_(state) {}
+  [[nodiscard]] const void* parameter_address(const void* exact_type) const noexcept;
+  [[nodiscard]] expected<PortRateView, Error> rate_port(const void* declaration,
+                                                        bool output) const noexcept;
 
- protected:
-  std::shared_ptr<InputContext> input_context_ = nullptr;    ///< The input context.
-  std::shared_ptr<OutputContext> output_context_ = nullptr;  ///< The output context.
-  void* context_ = nullptr;                                  ///< The context.
+  detail::ExecutionContextState* state_{};
+
+  friend class detail::SyntheticOperatorBinding;
+  friend class detail::OperatorRuntimeAccess;
 };
 
-}  // namespace holoscan
+static_assert(sizeof(ExecutionContext) == sizeof(void*));
 
-#endif /* HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP */
+}  // namespace holoscan

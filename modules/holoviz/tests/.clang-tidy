@@ -1,2 +1,0 @@
-# Disable clang-tidy for test files
-Checks: '-*'

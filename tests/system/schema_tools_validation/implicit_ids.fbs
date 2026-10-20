@@ -1,0 +1,12 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace schema_tools;
+
+table ImplicitIds {
+  value: uint;
+  label: string;
+}
+
+root_type ImplicitIds;
+file_identifier "IMPL";

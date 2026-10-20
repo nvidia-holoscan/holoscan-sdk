@@ -1,13 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# CCCL is a dependency of MatX and RMM.
-set(CCCL_REQUESTED_VERSION 3.2.0)
+include_guard(GLOBAL)
+
+# CCCL is a dependency of MatX.
+set(CCCL_REQUESTED_VERSION 3.3.3)
 
 # Try to find system CCCL in the build container first.
 # Subsequent RAPIDS CPM components (MatX) can get confused
 # if both a compatible system and cache CCCL are present.
-find_package(CCCL ${CCCL_REQUESTED_VERSION} PATHS /usr/local/cuda/lib64/cmake QUIET)
+find_package(CCCL ${CCCL_REQUESTED_VERSION} CONFIG QUIET
+    COMPONENTS Thrust CUB libcudacxx
+    PATHS
+        /usr/local/cuda/lib64/cmake
+        "${CUDAToolkit_TARGET_DIR}/lib/cmake"
+        "${CUDAToolkit_TARGET_DIR}/lib64/cmake"
+        "${CUDAToolkit_LIBRARY_DIR}/cmake"
+        "${CUDAToolkit_LIBRARY_ROOT}/lib64/cmake"
+        "${CUDAToolkit_LIBRARY_ROOT}/lib/cmake"
+)
 
 if(NOT CCCL_FOUND)
     # Install CCCL headers under include/cccl/ to match the expected layout from cccl-config.cmake.
@@ -16,23 +27,40 @@ if(NOT CCCL_FOUND)
     set(_holoscan_cccl_saved_includedir "${CMAKE_INSTALL_INCLUDEDIR}")
     set(CMAKE_INSTALL_INCLUDEDIR "include/cccl" CACHE PATH "Installation directory for header files" FORCE)
 
+    # The CUDA Toolkit (notably CUDA 13.0) bundles a CCCL older than ${CCCL_REQUESTED_VERSION} that
+    # lacks headers the SDK's public API uses (e.g. <cuda/stream> in core/domain/tensor.hpp). So when
+    # no new-enough system CCCL is found, the SDK must SHIP this CCCL to installed consumers: the
+    # ENABLE_INSTALL_RULES options + CMAKE_INSTALL_INCLUDEDIR=include/cccl above arrange that, but
+    # they only take effect if the subdirectory is NOT EXCLUDE_FROM_ALL (CMake 3.28+ excludes a
+    # subproject's install rules otherwise). INSTALL_EXPORT_SET registers CCCL so the installed
+    # holoscan-dependencies.cmake calls find_dependency(CCCL) (consumers must request
+    # ${CCCL_REQUESTED_VERSION} so the older toolkit CCCL is rejected in favor of this one).
     rapids_cpm_find(CCCL ${CCCL_REQUESTED_VERSION}
+        COMPONENTS Thrust CUB libcudacxx
         GLOBAL_TARGETS CCCL CCCL::CCCL CCCL::CUB CCCL::libcudacxx
         BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
+        INSTALL_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
 
         CPM_ARGS
             GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
             GIT_TAG v${CCCL_REQUESTED_VERSION}
             GIT_SHALLOW TRUE
-            EXCLUDE_FROM_ALL
-            SOURCE_DIR _deps/cccl-src
+
+            # Key the persistent checkout by the requested version. A version bump then populates
+            # a new source tree instead of silently reusing older package metadata, while ordinary
+            # reconfiguration stays disconnected and reproducible.
+            SOURCE_DIR _deps/cccl-${CCCL_REQUESTED_VERSION}-src
             UPDATE_DISCONNECTED TRUE
 
+        # CPM options override inherited and cached settings for this subproject.
+        # Holoscan uses stable CCCL components only, so do not build or install cudax.
         OPTIONS "CCCL_TOPLEVEL_PROJECT OFF"
+                "CCCL_ENABLE_UNSTABLE OFF"
+                "CCCL_ENABLE_CUDAX OFF"
+                "cudax_ENABLE_INSTALL_RULES OFF"
                 "CCCL_ENABLE_INSTALL_RULES ON"
                 "CUB_ENABLE_INSTALL_RULES ON"
                 "Thrust_ENABLE_INSTALL_RULES ON"
-                "cudax_ENABLE_INSTALL_RULES ON"
                 "libcudacxx_ENABLE_INSTALL_RULES ON"
     )
 

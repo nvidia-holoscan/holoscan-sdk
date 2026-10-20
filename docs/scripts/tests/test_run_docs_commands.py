@@ -17,9 +17,6 @@ DOCS_HELPER = "docs/scripts/build_holoscan_docs.py"
 
 
 class RunDocsCommandsTestCase(TestCase):
-    def _runner_command(self, run_path: Path, *args: str) -> list[str]:
-        return [shutil.which("bash") or "bash", str(run_path), *args]
-
     def _fake_python(self, directory: Path) -> tuple[Path, Path]:
         executable = directory / "fake-python"
         record = directory / "argv.json"
@@ -59,7 +56,7 @@ class RunDocsCommandsTestCase(TestCase):
         if fern_token is not None:
             environment["FERN_TOKEN"] = fern_token
         return subprocess.run(
-            self._runner_command(run_path, *args),
+            [str(run_path), *args],
             cwd=cwd or REPO_ROOT,
             env=environment,
             capture_output=True,
@@ -72,7 +69,7 @@ class RunDocsCommandsTestCase(TestCase):
 
     def test_commands_are_listed_and_have_command_help(self) -> None:
         usage = subprocess.run(
-            self._runner_command(INTERNAL_RUN),
+            [str(INTERNAL_RUN), "--help"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -85,7 +82,7 @@ class RunDocsCommandsTestCase(TestCase):
 
         for command in ("build_docs", "live_docs"):
             help_result = subprocess.run(
-                self._runner_command(INTERNAL_RUN, command, "--help"),
+                [str(INTERNAL_RUN), command, "--help"],
                 cwd=REPO_ROOT,
                 capture_output=True,
                 text=True,
@@ -194,13 +191,12 @@ class RunDocsCommandsTestCase(TestCase):
             )
 
             assert result.returncode == 0, result.stderr
-            recorded_argv = self._recorded_argv(record)
-            assert recorded_argv == [
-                str(helper.resolve()),
+            assert self._recorded_argv(record) == [
+                str(helper),
                 "--preview",
                 "--preview-id",
                 "branch with spaces",
-            ], recorded_argv
+            ]
 
             tokenless_result = self._run(
                 mirror_run,
@@ -211,10 +207,7 @@ class RunDocsCommandsTestCase(TestCase):
                 fern_token="",
             )
             assert tokenless_result.returncode == 0, tokenless_result.stderr
-            assert self._recorded_argv(record) == [
-                str(helper.resolve()),
-                "--skip-library-mdx",
-            ]
+            assert self._recorded_argv(record) == [str(helper), "--skip-library-mdx"]
 
 
 if __name__ == "__main__":

@@ -10,76 +10,82 @@
 #include <holoscan/logger/logger.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cstdlib>
-#include <memory>
 #include <string>
 #include <utility>
 
-#include <holoscan/logger/holoscan_logger.hpp>
-#include "common/logger/spdlog_logger.hpp"
+#include <holoscan/logger/spdlog_logger.hpp>
 
 namespace holoscan {
 
-using nvidia::logger::SpdlogLogger;
+constinit bool Logger::log_pattern_set_by_user = false;
+constinit bool Logger::log_level_set_by_user = false;
 
-bool Logger::log_pattern_set_by_user = false;
-bool Logger::log_level_set_by_user = false;
+namespace {
 
-// HoloscanLogger static instance
-HoloscanLogger& HoloscanLogger::instance() {
-  static HoloscanLogger logger("holoscan");
+// Process-wide spdlog-backed logger instance. The spdlog backend disables automatic registry
+// registration, so it does not clash with any other "holoscan" logger by name.
+logger::SpdlogLogger& instance() {
+  static logger::SpdlogLogger logger("holoscan");
   return logger;
 }
 
-static std::string get_concrete_log_pattern(std::string pattern) {
+std::string get_concrete_log_pattern(std::string pattern) {
   // Convert to uppercase
   std::string log_pattern = pattern;
-  std::transform(log_pattern.begin(), log_pattern.end(), log_pattern.begin(), [](unsigned char c) {
-    return std::toupper(c);
-  });
+  std::transform(
+      log_pattern.begin(), log_pattern.end(), log_pattern.begin(), [](unsigned char character) {
+        return std::toupper(character);
+      });
 
   if (log_pattern == "SHORT") {
     return "[%^%l%$] %v";
-  } else if (log_pattern == "DEFAULT") {
-    return "[%^%l%$] [%s:%#] %v";
-  } else if (log_pattern == "LONG") {
-    return "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v";
-  } else if (log_pattern == "FULL") {
-    return "[%Y-%m-%d %H:%M:%S.%e] [%t] [%n] [%^%l%$] [%s:%#] %v";
-  } else {
-    // Return the original pattern
-    return pattern;
   }
+  if (log_pattern == "DEFAULT") {
+    return "[%^%l%$] [%s:%#] %v";
+  }
+  if (log_pattern == "LONG") {
+    return "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v";
+  }
+  if (log_pattern == "FULL") {
+    return "[%Y-%m-%d %H:%M:%S.%e] [%t] [%n] [%^%l%$] [%s:%#] %v";
+  }
+
+  // Return the original pattern
+  return pattern;
 }
 
+}  // namespace
+
 std::string& Logger::pattern() {
-  HoloscanLogger& logger = HoloscanLogger::instance();
-  return logger.pattern_string();
+  return instance().pattern_string();
 }
 
 void set_log_level(LogLevel level) {
-  static const char* level_str[7] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL", "OFF"};
+  static constexpr std::array<const char*, 7> kLevelStrings = {
+      "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL", "OFF"};
   bool is_overridden_by_env = false;
 
   Logger::set_level(level, &is_overridden_by_env);
 
   if (is_overridden_by_env) {
-    LogLevel new_log_level = Logger::level();
+    const LogLevel new_log_level = Logger::level();
     HOLOSCAN_LOG_DEBUG(
         "Log level would be overridden by HOLOSCAN_LOG_LEVEL environment variable to '{}'",
-        level_str[static_cast<int>(new_log_level)]);
+        kLevelStrings[static_cast<int>(new_log_level)]);
   }
 }
 
 void set_log_pattern(std::string pattern) {
   bool is_overridden_by_env = false;
 
-  // https://spdlog.docsforge.com/v1.x/0.faq/#colors-do-not-appear-when-using-custom-format
   Logger::set_pattern(std::move(pattern), &is_overridden_by_env);
 
   if (is_overridden_by_env) {
     const char* env_p = std::getenv("HOLOSCAN_LOG_FORMAT");
-    if (env_p) {
+    if (env_p != nullptr) {
       HOLOSCAN_LOG_DEBUG(
           "Log format would be overridden by HOLOSCAN_LOG_FORMAT environment variable to '{}'",
           env_p);
@@ -89,13 +95,14 @@ void set_log_pattern(std::string pattern) {
 
 void Logger::set_level(LogLevel level, bool* is_overridden_by_env) {
   const char* env_p = std::getenv("HOLOSCAN_LOG_LEVEL");
-  // Override the environment variable if the user has set the log level
-  if (env_p) {
+  // Override the requested level if the environment variable is set
+  if (env_p != nullptr) {
     LogLevel env_level = level;
     std::string log_level(env_p);
-    std::transform(log_level.begin(), log_level.end(), log_level.begin(), [](unsigned char c) {
-      return std::toupper(c);
-    });
+    std::transform(
+        log_level.begin(), log_level.end(), log_level.begin(), [](unsigned char character) {
+          return std::toupper(character);
+        });
     if (log_level == "TRACE") {
       env_level = LogLevel::TRACE;
     } else if (log_level == "DEBUG") {
@@ -112,21 +119,19 @@ void Logger::set_level(LogLevel level, bool* is_overridden_by_env) {
       env_level = LogLevel::OFF;
     }
 
-    if (is_overridden_by_env) {
+    if (is_overridden_by_env != nullptr) {
       *is_overridden_by_env = true;
     }
     level = env_level;
   }
 
-  HoloscanLogger& logger = HoloscanLogger::instance();
-  logger.level(static_cast<int>(level));
+  instance().level(static_cast<int>(level));
 
   Logger::log_level_set_by_user = true;
 }
 
 LogLevel Logger::level() {
-  HoloscanLogger& logger = HoloscanLogger::instance();
-  return static_cast<LogLevel>(logger.level());
+  return static_cast<LogLevel>(instance().level());
 }
 
 void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
@@ -139,13 +144,12 @@ void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
   pattern = get_concrete_log_pattern(pattern);
 
   const char* env_p = std::getenv("HOLOSCAN_LOG_FORMAT");
-  // Override the environment variable if the user has set the log level
-  if (env_p) {
-    std::string env_pattern;
+  // Override with the environment variable if it is set
+  if (env_p != nullptr) {
     std::string log_pattern = env_p;
-    env_pattern = get_concrete_log_pattern(std::move(log_pattern));
+    std::string env_pattern = get_concrete_log_pattern(std::move(log_pattern));
 
-    if (is_overridden_by_env) {
+    if (is_overridden_by_env != nullptr) {
       *is_overridden_by_env = true;
     }
 
@@ -153,9 +157,8 @@ void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
   }
 
   if (pattern.empty()) {
-    // The following code sets the logger's format pattern, it takes effect only if the pattern
-    // hasn't already been set by the user from directly calling Logger::set_pattern, or via the
-    // HOLOSCAN_LOG_FORMAT env variable
+    // The following sets the logger's format pattern; it takes effect only if the pattern hasn't
+    // already been set by the user directly via Logger::set_pattern, or via HOLOSCAN_LOG_FORMAT.
     if (!Logger::log_pattern_set_by_user) {
       switch (Logger::level()) {
         case LogLevel::OFF:
@@ -176,20 +179,17 @@ void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
 
   if (!pattern.empty()) {
     Logger::pattern() = pattern;
-    HoloscanLogger& logger = HoloscanLogger::instance();
-    logger.pattern(pattern.c_str());
+    instance().pattern(pattern.c_str());
   }
 }
 
 void Logger::log_message(const char* file, int line, const char* name, LogLevel level,
                          fmt::string_view format, fmt::format_args args) {
-  HoloscanLogger& logger = HoloscanLogger::instance();
-  logger.log(file, line, name, static_cast<int>(level), fmt::vformat(format, args).c_str());
+  instance().log(file, line, name, static_cast<int>(level), fmt::vformat(format, args).c_str());
 }
 
 void Logger::log_message(LogLevel level, fmt::string_view format, fmt::format_args args) {
-  HoloscanLogger& logger = HoloscanLogger::instance();
-  logger.log(nullptr, 0, nullptr, static_cast<int>(level), fmt::vformat(format, args).c_str());
+  instance().log(nullptr, 0, nullptr, static_cast<int>(level), fmt::vformat(format, args).c_str());
 }
 
 }  // namespace holoscan

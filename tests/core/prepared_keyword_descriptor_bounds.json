@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "schemas": {
+    "prepared_keyword_test.KeywordDescriptor": {
+      "max_prepared_bytes": 1024,
+      "fields": {}
+    }
+  }
+}

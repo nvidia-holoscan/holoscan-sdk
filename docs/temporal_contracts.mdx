@@ -1,0 +1,719 @@
+An operator's temporal contract declares what the runtime must satisfy **before**
+it invokes `compute()`: the trigger (what causes an activation), input selection
+(which samples participate), and the missing-data policy (what happens when
+inputs are absent or stale). You author the contract by overriding one method —
+`contract()` — and building a `Contract` from a small, closed vocabulary of typed
+value objects. `compute()` is intentionally oblivious to temporal concerns: by
+the time it runs, the runtime has already picked the samples the contract asked
+for, so your compute body reads its inputs and does the work.
+
+<Note title="API stability">
+  Temporal contracts, trigger resolution, input selection, and missing-data
+  policies are **Beta**. Their signatures and policy semantics may change
+  between 5.x releases, including when reached through Stable `compile()` or
+  `run()` call contracts. See
+  [API stability](/holoscan/sdk-user-guide/introduction/api-stability).
+</Note>
+
+The temporal-contract catalog provides one complete C++ program per pattern:
+
+| Pattern | Complete source |
+| --- | --- |
+| Arrival-driven activation | [`on_any_input`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_any_input/cpp) |
+| Anchor-driven activation | [`on_each`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_each/cpp) |
+| Clock-driven activation | [`on_clock`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_clock/cpp) |
+| Multi-input alignment | [`on_aligned`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_aligned/cpp) |
+| Bracketed windows | [`on_window`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_window/cpp) |
+| Selector comparison | [`selectors`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/selectors/cpp) |
+| Missing-data policies | [`missing_data`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/missing_data/cpp) |
+| Maximum start delay and violation policies | [`max_start_delay`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/max_start_delay/cpp) |
+| Predicate activation (preview) | [`on_predicate`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_predicate/cpp) |
+
+<svg viewBox="0 0 760 400" role="img" aria-labelledby="contract-triad-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="contract-triad-title">The temporal contract triad: trigger, input selection, and missing-data policy feed contract(), which hands only selected samples to compute()</title>
+  <defs>
+    <marker id="contract-triad-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+    <marker id="contract-triad-arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#76B900" />
+    </marker>
+  </defs>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">
+    <rect x="15" y="40" width="220" height="88" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="15" y="40" width="220" height="88" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="125" y="75" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">Trigger</text>
+    <text x="125" y="98" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">what causes activation</text>
+    <rect x="270" y="40" width="220" height="88" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="270" y="40" width="220" height="88" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="380" y="75" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">Input selection</text>
+    <text x="380" y="98" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">which samples participate</text>
+    <rect x="525" y="40" width="220" height="88" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="525" y="40" width="220" height="88" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="635" y="75" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">Missing-data policy</text>
+    <text x="635" y="98" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">absent or stale response</text>
+    <line x1="140" y1="128" x2="300" y2="182" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#contract-triad-arrow)" />
+    <line x1="380" y1="128" x2="380" y2="182" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#contract-triad-arrow)" />
+    <line x1="620" y1="128" x2="460" y2="182" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#contract-triad-arrow)" />
+    <rect x="230" y="188" width="300" height="60" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="230" y="188" width="300" height="60" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="380" y="224" textAnchor="middle" fill="currentColor" fontSize="16" fontWeight="600">contract()</text>
+    <line x1="380" y1="248" x2="380" y2="302" stroke="#76B900" strokeWidth="2.5" markerEnd="url(#contract-triad-arrow-green)" />
+    <text x="395" y="280" fill="#76B900" fontSize="11">already decided</text>
+    <rect x="230" y="308" width="300" height="72" rx="8" fill="#76B900" opacity="0.25" />
+    <rect x="230" y="308" width="300" height="72" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+    <text x="380" y="338" textAnchor="middle" fill="currentColor" fontSize="16" fontWeight="600">compute()</text>
+    <text x="380" y="362" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">receives only selected samples</text>
+  </g>
+</svg>
+
+This page covers the full core vocabulary - five triggers, three selectors,
+three missing-data policies, operator-local compute-call completion, and
+maximum start delays - and shows the three multi-rate patterns you will reach
+for most often, on the camera + IMU running example.
+
+<Note title="You will learn">
+- How to declare a temporal contract by overriding `contract()`
+- The five core triggers: `OnAnyInput`, `OnEach`, `OnClock`, `OnAligned`, `OnWindow`
+- Continued support for `OnSpin` when a new readiness API becomes available
+- Per-input selectors (`Exact`, `LatestWithin`, `DrainAll`) and missing-data
+  policies (`Skip`, `SafeDefault`, `ReuseLast`)
+- How `max_start_delay()` and `on_violation()` bound how late compute may start
+- How `complete_after(ComputeCalls{.limit = N})` naturally completes one
+  finite producer after successful `compute()` calls
+- Three multi-rate patterns: fast-drives-fusion, clock-driven control, aligned fusion
+- Which contract mistakes are caught by `compile()` rather than at the builder call site
+</Note>
+
+## Declaring a contract
+
+A contract lives beside `setup()` on the operator type: `setup()` declares
+structure, `contract()` declares time, `compute()` does the work. Override
+`Contract contract() const`, build the contract fluently, and return it. Every
+piece — triggers, selectors, missing-data policies — is a typed value object in
+the `holoscan::` namespace, written with designated initializers. Age and period
+fields are `std::chrono` durations, so with
+`using namespace std::chrono_literals;` you can write `5ms`, `100us`, and so on.
+
+```cpp
+class SensorFusion final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(camera, "camera").queue_depth(4U);
+    spec.input(imu, "imu").queue_depth(32U);
+    spec.output(control, "control").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    using namespace std::chrono_literals;
+    holoscan::Contract result;
+    result.trigger(holoscan::OnEach{camera})                    // one activation per frame
+        .input(imu, holoscan::LatestWithin{.max_age = 5ms})     // freshest IMU within 5 ms
+        .on_missing(imu, holoscan::ReuseLast{.max_age = 20ms})  // else reuse the last (<= 20 ms)
+        .max_start_delay(4ms)
+        .on_violation(holoscan::OnViolation::kEmitWitness);
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    // The contract already guaranteed a camera frame and a fresh-or-reused
+    // IMU sample. Read them and fuse -- no timing logic here.
+    return {};
+  }
+
+  holoscan::Input<holoscan::Tensor> camera;
+  holoscan::Input<std::uint32_t> imu;
+  holoscan::Output<std::uint32_t> control;
+};
+```
+
+If you do not override `contract()` (or you return an empty `Contract`), you get
+the default trigger `OnAnyInput`: the operator activates whenever any connected
+input accepts a sample. That default is fine for simple single-rate operators;
+author a contract when your operator has real timing intent to express.
+
+The builder is **cold and declarative**: each call copies port identities and
+policy values into the contract, and the compiler later lowers the returned
+contract into the execution plan that the runtime enforces. There is no
+stringly-typed policy to misspell — the closed vocabulary is checked by the
+compiler, and the contract is plan-visible and deterministic.
+
+<Tip>
+Prefer the typed `input(port, selector)` overload that takes your declared
+`Input<T>` member directly. An untyped `PortRef` overload exists, but it cannot
+preserve the payload type, which later checks rely on.
+</Tip>
+
+## Triggers: when the operator activates
+
+A contract has **exactly one** trigger, passed to `.trigger(...)`:
+
+| Trigger | Activates |
+|---|---|
+| `OnAnyInput{}` | Whenever any connected input accepts a sample (the default). |
+| `OnEach{port}` | Once per accepted sample on one anchor input. |
+| `OnClock{.period = 20ms}` | On a periodic schedule. Omitting `.clock` uses the graph's default clock; optional `.start_at` sets an absolute phase. |
+| `OnAligned{.ports = ports(a, b), .window = 2ms}` | When a set of inputs (at least two, listed via `holoscan::ports(...)`) line up within an inclusive time window. |
+| `OnWindow{.anchor = a, .max_wait = 20ms, .max_pending_windows = 2U}` | The first anchor primes history. Later anchors open intervals between consecutive captures. `max_wait` controls timeout eligibility, not a compute deadline. |
+
+```cpp
+result.trigger(holoscan::OnClock{.period = 20ms});  // fixed-rate
+result.trigger(holoscan::OnAligned{.ports = holoscan::ports(camera, imu), .window = 2ms});
+```
+
+A trigger decides **when to consider an activation**. A selector decides **which
+samples it sees**. The missing policy decides **what to do with a terminally
+missing selection**.
+
+| Choice | Concrete interpretation |
+|---|---|
+| Scalar `Exact` | At reference 20, select capture time 20. Equal-time ties choose the higher sequence |
+| `LatestWithin{.max_age = 5ms}` | At reference 20 ms, choose the newest sample in inclusive `[15, 20]` ms. Future 21 ms is ineligible. Equal-time ties choose the higher sequence |
+| `OnAligned` + member `Exact` | Match FIFO heads by inclusive spread. Their timestamps may differ within the window. This is not a nearest-neighbor search |
+| `DrainAll` | Consume the finite, causally available FIFO survivor cut. Accepted batches do not overlap |
+| `OnWindow` + `BracketedWindow` | Use `Exact` on the anchor and select a complete bracket around consecutive captures. Retained support samples can overlap |
+
+For priming, bounds, timeout eligibility and end-of-stream behavior, follow the
+[worked camera/IMU bracket](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns#bracketedwindow-all-or-nothing-neighborhoods).
+
+For how clocks, timestamps, and the graph's default clock fit together, see
+[time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+<Warning>
+The empty-contract default (`OnAnyInput`) is only valid for an operator that
+**has** inputs. A source operator with zero inputs must declare an explicit
+trigger — typically `OnClock` — or `compile()` rejects the plan.
+</Warning>
+
+### OnSpin compatibility and future readiness APIs
+
+HSDK 5.0 exposes the C++ `holoscan::SpinSource` declaration,
+`holoscan::SpinSourceRef`, `OperatorSpec::spin_source()`, and the
+`Contract::trigger(OnSpin)` overload. `OnSpin{.event = spin_source}` fires when
+polling observes a change from false to true. Each source generation starts
+with an observed value of false, so the first true observation can fire.
+Further true observations do not fire again until polling observes false
+and then true.
+
+Declaring a `SpinSource` describes logical readiness. It does not attach a
+predicate or start polling. HSDK 5.0 has no public API for attaching a predicate
+to `SpinSource`, and Python does not expose the Spin authoring API. The
+compatibility commitment below covers the supported public API, not private
+runtime bindings.
+
+<Note title="Planned support in a future release">
+A future HSDK release is planned to introduce a new API for native Boolean
+readiness. The current proposal uses `OnCondition` with rising-edge and
+level-triggered firing. The release schedule, API name, and signatures are
+still subject to change. This API is not available in HSDK 5.0.
+
+Existing supported HSDK 5.0 applications using `OnSpin` will remain supported
+when the new API is introduced. The existing C++ Spin API and its supported
+behavior will be retained. Upgrading to that release will not require a
+migration to the new API.
+
+You can keep your existing HSDK 5.0 code as it is. Migration guidance will be
+provided when the new API is released. This notice does not deprecate `OnSpin`
+in 5.0 or add compiler deprecation warnings. No removal release has been
+announced.
+</Note>
+
+Under the current proposal, rising-edge firing preserves Spin's behavior of
+activating once for each observed transition from false to true. Level-triggered
+firing would allow a condition that stays true to make the operator eligible
+again after the previous activation fully retires. Adopting the proposed API
+would also require setting up a condition binding.
+
+## Operator-local compute-call completion
+
+Use `complete_after(ComputeCalls{.limit = N})` to make one finite producer
+complete naturally after exactly `N` successful calls to its `compute()`
+method. The rule is accepted only for an operator with no inputs, at
+least one output, and exactly one explicit source trigger: `OnClock`,
+`OnReadable`, `OnNotified`, `OnDoorbell`, or `OnSpin`. The compiler rejects
+implicit `OnAnyInput`, explicit input triggers (`OnAnyInput`, `OnEach`,
+`OnAligned`, and `OnWindow`), predicate triggers, inputful transforms and
+sinks, and outputless operators. The rule is therefore a producer-local
+contract, not a whole-workflow iteration count. Different finite producers may
+declare different limits.
+
+```cpp
+result.trigger(holoscan::OnClock{.period = 20ms})
+    .complete_after(holoscan::ComputeCalls{.limit = 100U});
+```
+
+One unit is committed only after `compute()` returns success and Runtime retires
+that call's accepted publications. A returned error, exception, failed
+publication, skipped readiness evaluation, or rejected admission does not
+advance progress. Both boundary values are ordinary: a limit of zero admits no
+compute call and closes the producer's outputs, while `UINT64_MAX` is the exact
+maximum limit rather than an "unbounded" sentinel. Omit
+`complete_after(...)` when the producer is not bounded by a compute-call limit.
+
+Progress belongs to the pair `(RunSession, logical Operator)`. It survives a
+lifecycle restart of that operator, including a failed restart that rolls back
+to the previous lifecycle generation; it does not restart at zero merely
+because the lifecycle generation changed. Starting a fresh `RunSession`
+creates fresh progress at zero. After the session reaches a terminal outcome,
+`RunSession::operator_completion_progress()` exposes the immutable configured
+limit, successful-call count, and whether the limit was reached.
+
+When the final successful call reaches the limit, publications accepted from
+that call remain valid and are delivered before end-of-stream. The runtime then
+closes the producer's outputs and lets downstream operators drain accepted data
+and EOS to natural completion. This rule does not double as a generic timeout
+or deadlock-detection control; those are separate run-termination mechanisms.
+
+## Selectors: which sample each input sees
+
+Attach at most one selector per input with `.input(port, selector)`:
+
+| Selector | Picks |
+|---|---|
+| `Exact{}` | The sample whose capture time exactly matches the contract's selection reference. An `OnEach` driver is already pinned and must not be reselected. |
+| `LatestWithin{.max_age = 5ms}` | The newest causal sample no older than `max_age` (inclusive). |
+| `DrainAll{}` | Every causally available queued sample, delivered as one batch. It takes no fields: its finite batch bound is derived from queue geometry when the plan is compiled. |
+
+```cpp
+result.trigger(holoscan::OnClock{.period = 10ms})
+    .input(camera, holoscan::Exact{})
+    .input(imu, holoscan::LatestWithin{.max_age = 5ms});
+```
+
+Use `Exact` when the trigger supplies a temporal reference and equality with
+that reference is the intended selection rule. Do not attach it to an
+`OnEach` driver: `OnEach` already pins that input implicitly.
+`LatestWithin` is the workhorse for **slower** side inputs whose freshness
+matters more than their exact arrival, and `ReuseLast` can bridge gaps in that
+same slower stream. A side stream that is faster than the activation cadence
+must instead use `DrainAll` so every queued sample is retired in a bounded
+batch. Using `LatestWithin` or `ReuseLast` for a faster side stream leaves
+unselected arrivals retained and can exhaust its finite queue.
+`QueuePolicy::kDropOldest` changes queue admission when the queue is full; at
+depth one it provides a freshest-only mailbox, while larger depths preserve a
+bounded newest-N backlog. It does not change selector semantics or retire
+samples that selection did not consume. The `LatestWithin` selector is
+independent of this overflow policy.
+
+Note the division of labor: the bounded input queue (its depth set by
+`queue_depth()` in `setup()`) only **stores** candidate samples; the selector,
+authored in the contract, decides which of those candidates participates in an
+activation.
+
+<svg viewBox="0 0 760 250" role="img" aria-labelledby="queue-vs-selection-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="queue-vs-selection-title">A bounded input queue stores candidate samples; the contract's selector picks one for the activation window</title>
+  <defs>
+    <marker id="queue-sel-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+    <marker id="queue-sel-arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#76B900" />
+    </marker>
+  </defs>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">
+    <text x="190" y="55" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">bounded input queue</text>
+    <rect x="40" y="70" width="300" height="76" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="40" y="70" width="300" height="76" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <rect x="60" y="88" width="40" height="40" rx="4" fill="currentColor" opacity="0.15" />
+    <rect x="60" y="88" width="40" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+    <rect x="116" y="88" width="40" height="40" rx="4" fill="currentColor" opacity="0.15" />
+    <rect x="116" y="88" width="40" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+    <rect x="172" y="88" width="40" height="40" rx="4" fill="currentColor" opacity="0.15" />
+    <rect x="172" y="88" width="40" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+    <rect x="228" y="88" width="40" height="40" rx="4" fill="#76B900" />
+    <rect x="284" y="88" width="40" height="40" rx="4" fill="currentColor" opacity="0.15" />
+    <rect x="284" y="88" width="40" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+    <text x="190" y="168" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">candidates</text>
+    <line x1="340" y1="108" x2="396" y2="108" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#queue-sel-arrow)" />
+    <rect x="400" y="78" width="130" height="60" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="400" y="78" width="130" height="60" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="465" y="104" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">selector</text>
+    <text x="465" y="124" textAnchor="middle" fill="currentColor" fontSize="11" opacity="0.55">from contract()</text>
+    <line x1="530" y1="108" x2="581" y2="108" stroke="#76B900" strokeWidth="2.5" markerEnd="url(#queue-sel-arrow-green)" />
+    <text x="660" y="55" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="600">activation window</text>
+    <rect x="585" y="70" width="150" height="76" rx="8" fill="#76B900" opacity="0.12" />
+    <rect x="585" y="70" width="150" height="76" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+    <rect x="640" y="88" width="40" height="40" rx="4" fill="#76B900" />
+    <text x="380" y="212" textAnchor="middle" fill="currentColor" fontSize="12" opacity="0.7">queue stores candidates &#8212; the contract selects</text>
+  </g>
+</svg>
+
+## Missing-data policies
+
+When a selector cannot produce a value — the side input has not arrived yet,
+every queued sample is older than `max_age`, or a present sample lacks the
+capture time that the selector requires — `.on_missing(port, policy)` says what
+to do. A capture-less sample still provides deterministic arrival readiness,
+but every selector except `DrainAll` requires capture time and does not invent
+an event timestamp. If you author no policy, the input is simply absent for
+that activation and your compute body must cope. Producers attach genuine
+acquisition time through
+[`EmitOptions::capture_time`](/holoscan/sdk-user-guide/building-operators/operator-anatomy).
+
+An external endpoint that declared a capture clock has made a stronger
+transport promise. If it publishes a sample without that coordinate, the run
+fails before retaining the sample and reports
+`TEMPORAL_CAPTURE_TIME_REQUIRED` on the owning operator.
+
+| Policy | Behavior |
+|---|---|
+| `Skip{}` | Suppress this activation candidate — do not run compute on missing data. |
+| `SafeDefault{}` | Run the operator's degraded path; no sample is fabricated. Your compute body detects the degraded input and does what it can without it. |
+| `ReuseLast{.max_age = 20ms}` | Reuse the last admitted sample, provided it is no older than `max_age` (inclusive). If even the retained sample has aged out, the input is missing after all. |
+
+```cpp
+result.on_missing(imu, holoscan::ReuseLast{.max_age = 20ms});
+```
+
+### Optional unwired inputs
+
+Inputs are required by default. An operator permits intentional absence with
+`holoscan::InputSpecBuilder::optional()` in `setup()`, then chooses the single-sample
+`Exact{}` selector and explicit `SafeDefault{}` in its contract. Calling `.optional()`
+again is harmless. A graph cannot grant this permission on the operator's behalf.
+“Single-sample” describes selector cardinality, not payload type: scalar values,
+generated schemas, `Tensor`, descriptor-backed schemas, and admitted raw POD
+payloads use the same absence contract.
+
+The annotation is validated even when the input is wired. It cannot mark a
+trigger driver, an aligned member, a window selector or anchor, or an input
+used by a predicate evaluator. Ordinary compute-only side inputs under
+`OnWindow` and `OnPredicate` are eligible. They preserve the existing phase
+order: a false predicate does not fire, and a selector that has not been reached
+remains `kNotSelected`.
+
+This `holoscan.core` operator owns its fallback value. The surrounding graph
+must select a default clock for its periodic trigger.
+
+```cpp
+class OptionalSensor final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(sensor, "sensor").optional();
+    spec.output(value, "value");
+  }
+
+  holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = std::chrono::milliseconds{20}})
+        .input(sensor, holoscan::Exact{})
+        .on_missing(sensor, holoscan::SafeDefault{});
+    return result;
+  }
+
+  holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = sensor.receive();
+    if (!sample && sample.error().code != holoscan::ErrorCode::kInputEmpty) {
+      return holoscan::make_unexpected(sample.error());
+    }
+    return value.emit(sample ? sample->data : 1.0F);
+  }
+
+  holoscan::Input<float> sensor;
+  holoscan::Output<float> value;
+};
+```
+
+For `OnAligned`, list only the inputs that must form the aligned tuple. Other
+inputs declared with `.optional()` in `setup()` can be optional side inputs:
+
+```cpp
+holoscan::Contract result;
+result
+    .trigger(holoscan::OnAligned{
+        .ports = holoscan::ports(camera, imu),
+        .window = 2ms,
+    })
+    .input(camera, holoscan::Exact{})
+    .input(imu, holoscan::Exact{})
+    .input(optional_sensor, holoscan::Exact{})
+    .on_missing(optional_sensor, holoscan::SafeDefault{});
+return result;
+```
+
+Here, `camera` and `imu` remain required aligned members and provide all
+activation authority. `optional_sensor` is evaluated at the aligned tuple's
+semantic time but does not cause activation. Adding it to `OnAligned::ports`
+conflicts with its optional declaration and is rejected even when it is wired.
+
+`compile()` admits this graph and emits
+`TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT` as a port-scoped warning. The warning
+has no suppression API: connect the input if it is required, or retain the
+warning as review-visible evidence that the degraded topology is intentional.
+Omitting `.optional()` keeps the input required: a valid unwired contract fails
+with `TEMPORAL_INPUT_UNCONNECTED`. An invalid explicit optional declaration reports
+`TEMPORAL_INPUT_OPTIONAL_INVALID` whether wired or unwired. The diagnostic names
+the operator and port and explains the incompatible selector, missing policy,
+or trigger role. Correct the contract or remove `.optional()` and wire the input.
+Independently malformed contracts keep their
+existing validation errors.
+
+At runtime, compute executes the degraded path without a fabricated sample or
+transport subscriber. `optional_sensor.selection()` returns
+`InputState::kSafeDefault` with `SelectionReason::kNotConnected`. The single-sample
+`receive()` and `receive_data()` accessors return `ErrorCode::kInputEmpty`.
+Calling `selected_batch()` on this single-sample selector returns
+`ErrorCode::kInputSelectionCardinalityMismatch`, just as it does when connected. A connected
+`Exact{} + SafeDefault{}` input reports `SelectionReason::kNeverSeen` before
+observing a sample or source closure. Other missing selections retain their
+ordinary reasons, such as `kCaptureTimeAbsent` or `kEndOfStream`.
+
+An unwired side input has no producer and therefore does not delay natural
+completion while the runtime waits for end of stream from connected inputs.
+
+The two `max_age` fields compose naturally: `LatestWithin{.max_age = 5ms}`
+bounds how stale a *fresh* selection may be, while `ReuseLast{.max_age = 20ms}`
+bounds how long a *previously admitted* sample may stand in when no fresh one
+qualifies. Both bounds are inclusive and must be positive.
+
+<Warning>
+`ReuseLast` never invents data — it replays a real, previously admitted sample
+within its age bound. It applies to scalar selectors (`Exact`, `LatestWithin`)
+only; it does not combine with batch selectors such as `DrainAll`.
+</Warning>
+
+<Anchor id="deadlines" />
+
+## Maximum start delay
+
+`max_start_delay()` declares a positive budget from the trigger's frozen source
+coordinate to the latest permitted **compute entry**. `on_violation()` selects
+the single action taken when that bound is missed:
+
+```cpp
+result.max_start_delay(2ms).on_violation(holoscan::OnViolation::kFailRun);
+```
+
+In Python, use an explicit duration, such as `datetime.timedelta` or
+`holoscan.time.Duration`; bare numbers are rejected. Inside `contract()`, with
+the trigger already authored on `result`:
+
+```python
+from datetime import timedelta
+import holoscan as hs
+
+result.max_start_delay(timedelta(milliseconds=2)).on_violation(hs.OnViolation.FAIL_RUN)
+```
+
+The source coordinate follows the trigger contract:
+
+| Trigger family | Frozen source coordinate |
+|---|---|
+| `OnEach`, `OnAnyInput` | The triggering sample's capture time. |
+| `OnClock` | The scheduled tick. |
+| `OnReadable`, `OnNotified`, `OnDoorbell`, `OnSpin` | The accepted normalized readiness witness. |
+| `OnAligned` | The complete tuple's highest capture coordinate, or a comparable closure proof. |
+| `OnWindow` | The terminal window-close decision. |
+| Input-driven `OnPredicate` | The accepted predicate-driver sample's capture coordinate. |
+| Clock-driven `OnPredicate` | The selected scheduled tick. |
+
+Runtime forms `latest_start = source_coordinate + budget` with checked arithmetic
+in the admitted comparison clock. It samples that clock at the final invocation
+gate, after input selection and any predicate decision, immediately before
+entering `compute()`. Entry exactly at `latest_start` is nominal; only a strictly
+later entry is late. Callback duration and return time do not change that frozen
+disposition. This contract does not bound compute completion or preempt a callback.
+
+Transport time and waiting behind prior work, including earlier invocations of
+the same operator, count toward the budget from the original source coordinate.
+An external producer clock therefore needs an admitted conversion to the runtime
+reference clock; a stale sample or an arbitrary, unaligned producer epoch may
+exhaust the budget before the sample arrives. An input end-of-stream record has
+no capture instant. EOS is not evaluated against a sample- or predicate-driver
+start-delay budget, even when a selector resolves a retained sample. When EOS
+serves as an `OnWindow` or `OnAligned` closure proof, Runtime instead evaluates
+the compiled closure-origin budget against the window-close or aligned-closure
+coordinate in the reference clock.
+
+| `OnViolation` value | Effect when compute entry is late |
+|---|---|
+| `kSafeDefault` | Invoke compute once with `kMaxStartDelayExceeded`; the operator supplies its degraded path. |
+| `kEmitWitness` | Invoke compute once with `kMaxStartDelayExceeded` and record violation evidence; the operator may emit a witness. |
+| `kFailRun` | Do not invoke compute; consume the candidate and fail the run closed. |
+
+Runtime never manufactures fallback output. A strict miss records warning
+`MAX_START_DELAY_MISS`; `kFailRun` also records error
+`RUNTIME_MAX_START_DELAY_FAIL_RUN`. Checked evaluation failures use the distinct
+`RUNTIME_MAX_START_DELAY_EVALUATION_FAILED` error. A false predicate or an input
+selection that suppresses compute creates no start-delay miss.
+
+<Warning>
+Author `max_start_delay()` and `on_violation()` **together**. A budget must have
+a policy for what happens when it is missed; a contract that declares one
+without the other is rejected when the plan is compiled.
+</Warning>
+
+### Migrating early-access contracts
+
+Earlier releases named this same start-time constraint `deadline()`. Update
+callers and diagnostic consumers using the complete migration map below, then
+rebuild C++ applications. The old API names and diagnostic tokens have no aliases.
+
+| Previous name | Replacement |
+|---|---|
+| C++ `Contract::deadline(...)` (duration and `ParamRef` overloads) | `Contract::max_start_delay(...)` |
+| Python `Contract.deadline(...)` | `Contract.max_start_delay(...)` |
+| C++ `ActivationReason::kDeadlineExceeded` | `ActivationReason::kMaxStartDelayExceeded` |
+| Python `ActivationReason.DEADLINE_EXCEEDED` | `ActivationReason.MAX_START_DELAY_EXCEEDED` |
+| `DeadlinePlanRecord` | `MaxStartDelayPlanRecord` |
+| `DeadlineSourceCoordinateKind` | `MaxStartDelaySourceCoordinateKind` |
+| `ExecutionPlan::deadlines()` | `ExecutionPlan::max_start_delays()` |
+| `ContractRecord::deadline_ns` | `ContractRecord::max_start_delay_ns` |
+| `TemporalTriggerPlanRecord::deadline_ns` | `TemporalTriggerPlanRecord::max_start_delay_ns` |
+| `ParameterDerivedTermKind::kContractDeadline` | `ParameterDerivedTermKind::kContractMaxStartDelay` |
+| Derived `term_id` suffix `/contract.deadline` | `/contract.max_start_delay` |
+| `TEMPORAL_DEADLINE_SOURCE_AMBIGUOUS` | `TEMPORAL_MAX_START_DELAY_SOURCE_AMBIGUOUS` |
+| `TEMPORAL_DEADLINE_SOURCE_UNRESOLVED` | `TEMPORAL_MAX_START_DELAY_SOURCE_UNRESOLVED` |
+| `DEADLINE_MISS` | `MAX_START_DELAY_MISS` |
+| `RUNTIME_DEADLINE_FAIL_RUN` | `RUNTIME_MAX_START_DELAY_FAIL_RUN` |
+| `RUNTIME_DEADLINE_EVALUATION_FAILED` | `RUNTIME_MAX_START_DELAY_EVALUATION_FAILED` |
+
+Update exact-string diagnostic filters as well as source code: an old token
+will no longer match an emitted diagnostic. The activation-reason and
+derived-term enum values remain unchanged.
+
+Regenerate serialized artifacts with the updated SDK. The temporal-record
+schema `holoscan.temporal-records` is version 2, and compiled plans use
+`holoscan.execution_plan.private.v9`. The contract key `deadline_ns` becomes
+`max_start_delay_ns`; the plan collection `deadlines` becomes `max_start_delays`.
+Witness identities are `holoscan.temporal.max-start-delay-violation.v1` and
+`holoscan.temporal.max-start-delay-source-coordinate.v1`. Old artifact formats
+are not accepted, and there is no legacy-format reader. The timing semantics
+remain the same.
+
+## Multi-rate patterns on the running example
+
+The camera + IMU pipeline exercises three recurring contract shapes. The first
+two appear in the `slow_fast_fusion` example, the windowed variant of the
+third in `camera_imu_control`.
+
+### Fast input drives fusion
+
+When one stream is much faster than the other, let the fast stream set the pace
+and sample the slow stream by freshness. From the `slow_fast_fusion`
+example's fusion operator:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  using namespace std::chrono_literals;
+  holoscan::Contract result;
+  result.trigger(holoscan::OnEach{fast})                       // fast stream sets the pace
+      .input(slow, holoscan::LatestWithin{.max_age = 100ms})   // freshest slow sample
+      .on_missing(slow, holoscan::Skip{});                     // no slow data yet? don't run
+  return result;
+}
+```
+
+Every fast sample produces one activation carrying the newest qualifying slow
+sample. `Skip{}` keeps the operator quiet until the slow stream has produced its
+first sample. In the camera + IMU pipeline the same shape anchors on the camera
+frame instead, with `LatestWithin` on the high-rate IMU and `ReuseLast` bridging
+short IMU gaps — that is the contract shown at the top of this page. See the
+[slow-fast fusion example](/holoscan/sdk-user-guide/examples/slow-fast-fusion)
+for the full program.
+
+### Clock-driven control loop
+
+A control loop should run at a fixed rate regardless of sensor arrival jitter.
+Trigger on the clock and treat every input as a freshness-sampled side input:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  using namespace std::chrono_literals;
+  holoscan::Contract result;
+  result.trigger(holoscan::OnClock{.period = 20ms})            // 50 Hz, arrival-independent
+      .input(fused, holoscan::LatestWithin{.max_age = 20ms})
+      .on_missing(fused, holoscan::ReuseLast{.max_age = 60ms})
+      .max_start_delay(5ms)
+      .on_violation(holoscan::OnViolation::kSafeDefault);
+  return result;
+}
+```
+
+The loop ticks every 20 ms whether or not new fusion output arrived, holds the
+last command for up to three periods of upstream silence, and drops to its
+degraded path rather than running late. The
+[camera-IMU control example](/holoscan/sdk-user-guide/examples/camera-imu-control)
+builds a complete pipeline around a fixed-rate source of this shape.
+
+### Aligned fusion
+
+When correctness requires samples that belong **together in time** — not merely
+"the latest of each" — align the inputs and take the exact aligned pair:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  using namespace std::chrono_literals;
+  holoscan::Contract result;
+  result.trigger(holoscan::OnAligned{.ports = holoscan::ports(camera, imu), .window = 2ms})
+      .input(camera, holoscan::Exact{})
+      .input(imu, holoscan::Exact{});
+  return result;
+}
+```
+
+The operator activates when the FIFO heads have an inclusive spread of at most
+2 ms, then consumes that pair. Heads at 10 and 12 ms match. Heads at 10 and
+13 ms do not: only the minimum head (10) is retired before reconsidering the
+remaining heads. This is not a search for the nearest sample anywhere in the
+queues. The related `OnWindow` trigger with `BracketedWindow` instead selects
+an IMU neighborhood around the interval between consecutive camera anchors.
+See the [camera + IMU example](/holoscan/sdk-user-guide/examples/camera-imu-control).
+
+## What is checked where
+
+Authoring a contract follows the compose → compile → run split: builder calls
+record your intent, and `compile()` validates it as a whole.
+
+<Note title="Validated at compile time, not at the builder call site">
+`.trigger(...)`, `.input(...)`, `.on_missing(...)`, and `.max_start_delay(...)` copy
+identities and values immediately but do **not** validate semantic combinations
+— a contract must be lowered into a plan before it can be fully checked. Do not
+expect the fluent chain to throw on an invalid combination. Instead, `compile()`
+returns a rejected plan for mistakes such as:
+
+- an `OnAligned` trigger whose member inputs are not all selected with `Exact{}`
+- an empty contract (the `OnAnyInput` default) on a zero-input operator
+- a `max_start_delay()` without an `on_violation()` policy, or vice versa
+- `ReuseLast` attached to a batch selector such as `DrainAll`
+
+See [compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)
+for how to inspect a rejected plan.
+</Note>
+
+## Beyond the core vocabulary
+
+Two more pieces exist for cases the core vocabulary cannot express, and both are
+deliberately an advanced tier:
+
+- **`OnPredicate`** activates when a typed predicate over inputs or the clock
+  becomes true — for data-dependent triggering.
+- **`BracketedWindow`** is a fourth selector that captures a bounded,
+  all-or-nothing bracket around the interval between consecutive anchors — for
+  interpolation and smoothing.
+
+Most operators never need either. When you do, see
+[advanced temporal patterns](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns).
+
+## Recap
+
+- `contract()` declares what the runtime must satisfy before `compute()` runs;
+  compute stays temporally oblivious.
+- One trigger per contract: `OnAnyInput` (default), `OnEach`, `OnClock`,
+  `OnAligned`, or `OnWindow`.
+- Per input: one selector (`Exact`, `LatestWithin`, `DrainAll`) plus an optional
+  missing-data policy (`Skip`, `SafeDefault`, `ReuseLast`) — both `max_age`
+  bounds are inclusive.
+- Author `max_start_delay()` and `on_violation()` (`kSafeDefault`, `kEmitWitness`,
+  `kFailRun`) together.
+- `complete_after(ComputeCalls{.limit = N})` bounds one eligible finite
+  producer by successful compute calls and preserves final-call data through
+  EOS and downstream drain.
+- Semantic conflicts are rejected by `compile()`, not thrown by the fluent
+  builder.
+- `OnPredicate` and `BracketedWindow` are the advanced tier.
+
+Next: give your operator configurable, validated parameters in
+[parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).

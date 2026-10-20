@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace tensor_topic;
+
+table ExternalFrame {
+  sequence: ulong (id: 0);
+  source: string (id: 1);
+  pixels: holoscan.schema.Tensor (id: 2);
+  calibration: holoscan.schema.Tensor (id: 3);
+}
+
+root_type ExternalFrame;
+file_identifier "AEFR";

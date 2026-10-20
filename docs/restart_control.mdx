@@ -1,0 +1,385 @@
+Sometimes one operator in a running pipeline needs to start over — a camera
+driver wedged, a model needs to rebind a device, a worker must re-run its
+allocation stage — without tearing down the whole application. Holoscan models
+this as a **lifecycle restart**: a bounded, permissioned transaction that
+rewinds one operator (and its lifecycle dependents) to a chosen forward stage
+and drives it back to `kStart` without restarting operators outside that
+closure. The current runtime pauses all local host dispatch at the control
+boundary. Operators outside the closure receive no restart callbacks. Plain
+downstream consumers can still receive boundary resets, as explained below.
+
+This page covers who is allowed to trigger a restart, how an operator requests
+one from inside `compute()`, and how an external controller drives restarts
+through a `RunSession`. It builds on
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+(the eight stages and their ordering) and
+[running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping)
+(`run_async()` and `RunSession`). For a worked stereo graph, callback scopes
+and failure examples, see
+[Lifecycle and Restart in Depth](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth).
+
+<Warning>
+  **Beta.** Lifecycle restart executes end to end today, and the API may still
+  evolve in upcoming releases.
+
+  **Works today:** deny-by-default graph-scope grants; nonblocking requests
+  from `compute()` and from an external `LifecycleControlHandle`; the full
+  teardown/forward re-entry matrix below; compiler-frozen closures, widening,
+  and fencing; rollback with old-epoch restoration; and restarts triggered by
+  `lifecycle_mutable` parameter updates. Compatible requests accepted while a
+  transaction is still queued may share it — including requests for different
+  operators. Each dedicated request keeps its own receipt, and a parameter
+  update keeps its own update identity and transaction correlation. Once
+  quiescing starts, one successor transaction may queue; compatible work can
+  still join that successor, while a request that would need another
+  transaction is rejected as `kLifecycleRestartQueueFull`.
+
+  **Not yet in baseline:** restart requests from inside a lifecycle callback, an
+  independent graph-wide restart selector, quiescing of interprocess neighbors, automatic
+  retry of failed stages, and clock- or tag-timed restarts. Lifecycle
+  transactions are unavailable under the `real_time` and `regulated` profiles;
+  enabling `CompileOptions::lifecycle_transactions` for a plan containing
+  either profile causes compilation to fail.
+</Warning>
+
+**Complete C++ example:** [`examples/experimental/restart_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/restart_control/cpp)
+
+<Note>
+  **You will learn**
+
+  - Why restart authority is deny-by-default, and the three graph-scope grants
+    that open it up.
+  - How an operator requests a restart from `compute()` with
+    `ctx.request_restart(LifecycleRestartOptions)`.
+  - How external code mints a `LifecycleControlHandle` from a `RunSession` and
+    drives restarts with `request_restart` / `inspect` / `await` / `restrict`.
+  - Why a restart affects a *closure* of operators, when it *widens* to an
+    earlier stage, and how the runtime fences the restart so it never lands
+    mid-`compute()`.
+  - The exact teardown/forward re-entry matrix for each `from_stage`, and how
+    a failed restart rolls back and restores the old epoch.
+  - How a run-time patch to a `.lifecycle_mutable(stage)` parameter field
+    triggers the same restart machinery.
+</Note>
+
+## Deny-by-default permissions at graph scope
+
+Nothing in a Holoscan application can restart an operator unless the graph
+explicitly said so. Restart authority is granted **at graph scope, at
+authoring time**, through the same `graph.lifecycle()` builder used for
+cross-operator lifecycle ordering:
+
+```cpp
+graph.lifecycle()
+    .allow_self_restart(worker)                     // worker may restart itself
+    .allow_external_restart(worker)                 // run control outside the graph may restart worker
+    .allow_restart_request(supervisor, worker);     // supervisor may request worker's restart
+```
+
+The three grants are independent and narrow:
+
+| Grant | Who it empowers |
+|---|---|
+| `allow_self_restart(target)` | The target operator itself, from its own `compute()`. |
+| `allow_external_restart(target)` | External run control (a `LifecycleControlHandle`, below). |
+| `allow_restart_request(requester, target)` | One specific *other* operator, from its `compute()`. |
+
+Two prerequisites are frozen into the plan at compile time, and both fail
+closed at run time if missing:
+
+1. **The grants above.** An unauthorized request returns
+   `kLifecycleRestartUnauthorized`; it does not degrade to a weaker action.
+2. **The compile-time opt-in.** The plan must be compiled with the
+   `lifecycle_transactions` option set in `CompileOptions` (see
+   [compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)).
+   The two failure modes differ: when the option is *absent*, compilation
+   succeeds and every dedicated restart API path returns
+   `kLifecycleTransactionsDisabled` at run time; when the option is *present*,
+   all nine of its capacity fields must be positive and at least the
+   compiler-derived minima, or **compilation itself is rejected** with
+   `LIFECYCLE_TRANSACTION_CAPACITY_*` diagnostics.
+
+Dedicated lifecycle restart is also profile-gated at compile admission: only
+the `standard`, `robotics`, and `research` profiles admit it, and enabling the
+opt-in on a plan containing a `real_time` or `regulated` region fails
+compilation rather than degrading at run time. Parameter-origin restart
+inherits the narrower active-mutation profile gate, so the admitted sets
+differ:
+
+| Operation | Admitted profiles |
+|---|---|
+| Dedicated lifecycle restart | Standard, Robotics, Research |
+| Active parameter mutation, including `lifecycle_mutable(stage)` | Standard, Research |
+
+The parameter field still uses the same transaction kernel after admission;
+the narrower row is the parameter-mutation profile policy, not a different
+restart algorithm. See
+[runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates)
+for the complete parameter gate.
+
+This is the same fail-closed philosophy as the rest of the runtime: the plan
+records exactly what is allowed, and anything not recorded is rejected as a
+typed error value rather than silently permitted.
+
+## Requesting a restart from `compute()`
+
+An operator with `allow_self_restart` requests its own restart through the
+`ExecutionContext` it receives in `compute()`. The request names a **forward
+stage** to rewind to — `kConfigure` through `kStart`; the teardown stages
+`kStop` and `kRelease` are never valid entry points:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  if (device_needs_rebind_) {
+    HOLOSCAN_TRY(auto receipt,
+                 ctx.request_restart(holoscan::LifecycleRestartOptions{
+                     .from_stage = holoscan::LifecycleStage::kAllocate}));
+    (void)receipt;   // LifecycleRestartReceipt: run-scoped identity, not a waiter
+  }
+  return {};
+}
+```
+
+A two-argument overload, `ctx.request_restart(target, options)`, requests the
+restart of an authorized *other* operator (requires
+`allow_restart_request(requester, target)` on the graph). In both forms:
+
+- The call is **nonblocking** and returns
+  `expected<LifecycleRestartReceipt, Error>`: acceptance only queues the
+  request and installs an activation fence — a restart is never applied
+  mid-compute. A self-restart begins after the current `compute()` callback
+  retires. For a cross-target request, the current implementation also waits
+  for every local owner to reach the boundary with no activation in progress.
+  The requester must finish its callback too. An idle target does not restart
+  concurrently with that requester's `compute()`.
+- The receipt is a small run-scoped identity you can hand to external
+  observation code. It records the accepted request and its **requested**
+  stage; it does not wait, cancel, or grant any extra authority by itself.
+- `LifecycleRestartOptions::reason` is a **registered audit code**
+  (`LifecycleRestartReason`), not free text — restart requests carry no
+  hot-path strings.
+- Rejections come back as typed errors — `kLifecycleRestartUnauthorized`
+  (including a self-restart the plan did not admit),
+  `kLifecycleInvalidRestartStage`, `kLifecycleRestartQueueFull`, and friends —
+  without changing any state.
+
+<Warning>
+  **Not from lifecycle callbacks.** Only `compute()` may submit a restart
+  request. A `LifecycleContext` (the facade lifecycle callbacks receive)
+  deliberately has no restart-submission service, and calling the external
+  handle's operations from any runtime callback context returns
+  `kLifecycleInvalidCallingContext`. This keeps the stage machinery from
+  re-entering itself.
+</Warning>
+
+## External control: `LifecycleControlHandle`
+
+Code *outside* the run — an application supervisor, a health monitor, an
+operations console — drives restarts through a capability minted from the
+`RunSession`. You first bind plan operator identities to the current run with
+`session.operator_ref(...)`, then mint a handle with an explicit
+**access policy** naming the targets and stages this handle may touch:
+
+```cpp
+#include <holoscan/core/lifecycle_control.hpp>
+
+holoscan::RunSession session = holoscan::run_async(plan);
+
+// Bind the plan-level reference to this run generation.
+const std::array<holoscan::OperatorRef, 1> targets{ *session.operator_ref(plan_ref) };
+const std::array<holoscan::LifecycleStage, 1> stages{ holoscan::LifecycleStage::kStart };
+const holoscan::LifecycleAccessPolicy policy{ .allowed_targets = targets,
+                                              .allowed_from_stages = stages };
+
+auto handle = session.lifecycle_control(policy);   // expected<LifecycleControlHandle, Error>
+if (!handle) { /* kLifecycleTransactionsDisabled, kLifecycleRestartUnauthorized, ... */ return; }
+
+auto receipt = handle->request_restart(
+    targets[0],
+    holoscan::LifecycleRestartOptions{ .from_stage = holoscan::LifecycleStage::kStart });
+if (!receipt) { /* typed rejection; no state changed */ return; }
+
+// Observe the transaction: nonblocking inspect(), or the one blocking op, await().
+const auto view = handle->await(*receipt, std::chrono::seconds{5});
+// On success, inspect view->state: terminal outcomes include kPublished,
+// kCanceled, kRolledBack, and kFailedStopped.
+```
+
+The handle exposes four operations:
+
+| Operation | Behavior |
+|---|---|
+| `request_restart(target, options)` | Submit a restart; returns a `LifecycleRestartReceipt` on acceptance. Nonblocking. |
+| `inspect(receipt)` | Return the transaction's current `LifecycleRestartReceiptView` — state, **effective** stage, and transaction lineage — without waiting or advancing anything. Nonblocking. |
+| `await(receipt, timeout)` | Block until the receipt reaches a terminal state, or `kTimeout`. The **only** blocking handle operation; the timeout never cancels the transaction. |
+| `restrict(policy)` | Derive a *narrower* handle. |
+
+### Restriction-only, by design
+
+A `LifecycleControlHandle` is a **restriction-only capability**. The policy
+you mint it with — and any policy passed to `restrict()` — can only *narrow*
+the authority the plan admitted at compile time; it can never add a target or
+a stage. Empty `allowed_targets` or `allowed_from_stages` spans deny
+everything. This means you can hand a tightly scoped handle to a subsystem
+(say, "may restart the camera operator from `kStart`, nothing else") without
+that subsystem being able to escalate.
+
+The handle is an opaque, process-local value: copying it preserves exactly the
+same authority, it retains no `RunSession`, plan, or operator, and accepted
+receipts remain inspectable until the last handle copy is destroyed — even
+after the originating session has closed. Never serialize, transport, or
+persist a handle; if you need a durable record, keep the receipt or a
+diagnostic record instead.
+
+## What a restart actually does
+
+A restart is localized, but it is not always *one* operator. Three semantics
+determine its shape — all decided by the compiler and executor, never by the
+caller:
+
+**Closure scope.** The compiler follows lifecycle edges **forward** from the
+target across all stages, including Stop/Release ordering and rate-derived
+dependencies. Facts (`produces`/`requires_dependency`) and
+`graph.lifecycle().before(...)` both contribute. The resulting callback closure
+cannot be narrowed by a request. An incoming edge from an outside provider does
+not pull that provider in. A plain data edge does not add callback members,
+although a direct consumer outside the closure can receive boundary handling.
+
+**Widening.** Resolve the closure first, then the entry stage. A forward-stage
+dependency whose **two endpoints are in the closure** can widen a later request
+to its earlier stage. The receipt retains the requested stage.
+`LifecycleRestartReceiptView` from `inspect()`/`await()` reports the effective
+stage and transaction lineage. Each plan closure's `stage_resolutions` explains
+the compiler's decision. Compatible queued requests may coalesce over the union
+of their closures at the earliest resolved entry stage.
+
+**Re-entry depth.** The **effective** stage, after widening and coalescing,
+determines teardown and the forward suffix:
+
+| Effective stage | Teardown (pre-restart) | Forward suffix |
+|---|---|---|
+| `kStart` | `kStop` | `kStart` |
+| `kArm` | `kStop` | `kArm → kStart` |
+| `kWarmUp` | `kStop` | `kWarmUp → kArm → kStart` |
+| `kAllocate` | `kStop → kRelease` | `kAllocate → kWarmUp → kArm → kStart` |
+| `kDiscover` | `kStop → kRelease` | `kDiscover → kAllocate → kWarmUp → kArm → kStart` |
+| `kConfigure` | `kStop → kRelease` | `kConfigure → kDiscover → kAllocate → kWarmUp → kArm → kStart` |
+
+A Start restart does not invoke Release, but that does not guarantee resource
+retention: a Stop callback can release resources itself. Allocate and earlier
+entries include Release and replay resource acquisition. Stop and Release are
+never valid requested entry stages (`kLifecycleInvalidRestartStage`).
+
+**Fencing and receiver boundaries.** Acceptance installs an activation fence.
+In-flight activations retire before every local owner reaches the control
+boundary. The fence cancels pending candidates and retires frozen sources for
+callback members and their direct same-process consumers. Callback members
+then run teardown and re-entry. On successful publication, both sets reset
+their selectors/readiness and advance their receiver Tag generations.
+The remaining operators retain theirs. Only callback members receive lifecycle callbacks.
+All local dispatch pauses during the transaction. This is not a distributed
+barrier or recursive traversal of downstream data edges.
+
+<Warning>
+  **Current receiver behavior.** Plain downstream consumers can lose pending
+  work and advance their Tags without lifecycle callbacks. This boundary
+  behavior may change in upcoming releases. Do not infer uninterrupted progress
+  or unchanged receiver state from the absence of callbacks.
+</Warning>
+
+A callback closure can happen to cover the whole graph. There is no separate
+all-operators restart selector or interprocess atomic restart guarantee. To
+reconstruct all operator instances, stop and create a new `RunSession`. See
+[running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+## One restart transaction, end to end
+
+A dedicated request returns a receipt. A parameter-origin update returns its
+own update identity. Acceptance means queued work, not completed reconfiguration.
+Off-callback control code observes a dedicated receipt with `inspect()`/`await()`.
+A request submitted from `compute()` can hand its receipt to that code, but the
+callback cannot wait through the control handle itself.
+
+The [restart outcome map](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth#failure-is-not-always-recoverable)
+shows where the transaction can resume or fail the run. Preparation checks drain/completion
+state, conditionally cancels and joins the shared channel service, fences
+candidates, and prepares tensor/rate state before any lifecycle callback.
+
+| Failure point | Outcome |
+|---|---|
+| Fence or runtime preparation | `kFailedStopped` before lifecycle callbacks. The run fails |
+| Pre-restart teardown | `kFailedStopped` without a forward suffix or old-epoch restoration |
+| Forward suffix | Unwind completed **candidate** work in reverse completion order, then attempt old-epoch restoration if cleanup succeeds |
+| Candidate cleanup, old-epoch restoration, runtime recovery or publication | `kFailedStopped`. The run fails without relaunching owners |
+| Successful restoration | `kRolledBack` with old epoch and published parameters, unchanged affected Tag generations, and a warning diagnostic |
+
+RolledBack does not restore canceled candidates, queued data or arbitrary device
+side effects. See the
+[worked recovery example](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth#failure-is-not-always-recoverable)
+for the callback ledger and the distinction between cleanup and restoration.
+
+Stop closes ingress and cancels queued dedicated work. A dedicated transaction
+already executing retains its actual outcome before terminal stop.
+Parameter-origin work additionally checks stop before candidate publication.
+An `await()` timeout (`kTimeout`) only ends that caller's wait. It does not
+cancel or mutate the transaction. Later observation can report the result.
+
+## Restarts triggered by parameter updates
+
+A restart does not always begin with an explicit request. A typed-parameter
+field declared `.lifecycle_mutable(stage)` submits into the **same transaction
+kernel** when patched at run time: the accepted batch reserves a candidate
+parameter generation and requests re-entry at the earliest invalidated stage
+across the batch's lifecycle-mutable fields. The candidate uses `kStart` as
+its lifecycle barrier, but it becomes publicly visible only after the whole
+coalesced transaction publishes. The full treatment — admission, guardrails,
+result states, and correlation IDs — is on
+[runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+
+## Parameter views inside restart callbacks
+
+Lifecycle callbacks see a **phase-selected** parameter view during a restart.
+The [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+page introduces the mechanism; this is the exact selection:
+
+| Transition phase | Parameter view presented to callbacks |
+|---|---|
+| Initial startup | Generation zero |
+| Pre-restart teardown | Old published generation |
+| Restart forward | Private candidate for a parameter-origin restart; otherwise the retained current generation |
+| Forward rollback | The exact view that created the work being unwound |
+| Restore old | Old published generation |
+| Final shutdown | Current published generation |
+
+## Recap
+
+- Restart authority is **deny-by-default**: grant it at graph scope with
+  `allow_self_restart`, `allow_external_restart`, or
+  `allow_restart_request(requester, target)`, and compile with
+  `lifecycle_transactions` enabled.
+- Operators request restarts from `compute()` via
+  `ctx.request_restart(LifecycleRestartOptions{.from_stage = ...})`; only
+  forward stages (`kConfigure`–`kStart`) are valid entry points, and lifecycle
+  callbacks can never submit one.
+- External controllers call `session.lifecycle_control(policy)` to mint a
+  `LifecycleControlHandle` with `request_restart` / `inspect` / `await` /
+  `restrict` — a **restriction-only** capability that can narrow but never
+  broaden the plan's admitted authority.
+- A restart executes over the target's compiler-frozen lifecycle-dependency
+  **closure** with the exact teardown/forward matrix above: `kStop` always,
+  plus `kRelease` when the compiler-resolved effective stage is `kAllocate` or
+  earlier. The request may **widen** toward `kConfigure`, and execution is
+  **fenced** to the control safe point — never applied mid-`compute()`;
+  operators outside the closure receive no lifecycle callbacks, while all
+  local dispatch pauses during the transaction.
+- Requests are nonblocking and return
+  `expected<LifecycleRestartReceipt, Error>`; the receipt carries the
+  requested stage, while `inspect()`/`await()` return the
+  `LifecycleRestartReceiptView` with the effective stage and lineage. Read
+  failures as typed error values.
+- A run-time patch to a `.lifecycle_mutable(stage)` parameter field enters the
+  same transaction kernel: the candidate generation publishes only after the
+  whole transaction reaches `kPublished`.
+
+**Next:** change an operator's typed parameters in a running session in
+[Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).

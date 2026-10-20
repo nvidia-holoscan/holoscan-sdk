@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_hello_logger LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    REQUIRED
+)
+
+add_executable(hello_logger hello_logger.cpp)
+target_compile_features(hello_logger PRIVATE cxx_std_20)
+# The installed package must not impose the SDK's build-time log threshold on callers. The source
+# checks this marker before including logger.hpp, then verifies the header's caller-owned default.
+target_compile_definitions(hello_logger PRIVATE HOLOSCAN_VERIFY_CALLER_OWNED_LOG_POLICY=1)
+target_link_libraries(hello_logger
+    PRIVATE
+        holoscan::logger
+)
+
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_HELLO_LOGGER_TEST COMMAND hello_logger)
+    set_tests_properties(EXAMPLE_CPP_HELLO_LOGGER_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "holoscan logger sample complete"
+    )
+endif()

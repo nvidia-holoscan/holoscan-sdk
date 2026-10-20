@@ -1,0 +1,410 @@
+CUDA Graph regions allow you to keep ordinary Holoscan operators while replacing
+their steady-state, per-operator dispatch with one CUDA Graph launch. They are
+most useful for a short GPU-only chain whose repeated kernel-launch and channel
+overhead is significant compared with the GPU work itself.
+
+CUDA Graph regions are explicitly enabled. Adding
+`RegionConstraint::cuda_graph()` means "compile this region as a CUDA Graph."
+If the compiler is unable to infer whether the region is safe to capture and replay,
+the compilation fails. It never silently falls back to ordinary execution.
+
+<Note title="You will learn">
+  - How to make an operator capture eligible and request CUDA Graph lowering
+  - Which graph shapes, triggers, Tensor declarations, and placements are supported
+  - What runs once during capture and what repeats on every activation
+  - How fixed Tensor slots affect backpressure and output lifetime
+  - How to read common compile and runtime failures
+</Note>
+
+<Note>
+  Python exposes `RegionConstraint.cuda_graph()`. Native Python operators
+  currently cannot declare `cuda_graph_capture_eligible()`.
+</Note>
+
+## What changes at runtime
+
+Without a CUDA Graph region, the scheduler activates each operator and each
+internal channel carries a Tensor. With a CUDA Graph region, startup calls each
+member's `compute()` once to record its CUDA work. Normal activations then
+dispatch the region source as one fused operator and launch the recorded graph.
+
+<svg viewBox="0 0 820 300" role="img" aria-labelledby="cuda-graph-fusion-title" aria-describedby="cuda-graph-fusion-description" style={{width: "100%", maxWidth: "820px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="cuda-graph-fusion-title">Ordinary operator dispatch compared with CUDA Graph region replay</title>
+  <desc id="cuda-graph-fusion-description">Ordinary execution dispatches multiply and add separately. CUDA Graph execution captures those operators once and replays them as one fused region between the unchanged source and sink.</desc>
+  <defs>
+    <marker id="cuda-graph-fusion-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="410" y="28" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Same operators, different steady-state dispatch</text>
+
+  <text x="28" y="91" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Ordinary execution</text>
+  <rect x="170" y="58" width="120" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="230" y="90" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Source</text>
+  <line x1="290" y1="85" x2="336" y2="85" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-fusion-arrow)"/>
+  <rect x="342" y="58" width="120" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="402" y="90" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Multiply</text>
+  <line x1="462" y1="85" x2="508" y2="85" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-fusion-arrow)"/>
+  <rect x="514" y="58" width="120" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="574" y="90" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Add</text>
+  <line x1="634" y1="85" x2="680" y2="85" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-fusion-arrow)"/>
+  <rect x="686" y="58" width="106" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="739" y="90" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Sink</text>
+  <text x="402" y="132" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.75" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">scheduler activation</text>
+  <text x="574" y="132" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.75" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">scheduler activation</text>
+
+  <text x="28" y="224" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">CUDA Graph replay</text>
+  <rect x="170" y="191" width="120" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="230" y="223" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Source</text>
+  <line x1="290" y1="218" x2="336" y2="218" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-fusion-arrow)"/>
+  <rect x="342" y="181" width="292" height="74" rx="10" fill="#76B900" fillOpacity="0.14" stroke="#76B900" strokeWidth="2"/>
+  <text x="488" y="211" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Fused CUDA Graph region</text>
+  <text x="488" y="234" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Multiply + Add, one graph launch</text>
+  <line x1="634" y1="218" x2="680" y2="218" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-fusion-arrow)"/>
+  <rect x="686" y="191" width="106" height="54" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="739" y="223" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Sink</text>
+  <text x="488" y="279" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">The source and sink remain ordinary operators.</text>
+</svg>
+
+The logical graph is still inspectable as the original operators. Fusion is a
+physical execution decision in the compiled plan, not a change to the graph
+you authored.
+
+## Minimal authoring pattern
+
+Three pieces are required: capture-safe Tensor ports, explicit operator
+eligibility, and a constrained region.
+
+### 1. Declare exact, Runtime-owned Tensor outputs
+
+Every output that feeds a captured edge must use Runtime-pool storage and a
+fully specified, contiguous Tensor representation. In a CUDA Graph region,
+the declared maximum shape becomes the **exact** shape used for capture and
+every replay.
+
+```cpp
+constexpr std::array<std::int64_t, 2> kShape{1080, 1920};
+constexpr DLDataType kUint8{.code = kDLUInt, .bits = 8U, .lanes = 1U};
+
+const holoscan::TensorRepresentation representation{
+    .memory_kind = holoscan::MemoryKind::kCudaDevice,
+    .dtype = kUint8,
+    .rank = 2U,
+    .strides = holoscan::TensorStridePolicy::kContiguousOnly,
+};
+
+holoscan::TensorOutputSpec output_spec() {
+  return holoscan::TensorOutputSpec{
+      .representation = representation,
+      .bounds = holoscan::tensor_bounds(
+          kShape,
+          holoscan::TensorBoundsOptions{.max_byte_span = 1080U * 1920U}),
+      .storage = holoscan::TensorOutputStorage::kRuntimePool,
+  };
+}
+
+holoscan::TensorInputSpec input_spec() {
+  return holoscan::TensorInputSpec{.representation = representation};
+}
+```
+
+Set the rank explicitly. `tensor_bounds(kShape)` supplies bounds; it does not
+infer `TensorRepresentation::rank`. A loan request with a different shape is
+rejected, even when it is smaller than the declared maximum.
+
+See [Tensors in Depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+for the full Tensor allocation and stream-access model.
+
+### 2. Mark each region member capture eligible
+
+The declaration is an explicit promise by the operator author:
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.input(input, "input")
+      .queue_depth(1U)
+      .expects_tensor(input_spec());
+  spec.output(output, "output")
+      .max_emits_per_compute(1U)
+      .produces_tensor(output_spec());
+  spec.cuda_graph_capture_eligible();
+}
+```
+
+Eligibility alone does not enable capture. The same operator still runs
+normally unless it is placed in a CUDA Graph-constrained region.
+
+### 3. Add the linear chain to a constrained region
+
+```cpp
+graph.add_flow(source->output, multiply->input,
+               holoscan::ConnectionOptions{.queue_depth = 1U});
+graph.add_flow(multiply->output, add->input,
+               holoscan::ConnectionOptions{.queue_depth = 1U});
+graph.add_flow(add->output, sink->input,
+               holoscan::ConnectionOptions{.queue_depth = 1U});
+
+graph.region("transforms")
+    .add(multiply)
+    .add(add)
+    .constrain(holoscan::RegionConstraint::cuda_graph());
+```
+
+`cuda_graph()` must be the region's only `RegionConstraint`. A separate region
+`profile(...)` is permitted because a profile is not a constraint.
+
+## Supported region shape
+
+The first-release model is deliberately narrow: a nonempty linear chain of
+directly listed operators in the root graph, with at most one Tensor ingress
+and at most one Tensor egress.
+
+<svg viewBox="0 0 820 340" role="img" aria-labelledby="cuda-graph-shape-title" aria-describedby="cuda-graph-shape-description" style={{width: "100%", maxWidth: "820px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="cuda-graph-shape-title">Supported CUDA Graph region topology and unsupported examples</title>
+  <desc id="cuda-graph-shape-description">A supported region is one linear chain with at most one ingress and one egress. Branches, joins, side outputs, and boundaries attached to an intermediate member are not supported.</desc>
+  <defs>
+    <marker id="cuda-graph-shape-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="410" y="29" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Region boundary rules</text>
+
+  <text x="22" y="68" fontSize="14" fontWeight="600" fill="#76B900" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Supported</text>
+  <rect x="155" y="47" width="110" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="210" y="76" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Producer</text>
+  <line x1="265" y1="71" x2="315" y2="71" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <rect x="321" y="39" width="310" height="66" rx="10" fill="#76B900" fillOpacity="0.14" stroke="#76B900" strokeWidth="2"/>
+  <text x="476" y="63" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.78" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">CUDA Graph region</text>
+  <text x="476" y="86" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Source member → ... → Sink member</text>
+  <line x1="631" y1="71" x2="681" y2="71" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <rect x="687" y="47" width="110" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="742" y="76" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Consumer</text>
+
+  <line x1="22" y1="129" x2="798" y2="129" stroke="currentColor" strokeWidth="1" opacity="0.2"/>
+  <text x="22" y="163" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Not supported</text>
+
+  <rect x="42" y="188" width="210" height="112" rx="8" fill="currentColor" opacity="0.04"/>
+  <rect x="42" y="188" width="210" height="112" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="147" y="213" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Branch or join</text>
+  <line x1="84" y1="251" x2="132" y2="228" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <line x1="84" y1="251" x2="132" y2="274" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <circle cx="76" cy="251" r="9" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <circle cx="145" cy="222" r="9" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <circle cx="145" cy="280" r="9" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="147" y="320" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.75" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">fan-out, fan-in, parallel edges</text>
+
+  <rect x="305" y="188" width="210" height="112" rx="8" fill="currentColor" opacity="0.04"/>
+  <rect x="305" y="188" width="210" height="112" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="410" y="213" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Intermediate boundary</text>
+  <line x1="342" y1="252" x2="390" y2="252" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <circle cx="402" cy="252" r="9" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <line x1="411" y1="252" x2="459" y2="252" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <line x1="402" y1="243" x2="402" y2="225" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <circle cx="471" cy="252" r="9" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="410" y="320" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.75" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">side input or output on a middle member</text>
+
+  <rect x="568" y="188" width="210" height="112" rx="8" fill="currentColor" opacity="0.04"/>
+  <rect x="568" y="188" width="210" height="112" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="673" y="213" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Embedded graph</text>
+  <rect x="610" y="230" width="126" height="46" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4"/>
+  <circle cx="640" cy="253" r="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <line x1="648" y1="253" x2="687" y2="253" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#cuda-graph-shape-arrow)"/>
+  <circle cx="699" cy="253" r="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="673" y="320" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.75" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">nested members are not flattened here</text>
+</svg>
+
+The source may be input-driven or inputless. Boundary-free, ingress-only, and
+egress-only chains are also supported as long as the remaining rules are met.
+Multiple disjoint CUDA Graph regions may exist in one application.
+
+## Admission checklist
+
+Use this table before enabling the constraint.
+
+| Area | Required for a CUDA Graph region |
+| --- | --- |
+| Membership | Every member is a directly listed root-graph operator, belongs to only one CUDA Graph region, and calls `cuda_graph_capture_eligible()` in `setup()`. |
+| Topology | Members form one connected linear chain. There is at most one ingress into the first member and at most one egress from the last member. All region edges carry `Tensor`. |
+| Placement | The complete region, its ingress producer, and its egress consumer are in one process group. The region resolves to one CUDA device and one selected CUDA context. [CUDA Green Context](/holoscan/sdk-user-guide/advanced/cuda-green-contexts) placement is supported when the complete region resolves consistently. |
+| Tensor shape | Dtype and rank are exact; the maximum shape is complete and becomes the exact replay shape. Non-scalar dimensions have positive extents. A scalar region ingress is not supported. |
+| Tensor layout | Captured edges are contiguous. Bounded-strided capture buffers are not supported. Internal edges use CUDA-device memory; boundary edges may use CUDA-device or pinned-host memory. Pageable-host and managed memory are rejected where they cannot preserve the fixed capture contract. |
+| Tensor storage | Captured outputs use `TensorOutputStorage::kRuntimePool`, `allocate_tensor()`, and the CUDA write path. Each edge has one fixed slot, queue depth one, one emit per compute, and no extra retained/history sample. Pass-through Tensor storage is not supported. |
+| Scheduling | An input-driven member uses default/`OnAnyInput` behavior or `OnEach` for its exact topology input. An inputless source has exactly one explicit `OnClock`, `OnReadable`, `OnNotified`, `OnDoorbell`, or `OnSpin` trigger. |
+| Completion | `complete_after(ComputeCalls{.limit = N})` is supported only on a zero-input, output-producing region source. Capture does not consume one of those compute calls. |
+
+The compiler rejects explicit selectors, member `max_start_delay()` budgets,
+independent triggers on input-driven members, branches, joins, parallel edges,
+non-Tensor edges, cross-process boundaries, and cross-device regions.
+
+## Capture and replay lifecycle
+
+All member operators complete normal lifecycle startup before capture. The
+runtime then performs one cold capture on a private, nonblocking stream in the
+source operator's CUDA context. After capture, it restores ordinary bindings.
+Every application activation launches the graph on the source operator's
+already planned stream. The capture stream and replay stream are intentionally
+different.
+
+<svg viewBox="0 0 820 246" role="img" aria-labelledby="cuda-graph-lifecycle-title" aria-describedby="cuda-graph-lifecycle-description" style={{width: "100%", maxWidth: "820px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="cuda-graph-lifecycle-title">CUDA Graph region startup capture and steady-state replay</title>
+  <desc id="cuda-graph-lifecycle-description">Operators start normally, their compute callbacks run once on a private capture stream, ordinary bindings are restored, and later activations launch the graph on the source operator stream before publishing the egress asynchronously.</desc>
+  <defs>
+    <marker id="cuda-graph-lifecycle-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="410" y="28" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">One cold capture, then repeated launches</text>
+  <line x1="75" y1="107" x2="745" y2="107" stroke="currentColor" strokeWidth="2" markerEnd="url(#cuda-graph-lifecycle-arrow)"/>
+  <circle cx="105" cy="107" r="11" fill="currentColor"/>
+  <text x="105" y="76" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Start</text>
+  <text x="105" y="142" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">all members</text>
+
+  <rect x="198" y="62" width="208" height="90" rx="10" fill="#76B900" fillOpacity="0.14" stroke="#76B900" strokeWidth="2"/>
+  <text x="302" y="88" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Capture once</text>
+  <text x="302" y="112" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">member compute() callbacks</text>
+  <text x="302" y="133" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">private stream, source context</text>
+
+  <circle cx="487" cy="107" r="11" fill="currentColor"/>
+  <text x="487" y="76" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Restore</text>
+  <text x="487" y="142" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">ordinary bindings</text>
+
+  <rect x="576" y="62" width="178" height="90" rx="10" fill="currentColor" opacity="0.04"/>
+  <rect x="576" y="62" width="178" height="90" rx="10" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="665" y="88" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Replay N times</text>
+  <text x="665" y="112" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">source operator stream</text>
+  <text x="665" y="133" textAnchor="middle" fontSize="12" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">asynchronous egress</text>
+
+  <text x="410" y="195" textAnchor="middle" fontSize="13" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">CPU member code runs in the capture box, not once per replay.</text>
+  <text x="410" y="220" textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Only CUDA work recorded during capture repeats.</text>
+</svg>
+
+Egress publication remains asynchronous. The runtime submits the graph and
+publishes the output Tensor with normal CUDA readiness; downstream access
+performs the necessary ordering without a host synchronization in the region.
+
+## Rules for capture-eligible `compute()`
+
+The key mental model is simple: **the C++ callback runs once, but the captured
+CUDA work runs on every activation**.
+
+| Safe inside the region | Keep outside the region |
+| --- | --- |
+| Receive the fixed Tensor input | Per-frame logging, counters, or CPU decisions |
+| Allocate the declared exact-shape output with `allocate_tensor()` | Host writes to captured output memory |
+| Obtain a CUDA writer and enqueue capture-compatible work on `context.cuda_stream()` | Direct `emit(Tensor)` or pass-through publication |
+| Commit the writer and emit the Tensor loan | Runtime parameter updates or lifecycle restart requests |
+| Use constant configuration frozen before capture | Per-frame changes to launch shape, Tensor address, or topology |
+
+During capture, activation time and rate queries are unavailable, parameter
+submissions are disabled, lifecycle restart has no active binding, and
+`request_completion()` / `request_stop()` have no effect. Calling
+`cuda_graph_capture_eligible()` means the operator author has verified that
+the callback does not depend on those services during capture.
+
+Publication metadata follows the fused region boundary. `EmitOptions` emitted
+by the final member are recorded during capture and reused on every region
+egress. Options produced by the source or internal members are capture-time
+intermediates and do not become per-activation metadata. Put dynamically
+changing metadata outside the region.
+
+Captured members must also have immutable runtime and lifecycle parameter
+state. Compilation rejects a capture region containing an admitted restart
+target **or a member of that target's restart closure**. Keep restartable or
+dynamically reconfigured operators, including their lifecycle dependents,
+outside the region. See
+[restart membership](/holoscan/sdk-user-guide/advanced/lifecycle-in-depth#derive-restart-membership-before-its-entry-stage).
+
+## One fixed slot and backpressure
+
+CUDA Graph replay requires stable Tensor addresses, so the current runtime
+owns exactly one fixed Tensor slot for each captured edge. A new activation
+cannot reuse a slot while the previous activation or its downstream consumer
+still owns it.
+
+An outside ingress producer must therefore treat `kResourceExhausted` from
+`allocate_tensor()` and `kBackpressured` from publication as normal retry
+conditions. Advance producer sequence state only after a successful emit.
+
+```cpp
+auto loan = output.allocate_tensor(kShape);
+if (!loan) {
+  if (loan.error().code == holoscan::ErrorCode::kResourceExhausted ||
+      loan.error().code == holoscan::ErrorCode::kBackpressured) {
+    return {};  // Keep the same logical item and retry on a later activation.
+  }
+  return holoscan::make_unexpected(std::move(loan.error()));
+}
+
+// Write and commit on context.cuda_stream(), then publish.
+auto emitted = output.emit(std::move(*loan));
+if (!emitted && emitted.error().code == holoscan::ErrorCode::kBackpressured) {
+  return {};  // Do not advance producer state.
+}
+```
+
+This is ordinary capacity-one backpressure applied to fixed CUDA Graph
+storage. A slow consumer that retains the egress can delay the next launch;
+the region does not add hidden buffering.
+
+## Diagnosing rejection or failure
+
+Check the compiled plan before starting the session:
+
+```cpp
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
+if (!plan.ok()) {
+  std::cerr << plan.json() << '\n';
+  return 1;
+}
+```
+
+CUDA Graph admission errors identify the region and the violated rule. The
+most common causes are:
+
+| Symptom | What to check |
+| --- | --- |
+| Region topology rejected | Confirm one directly listed, connected root-operator chain with no branch, join, side port, parallel edge, or embedded graph. |
+| Member not capture eligible | Call `cuda_graph_capture_eligible()` in every member's `setup()`. Do not add the outside producer or consumer unless they are intended region members. |
+| Tensor shape or layout rejected | Declare exact dtype and rank, complete positive shape bounds, contiguous layout, Runtime-pool storage, and one emit per compute. The requested loan shape must equal the declared shape. |
+| Fixed storage rejected | Use queue depth one, avoid pass-through outputs and retained history, and ensure the ingress producer output has no second consumer. |
+| Scheduling rejected | Use the exact topology input for `OnEach`, remove member `max_start_delay` contracts and selectors, or give an inputless source exactly one supported explicit trigger. |
+| Placement rejected | Keep the region and its immediate boundary operators in one process group and resolve all members to one CUDA device/context. |
+
+Construction, capture, or launch failures fail the run with region-attributed
+diagnostics. CUDA errors are asynchronous and can appear at a later readiness
+boundary. Re-run the same operators without the CUDA Graph constraint to
+isolate the member operation, then enable the region again.
+
+## Measure before and after
+
+CUDA Graph fusion reduces repeated CPU scheduling, channel traversal, and
+kernel-launch overhead inside the region. It does not guarantee lower
+end-to-end latency. Small kernels often benefit most, while a slow downstream
+consumer or the one-slot lifetime can dominate the result.
+
+The shipped `cuda_graph_region` example runs the same pipeline in both modes:
+
+```bash
+./cuda_graph_region --normal
+./cuda_graph_region --cuda-graph
+```
+
+Its topology is `DeviceSource -> [Multiply -> Add] -> ResultSink`, and its
+source demonstrates the required retry behavior. See
+[Holoscan by Example](/holoscan/sdk-user-guide/examples/holoscan-by-example)
+for the source link and build instructions. Profile both modes on the target
+GPU and use [Nsight Systems](/holoscan/sdk-user-guide/performance/nsight-profiling)
+to confirm that the fused launch improves the workload that matters.
+
+## Recap
+
+- Opt in twice: mark each member capture eligible, then apply the hard
+  `RegionConstraint::cuda_graph()` request to the region.
+- Keep the region a direct root-operator linear Tensor chain with at most one
+  ingress and one egress, one process group, and one CUDA device/context.
+- Use exact-shape, contiguous, Runtime-owned Tensor loans with one fixed slot
+  per captured edge.
+- Put only capture-compatible CUDA work and fixed publication plumbing inside
+  captured callbacks. CPU side effects and control actions run only at capture.
+- Expect normal capacity-one backpressure, preserve producer state across
+  retries, and compare the result with ordinary execution on your hardware.

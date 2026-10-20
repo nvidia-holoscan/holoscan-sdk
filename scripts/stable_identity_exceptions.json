@@ -1,0 +1,62 @@
+[
+  {
+    "path": "tests/compiler/test_compile_temporal.cpp",
+    "literal": "nvidia.holoscan.test.keyed",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/compiler/test_compile_temporal.cpp",
+    "literal": "nvidia.holoscan.test.other",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/system/temporal_installed_consumer/main.cpp",
+    "literal": "nvidia.holoscan.installed.always",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/scripts/test_stable_identity_names.py",
+    "literal": "nvidia.policy.old",
+    "reason": "Exact exception-checker regression input; not an SDK declaration."
+  },
+  {
+    "path": "tests/scripts/test_stable_identity_names.py",
+    "literal": "nvidia.example.New",
+    "reason": "Exact exception-checker regression input; not an SDK declaration."
+  },
+  {
+    "path": "tests/scripts/test_stable_identity_names.py",
+    "literal": "nvidia.old.Name",
+    "reason": "Exact exception-checker regression input; not an SDK declaration."
+  },
+  {
+    "path": "tests/core/test_temporal_contract.cpp",
+    "literal": "nvidia.test.threshold",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/core/test_temporal_contract.cpp",
+    "literal": "nvidia.test.configured",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/core/test_temporal_contract_lowering.cpp",
+    "literal": "nvidia.test.lowering",
+    "reason": "PredicateKey policy identity is outside the public type/schema naming migration."
+  },
+  {
+    "path": "tests/core/test_operator_spec.cpp",
+    "literal": "",
+    "reason": "Intentional empty schema identity tests the existing runtime diagnostic; source policy does not narrow generic APIs."
+  },
+  {
+    "path": "tests/channel/test_pod_codec.cpp",
+    "literal": "invalid\u007fidentity",
+    "reason": "Intentional invalid UTF-8/control-character identity fixture verifies existing POD admission errors."
+  },
+  {
+    "path": "tests/core/expected_compile_fail/pod_invalid_identity.cpp",
+    "literal": "InvalidIdentityPod",
+    "reason": "Intentional non-qualified POD identity verifies the existing compile-time admission error."
+  }
+]

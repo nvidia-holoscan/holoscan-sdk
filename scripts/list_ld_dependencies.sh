@@ -19,11 +19,10 @@ site_packages=$(python3 -c 'import site; print(site.getsitepackages()[0])')
 
 # Directories we manage without APT which we need to inspect
 dirs=(
-  "/opt/nvidia/holoscan/lib"
+  "/usr/lib"
   "/workspace/holoscan-sdk/install-x86_64/lib"
   "/workspace/holoscan-sdk/install-aarch64-dgpu/lib"
   "/workspace/holoscan-sdk/install-aarch64-igpu/lib"
-  "/usr/lib/ucx"
   "/opt/libtorch"
   "/opt/onnxruntime"
   "${site_packages}/cupy"
@@ -85,10 +84,6 @@ function lib_id() {
       target="holoscan::infer::${lib_name#'libholoscan_infer_'}"
     elif echo "$lib_name" | grep -q "libholoscan_"; then
       target="holoscan::${lib_name#'libholoscan_'}"
-    elif echo "$lib_name" | grep -q "libgxf_"; then
-      target="holoscan::gxf::${lib_name#'libgxf_'}"
-    elif echo "$lib_name" | grep -q "libuc"; then
-      target="holoscan::ucx"
     elif echo "$lib_name" | grep -q "lib"; then
       target="holoscan::${lib_name#'lib'}"
     else
@@ -145,8 +140,14 @@ function parse_links() {
     fi
     echo "- $dir"
 
-    # Find all .so files and store results in an array
-    mapfile -t libs < <(find "$dir" -name "*.so")
+    # /usr/lib includes unrelated system libraries. The SDK package owns only
+    # the Holoscan and HoloMQ shared objects installed directly in that path.
+    if [[ "$dir" == "/usr/lib" ]]; then
+      mapfile -t libs < <(find "$dir" -maxdepth 1 -type f \
+        \( -name "libholoscan*.so" -o -name "libholomq*.so" \))
+    else
+      mapfile -t libs < <(find "$dir" -name "*.so")
+    fi
 
     # Iterate over each .so file
     for lib_path in "${libs[@]}"; do
@@ -426,5 +427,5 @@ function main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    main $@
+    main "$@"
 fi

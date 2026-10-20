@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Codespell settings live in `.codespell.toml`.
@@ -9,4 +9,56 @@ addopts = "-ra"
 markers = [
   "slow: mark test as slow to run (opt-in via --run-slow)",
   "realtime: marks tests as requiring real-time Linux kernel configuration (opt-in via --run-realtime)",
+]
+
+[tool.pyright]
+exclude = [
+  "build*",
+  "install*",
+  "python/holoscan/core",
+]
+extraPaths = [
+  "python",
+  "modules/vision/python",
+  "modules/visualization/python",
+  "modules/inference/python",
+]
+include = [
+  "python/finalize_public_stub.py",
+  "python/holoscan",
+  "modules/vision/python/holoscan_vision",
+  "modules/visualization/python/holoscan_visualization",
+  "modules/inference/python/holoscan_inference",
+  "python/tests/typing/check_registry_typing.py",
+  "python/tests/typing/positive_registry.py",
+  "modules/visualization/python/tests/typing/positive_declarations.py",
+]
+pythonVersion = "3.12"
+reportIncompleteStub = false
+reportUnsupportedDunderAll = false
+strict = [
+  "python/finalize_public_stub.py",
+  "python/holoscan/_tools",
+  "python/holoscan/**/*.pyi",
+  "python/holoscan/_public_api.py",
+  "python/holoscan/registry.py",
+  "modules/vision/python/holoscan_vision",
+  "modules/visualization/python/holoscan_visualization",
+  "modules/inference/python/holoscan_inference",
+  "python/tests/typing/check_registry_typing.py",
+]
+typeCheckingMode = "standard"
+
+[tool.ty.environment]
+python-version = "3.12"
+root = ["python", "modules/vision/python", "modules/visualization/python", "modules/inference/python"]
+
+[tool.ty.src]
+include = [
+  "python/tests/typing/check_registry_typing.py",
+  "python/tests/typing/positive_registry.py",
+  "modules/visualization/python/tests/typing/positive_declarations.py",
+  "modules/vision/python/holoscan_vision",
+  "modules/visualization/python/holoscan_visualization",
+  "modules/inference/python/holoscan_inference",
 ]

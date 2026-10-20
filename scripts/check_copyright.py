@@ -29,7 +29,7 @@ sys.path.append(os.path.normpath(os.path.join(SCRIPT_DIR, "../scripts")))
 import gitutils  # noqa: E402
 
 FilesToCheck = [
-    re.compile(r"[.](cmake|cpp|css|cu|cuh|h|hpp|idl|sh|pxd|py|pyx|yaml)$"),
+    re.compile(r"[.](cmake|cpp|css|cu|cuh|h|hpp|sh|slang|pxd|py|pyx|yaml)$"),
     re.compile(r"CMakeLists[.]txt$"),
     re.compile(r"Dockerfile$"),
     re.compile(r"[.]dockerfile$"),
@@ -403,9 +403,8 @@ def check_copyright(f, update_current_year, reject_nvidia_proprietary=False):
             ]
         )
 
-    for line_num, line in enumerate(lines, start=1):
-        if line_num > header_contents.count("\n") + 1:
-            break
+    header_line_count = len(header_contents.splitlines())
+    for line_num, line in enumerate(lines[:header_line_count], start=1):
         start, end = get_copyright_years(line)
         if start is None:
             continue

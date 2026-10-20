@@ -1,0 +1,926 @@
+A sensor pipeline needs coordination at several levels. Cameras must finish
+initialization before fusion can compute. Fusion needs suitable capture
+timestamps. A failed device may need to restart while other operators retain
+their state. Each requirement has its own mechanism.
+
+This walkthrough follows two cameras, a fusion operator and an unrelated
+monitor. It derives their behavior from lifecycle declarations, then connects
+that model to the shipped
+[camera + IMU example](/holoscan/sdk-user-guide/examples/camera-imu-control).
+The stereo diagrams are illustrative predictions, not a recorded application
+trace. For runnable callback and restart examples, see
+[`examples/lifecycle_callbacks/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/lifecycle_callbacks/cpp)
+and [`examples/experimental/restart_control`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/restart_control).
+
+<Note title="You will learn">
+  - Why fixed stages and optional hooks work together
+  - Why initial startup waits for every operator, while restart callbacks have a smaller scope
+  - How lifecycle edges determine restart membership and the effective entry stage
+  - What pauses, what gets reset, and what a successful or failed restart preserves
+  - How lifecycle readiness differs from sensor synchronization and temporal selection
+</Note>
+
+<Warning>
+  **Beta.** Lifecycle restart and active parameter-update APIs may change in
+  upcoming releases. Receiver-boundary handling and temporal timing details
+  called out below describe the current implementation. They do not establish
+  scheduling latency or hardware synchronization guarantees.
+</Warning>
+
+## Declarations, a compiled plan, and a running session
+
+Constructors, `setup()` and `contract()` describe an operator. Authoring and
+compilation can replay them, so keep resource acquisition and externally visible
+work in lifecycle callbacks. Compilation validates the declarations and freezes
+stage checkpoints, same-stage ordering graphs, restart authority and closures.
+No lifecycle callback runs during compilation.
+
+A new `RunSession` reconstructs runtime operator instances and bindings, performs
+startup, then admits computation. A targeted restart reuses those instances.
+Stopping and creating another session reconstructs fresh instances instead.
+
+{/*
+Mermaid equivalent of the session lifetime figure below.
+No lifecycle callback runs during authoring or compilation.
+
+flowchart TD
+  A[Author: declarations] --> C[Compile: frozen plan]
+  C -- plan --> R
+  subgraph S[RunSession]
+    R[Reconstruct operators and bindings] --> U[Startup: every stage, then ready]
+    U --> P[Compute]
+    P -- runs at a control boundary --> X[Restart: same instances]
+    X -- Published or RolledBack --> P
+    P --> T[Stop: teardown and join]
+  end
+  X -- FailedStopped --> F([The run ends])
+  T -. create another session .-> N[Next RunSession: fresh instances from the same plan]
+*/}
+<svg viewBox="0 -2 340 522" role="img" aria-labelledby="lid-session-title" aria-describedby="lid-session-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-session-title">What happens before, during and after one RunSession</title>
+  <desc id="lid-session-desc">Author and Compile happen before any session. Replayable declarations become a frozen plan, and no lifecycle callback runs yet. The plan starts a RunSession, drawn as a band. Inside the band, the session reconstructs operators and bindings, runs startup through every stage until ready, and then computes. A restart runs at a control boundary and reuses the same instances. The restart returns to compute on Published or RolledBack. FailedStopped ends the run. Stop tears down and joins the session. Optionally, creating another RunSession reconstructs fresh instances from the same plan.</desc>
+  <defs>
+    <marker id="lid-session-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Before any session */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="14" y="0" width="140" height="52" rx="8"/>
+    <rect x="186" y="0" width="140" height="52" rx="8"/>
+  </g>
+  {/* The session band */}
+  <rect x="14" y="96" width="312" height="330" rx="12" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeWidth="2"/>
+  <rect x="58" y="258" width="264" height="110" rx="10" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <rect x="14" y="460" width="312" height="56" rx="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4"/>
+  {/* Arrows: author to compile, plan into the session, session phases, restart loop, exit to the next session */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75">
+    <path d="M 154,26 H 185" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 256,52 V 95" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 40,152 V 179" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 40,192 V 219" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 40,232 V 395" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 96,238 V 257" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 126,257 V 240" markerEnd="url(#lid-session-arrow)"/>
+    <path d="M 40,408 V 459" strokeDasharray="5 4" markerEnd="url(#lid-session-arrow)"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="40" cy="146" r="5.5"/>
+    <circle cx="40" cy="186" r="5.5"/>
+    <circle cx="40" cy="226" r="5.5"/>
+    <circle cx="40" cy="402" r="5.5"/>
+  </g>
+  {/* FailedStopped stop sign inside the restart box */}
+  <polygon points="86.4,343.9 86.4,350.1 82.1,354.4 75.9,354.4 71.6,350.1 71.6,343.9 75.9,339.6 82.1,339.6" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+  <path d="M 76,344 L 82,350 M 82,344 L 76,350" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="26" y="21" fontWeight="600">Author</text>
+    <text x="26" y="41">declarations</text>
+    <text x="198" y="21" fontWeight="600">Compile</text>
+    <text x="198" y="41">frozen plan</text>
+    <text x="14" y="76">no lifecycle callbacks yet</text>
+    <text x="264" y="80">plan</text>
+    <text x="28" y="120" fontWeight="600">RunSession</text>
+    <text x="56" y="151">Reconstruct operators and bindings</text>
+    <text x="56" y="191">Startup: every stage, then ready</text>
+    <text x="56" y="231" fontWeight="600">Compute</text>
+    <text x="70" y="280" fontWeight="600">Restart: same instances</text>
+    <text x="70" y="302">runs at a control boundary</text>
+    <text x="70" y="324">returns on Published or RolledBack</text>
+    <text x="94" y="352">FailedStopped ends the run</text>
+    <text x="56" y="407">Stop: teardown and join</text>
+    <text x="52" y="449">create another session</text>
+    <text x="28" y="482" fontWeight="600">Next RunSession</text>
+    <text x="28" y="504">fresh instances from the same plan</text>
+  </g>
+</svg>
+
+A successful or rolled-back restart returns to computation within the same
+session. A session can also stop without restarting. Terminal stop tears down
+and joins the session.
+
+## Why a fixed set of stages?
+
+A stage is a shared ordering and cleanup checkpoint. The runtime knows which
+stages precede computation, which forward suffix a restart must repeat, and
+which completed work is eligible for cleanup. Application-specific device state
+belongs inside the operator and its hooks.
+
+| Stage | Typical application work |
+|---|---|
+| `kConfigure` | Validate selected configuration and derive cold intent |
+| `kDiscover` | Query capabilities, modes or dimensions |
+| `kAllocate` | Acquire the resources owned by this lifecycle pass |
+| `kWarmUp` | Prepare those resources for steady execution |
+| `kArm` | Bind generation-scoped readiness and external capabilities |
+| `kStart` | Enable active behavior |
+| `kStop` | Quiesce active use |
+| `kRelease` | Release owned resources |
+
+These are useful responsibilities, not an assertion that every shipped operator
+uses every stage. A simple operator may do all its setup and cleanup in
+`start()`/`stop()`. Advanced hooks have the signature
+`LifecycleStatus method(LifecycleContext&) noexcept`.
+
+An operator with no hooks writes no lifecycle code. Its checkpoints still take
+part in stage ordering and complete as skipped. You may omit an optional hook.
+If you register it, its failure still affects execution.
+`kRetryableFailure` classifies a failure but does not schedule an automatic retry. See
+[Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+for registration, context services and status values.
+
+## Two cameras: separate data edges from lifecycle edges
+
+Left and Right send frames to Fusion. Monitor has no data connection. Fixed
+nominal rates keep rate-derived restart dependencies out of this first example.
+
+{/*
+Mermaid equivalent of the three graph views below.
+Solid links carry payloads. Dotted links are lifecycle ordering at the named stage.
+
+flowchart LR
+  %% Data
+  Left --> Fusion
+  Right --> Fusion
+  Monitor
+
+flowchart LR
+  %% Arm ordering. Left, Right and Fusion register Arm hooks.
+  Left -. Arm .-> Fusion
+  Right -. Arm .-> Fusion
+  Monitor[Monitor: no Arm hook, checkpoint skipped]
+
+flowchart LR
+  %% Stop ordering, a coupled variation: only if Fusion must stop first
+  Fusion -. Stop .-> Left
+  Fusion -. Stop .-> Right
+  Monitor
+*/}
+<svg viewBox="0 0 340 436" role="img" aria-labelledby="lid-views-title" aria-describedby="lid-views-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-views-title">Data, Arm ordering and Stop ordering are separate graphs</title>
+  <desc id="lid-views-desc">Three views of the same four operators in fixed positions: Left, Fusion and Right in a row, and Monitor below Right. Data: Left and Right each send payloads to Fusion. Monitor has no data connection. Arm ordering: Left and Right each precede Fusion at Arm. Left, Right and Fusion register Arm hooks. Monitor has no Arm hook, so its Arm checkpoint is skipped. Stop ordering, a coupled variation used only if Fusion must stop first: Fusion precedes Left and Right at Stop.</desc>
+  <defs>
+    <marker id="lid-views-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Fixed positions shared with the restart figures: Left x 10-74, Fusion x 134-206, Right x 266-330, Monitor x 242-330. */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="10" y="28" width="64" height="44" rx="8"/>
+    <rect x="134" y="28" width="72" height="44" rx="8"/>
+    <rect x="266" y="28" width="64" height="44" rx="8"/>
+    <rect x="242" y="88" width="88" height="34" rx="8"/>
+    <rect x="10" y="170" width="64" height="44" rx="8"/>
+    <rect x="134" y="170" width="72" height="44" rx="8"/>
+    <rect x="266" y="170" width="64" height="44" rx="8"/>
+    <rect x="242" y="230" width="88" height="34" rx="8"/>
+    <rect x="10" y="332" width="64" height="44" rx="8"/>
+    <rect x="134" y="332" width="72" height="44" rx="8"/>
+    <rect x="266" y="332" width="64" height="44" rx="8"/>
+    <rect x="242" y="392" width="88" height="34" rx="8"/>
+  </g>
+  {/* Data edges: solid */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75">
+    <path d="M 74,50 H 133" markerEnd="url(#lid-views-arrow)"/>
+    <path d="M 266,50 H 207" markerEnd="url(#lid-views-arrow)"/>
+  </g>
+  {/* Lifecycle ordering edges: dashed, one graph per stage */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75" strokeDasharray="6 4">
+    <path d="M 74,192 H 133" markerEnd="url(#lid-views-arrow)"/>
+    <path d="M 266,192 H 207" markerEnd="url(#lid-views-arrow)"/>
+    <path d="M 134,354 H 75" markerEnd="url(#lid-views-arrow)"/>
+    <path d="M 206,354 H 265" markerEnd="url(#lid-views-arrow)"/>
+  </g>
+  {/* Arm checkpoints: filled for a registered hook, hollow for a skipped checkpoint */}
+  <g fill="currentColor" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="236" cy="153" r="5.5"/>
+    <circle cx="42" cy="170" r="5.5"/>
+    <circle cx="170" cy="170" r="5.5"/>
+    <circle cx="298" cy="170" r="5.5"/>
+  </g>
+  <circle cx="286" cy="230" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="16" fontWeight="600">Data</text>
+    <text x="14" y="158" fontWeight="600">Arm ordering</text>
+    <text x="246" y="158">Arm hook</text>
+    <text x="14" y="300" fontWeight="600">Stop ordering: coupled variation</text>
+    <text x="14" y="320">only if Fusion must stop first</text>
+    <text x="234" y="252" textAnchor="end">no Arm hook: skipped</text>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="42" y="55">Left</text>
+    <text x="170" y="55">Fusion</text>
+    <text x="298" y="55">Right</text>
+    <text x="286" y="110">Monitor</text>
+    <text x="42" y="197">Left</text>
+    <text x="170" y="197">Fusion</text>
+    <text x="298" y="197">Right</text>
+    <text x="286" y="252">Monitor</text>
+    <text x="104" y="185">Arm</text>
+    <text x="236" y="185">Arm</text>
+    <text x="42" y="359">Left</text>
+    <text x="170" y="359">Fusion</text>
+    <text x="298" y="359">Right</text>
+    <text x="286" y="414">Monitor</text>
+    <text x="104" y="347">Stop</text>
+    <text x="236" y="347">Stop</text>
+  </g>
+</svg>
+
+Solid arrows carry payloads. Dashed arrows order lifecycle checkpoints at one
+named stage. Each stage has its own graph. Neither kind transfers resource
+ownership or synchronizes camera exposure. The Stop view is a deliberate
+variation, separate from the baseline example.
+
+Now declare that each camera produces an armed fact, and Fusion requires both
+facts at `kArm`. The following declaration fragments omit ports, class definitions
+and callback bodies. `LeftCamera`, `RightCamera` and `Fusion` are illustrative
+application classes.
+
+```cpp
+// Shared dependency keys, declared at namespace scope.
+inline constexpr holoscan::LifecycleDependencyKey kLeftArmed{"left.armed"};
+inline constexpr holoscan::LifecycleDependencyKey kRightArmed{"right.armed"};
+
+// In LeftCamera::setup(): RightCamera produces kRightArmed instead.
+spec.lifecycle()
+    .stage(holoscan::LifecycleStage::kAllocate, &LeftCamera::allocate)
+    .stage(holoscan::LifecycleStage::kArm, &LeftCamera::arm)
+    .stage(holoscan::LifecycleStage::kStop, &LeftCamera::stop_camera)
+    .stage(holoscan::LifecycleStage::kRelease, &LeftCamera::release)
+    .produces(holoscan::LifecycleStage::kArm, kLeftArmed);
+
+// In Fusion::setup():
+spec.lifecycle()
+    .stage(holoscan::LifecycleStage::kArm, &Fusion::arm)
+    .requires_dependency(holoscan::LifecycleStage::kArm, kLeftArmed)
+    .requires_dependency(holoscan::LifecycleStage::kArm, kRightArmed);
+```
+
+Monitor registers no hooks. A dependency fact is a compiled ordering declaration,
+not a runtime message or a promise to poll until a string key appears. Missing
+or duplicate producers and same-stage cycles are rejected during compilation.
+
+The global barriers already order different stages, so declared dependencies
+connect checkpoints within one stage.
+
+## Startup is stage-major
+
+Every operator completes Configure before any enters Discover, and so on through
+Start. Within a stage, callbacks execute serially in stable topological order,
+on their assigned execution lanes.
+
+<svg viewBox="0 0 340 366" role="img" aria-labelledby="lid-startup-title" aria-describedby="lid-startup-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-startup-title">Startup runs stage by stage across every operator</title>
+  <desc id="lid-startup-desc">A grid of six startup stages, from Configure down to Start, for four operators: Left, Right, Fusion and Monitor. Every operator finishes a stage before any operator enters the next one. Callbacks run only for registered hooks: Left and Right at Allocate, and Left, Right and Fusion at Arm. Every other checkpoint, including all of Monitor's, completes as skipped without calling operator code. Arm has two levels. Left and Right are in the first level, together with Monitor's skipped checkpoint, and Fusion follows both cameras in the second level. Callbacks run one at a time, level by level. After Start and readiness setup finish, compute and restart ingress open.</desc>
+  <defs>
+    <marker id="lid-startup-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Operator columns: Left 122, Right 180, Fusion 238, Monitor 296. Rows run downward in stage order. */}
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="122" y="16">Left</text>
+    <text x="180" y="16">Right</text>
+    <text x="238" y="16">Fusion</text>
+    <text x="296" y="16">Monitor</text>
+  </g>
+  {/* Stage boundaries and the level divider inside Arm */}
+  <path d="M 14,60 H 326 M 14,92 H 326 M 14,124 H 326 M 14,156 H 326 M 14,220 H 326 M 14,254 H 326" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" fill="none"/>
+  <path d="M 106,189 H 326" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1" strokeDasharray="3 4" fill="none"/>
+  {/* Stage rail */}
+  <path d="M 96,30 V 250" stroke="currentColor" strokeWidth="2" fill="none" markerEnd="url(#lid-startup-arrow)"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="49">Configure</text>
+    <text x="14" y="81">Discover</text>
+    <text x="14" y="113">Allocate</text>
+    <text x="14" y="145">WarmUp</text>
+    <text x="14" y="179">Arm</text>
+    <text x="14" y="243">Start</text>
+  </g>
+  {/* Skipped checkpoints */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="122" cy="44" r="6"/>
+    <circle cx="180" cy="44" r="6"/>
+    <circle cx="238" cy="44" r="6"/>
+    <circle cx="296" cy="44" r="6"/>
+    <circle cx="122" cy="76" r="6"/>
+    <circle cx="180" cy="76" r="6"/>
+    <circle cx="238" cy="76" r="6"/>
+    <circle cx="296" cy="76" r="6"/>
+    <circle cx="238" cy="108" r="6"/>
+    <circle cx="296" cy="108" r="6"/>
+    <circle cx="122" cy="140" r="6"/>
+    <circle cx="180" cy="140" r="6"/>
+    <circle cx="238" cy="140" r="6"/>
+    <circle cx="296" cy="140" r="6"/>
+    <circle cx="296" cy="174" r="6"/>
+    <circle cx="122" cy="238" r="6"/>
+    <circle cx="180" cy="238" r="6"/>
+    <circle cx="238" cy="238" r="6"/>
+    <circle cx="296" cy="238" r="6"/>
+    <circle cx="112" cy="331" r="6"/>
+  </g>
+  {/* Callbacks for registered hooks */}
+  <g fill="currentColor">
+    <circle cx="122" cy="108" r="7"/>
+    <circle cx="180" cy="108" r="7"/>
+    <circle cx="122" cy="174" r="7"/>
+    <circle cx="180" cy="174" r="7"/>
+    <circle cx="238" cy="204" r="7"/>
+    <circle cx="20" cy="331" r="6"/>
+  </g>
+  {/* Arm ordering: both cameras precede Fusion */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75" strokeDasharray="5 3">
+    <path d="M 129.7,176 L 229.3,201.8" markerEnd="url(#lid-startup-arrow)"/>
+    <path d="M 187.1,177.7 L 230,199.9" markerEnd="url(#lid-startup-arrow)"/>
+  </g>
+  {/* Gate: compute and restart ingress open only after startup and readiness setup */}
+  <path d="M 106,268 H 326" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="292">After Start and readiness setup:</text>
+    <text x="14" y="312">compute and restart ingress open</text>
+    <text x="32" y="336">callback</text>
+    <text x="124" y="336">skipped checkpoint</text>
+    <text x="14" y="358">One callback at a time, level by level</text>
+  </g>
+</svg>
+
+The filled marks are the five startup hooks declared above. An empty mark is a
+successful skipped checkpoint. At Arm, both camera callbacks precede Fusion's
+callback. Monitor has no dependency edge and skips its checkpoint.
+
+**Can Left compute while Fusion is still in Arm? No.** Initial startup completes
+the last Start checkpoint and readiness/source initialization before opening
+compute dispatch and restart ingress. Once running, ordinary activations follow
+their own contracts.
+
+### Three meanings of “in sync”
+
+| Requirement | Mechanism | What it does not establish |
+|---|---|---|
+| All operators ready before computation | Lifecycle stage barriers and ordering facts | Simultaneous physical sensor capture |
+| Cameras expose together or share a calibrated time base | Device triggering, synchronization and timestamp/clock integration | Which queued samples fusion selects |
+| Fusion receives a suitable pair or interval | Temporal trigger, selectors and missing policy | Hardware synchronization or equal capture rates |
+
+For stereo data, `OnAligned` with `Exact` member selectors matches FIFO heads
+within an inclusive capture-time spread. For camera + IMU, `OnWindow` with
+`BracketedWindow` selects a complete neighborhood around consecutive camera
+anchors. Neither follows automatically from an Arm dependency. See
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+and [Advanced temporal patterns](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns).
+
+## Derive restart membership before its entry stage
+
+The compiler follows lifecycle edges **forward**, across every stage, to freeze
+each target's callback closure. This includes Stop/Release ordering edges and
+any rate-derived dependencies. The closure is independent of the requested entry
+stage. Data-flow edges alone do not establish callback membership.
+
+The second panel previews the deliberate Stop ordering described below.
+
+{/*
+Mermaid equivalent of the two reachability panels below.
+Dotted links are lifecycle ordering edges at the labelled stage.
+The thick links are the path followed forward from Left.
+
+flowchart LR
+  %% Restart Left, baseline
+  Left -. Arm .-> Fusion
+  Right -. Arm .-> Fusion
+  Monitor
+  classDef closure stroke-width:3px
+  class Left,Fusion closure
+  linkStyle 0 stroke-width:4px
+
+flowchart LR
+  %% Restart Left, coupled variation: Fusion stops first
+  Left -. Arm .-> Fusion
+  Right -. Arm .-> Fusion
+  Fusion -. Stop .-> Left
+  Fusion -. Stop .-> Right
+  Monitor
+  classDef closure stroke-width:3px
+  class Left,Fusion,Right closure
+  linkStyle 0,3 stroke-width:4px
+*/}
+<svg viewBox="0 0 340 430" role="img" aria-labelledby="lid-reach-title" aria-describedby="lid-reach-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-reach-title">Restart membership follows lifecycle edges forward from Left</title>
+  <desc id="lid-reach-desc">Two panels with the same operator positions. Left, Fusion and Right sit in a row, and Monitor sits below Right with no edges. Baseline: Left and Right each have an Arm edge into Fusion. Following lifecycle edges forward from Left reaches Fusion only. Right's edge points into Fusion and is not followed backward. C is Left and Fusion. Right and Monitor are outside C. Coupled variation: Fusion must stop before both cameras, so Stop edges run from Fusion to Left and from Fusion to Right. Forward from Left, the Arm edge reaches Fusion and Fusion's Stop edge reaches Right. C is Left, Fusion and Right. Monitor is outside C.</desc>
+  <defs>
+    <marker id="lid-reach-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Fixed positions shared with the scope figure: Left x 10-74, Fusion x 134-206, Right x 266-330, Monitor x 242-330. */}
+  {/* Legend */}
+  <path d="M 14,11 H 40" stroke="#5F9000" strokeWidth="6" strokeLinecap="round" fill="none"/>
+  <path d="M 14,11 H 40" stroke="currentColor" strokeWidth="1.75" strokeDasharray="6 4" fill="none"/>
+  <text x="50" y="16" fontSize="15" fill="currentColor">followed forward from Left</text>
+  {/* Highlighted forward path: baseline, then coupled */}
+  <path d="M 74,80 H 134 M 74,286 H 134 M 206,300 H 266" stroke="#5F9000" strokeWidth="6" strokeLinecap="round" fill="none"/>
+  {/* Nodes in C */}
+  <g fill="#76B900" fillOpacity="0.15" stroke="#5F9000" strokeWidth="2.5">
+    <rect x="10" y="60" width="64" height="52" rx="8"/>
+    <rect x="134" y="60" width="72" height="52" rx="8"/>
+    <rect x="10" y="266" width="64" height="52" rx="8"/>
+    <rect x="134" y="266" width="72" height="52" rx="8"/>
+    <rect x="266" y="266" width="64" height="52" rx="8"/>
+  </g>
+  {/* Nodes outside C */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="1.5 3.5" strokeLinecap="round">
+    <rect x="266" y="60" width="64" height="52" rx="8"/>
+    <rect x="242" y="156" width="88" height="34" rx="8"/>
+    <rect x="242" y="362" width="88" height="34" rx="8"/>
+  </g>
+  {/* Lifecycle edges: Arm on the upper lane, Stop on the lower lane */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75" strokeDasharray="6 4">
+    <path d="M 74,80 H 133" markerEnd="url(#lid-reach-arrow)"/>
+    <path d="M 266,80 H 207" markerEnd="url(#lid-reach-arrow)"/>
+    <path d="M 74,286 H 133" markerEnd="url(#lid-reach-arrow)"/>
+    <path d="M 266,286 H 207" markerEnd="url(#lid-reach-arrow)"/>
+    <path d="M 134,300 H 75" markerEnd="url(#lid-reach-arrow)"/>
+    <path d="M 206,300 H 265" markerEnd="url(#lid-reach-arrow)"/>
+  </g>
+  <g fontSize="15" fill="currentColor">
+    <text x="14" y="46" fontWeight="600">Restart Left: baseline</text>
+    <text x="14" y="214">C: Left, Fusion. Outside C: Right, Monitor</text>
+    <text x="14" y="252" fontWeight="600">Restart Left: Fusion stops first</text>
+    <text x="14" y="420">C: Left, Fusion, Right. Outside C: Monitor</text>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="42" y="91">Left</text>
+    <text x="170" y="91">Fusion</text>
+    <text x="298" y="91">Right</text>
+    <text x="286" y="178">Monitor</text>
+    <text x="104" y="73">Arm</text>
+    <text x="236" y="73">Arm</text>
+    <text x="42" y="297">Left</text>
+    <text x="170" y="297">Fusion</text>
+    <text x="298" y="297">Right</text>
+    <text x="286" y="384">Monitor</text>
+    <text x="104" y="279">Arm</text>
+    <text x="236" y="279">Arm</text>
+    <text x="104" y="316">Stop</text>
+    <text x="236" y="316">Stop</text>
+  </g>
+</svg>
+
+With only the Arm ordering, a Left restart has C = `{Left, Fusion}`. Right's incoming edge to Fusion does
+not run backwards. Monitor is outside C, and this baseline has no direct data
+consumer outside C.
+
+Next, the compiler compares the requested stage with forward-stage dependencies
+whose **two endpoints are inside C**. An earlier internal edge widens the entry
+stage. An incoming dependency from an outside provider does not alone widen it.
+
+| Target / requested stage | Callback closure | Effective entry |
+|---|---|---|
+| Left / Start | Left, Fusion | Arm |
+| Fusion / Start | Fusion | Start |
+| Left / Discover | Left, Fusion | Discover |
+
+The receipt keeps the requested stage. `inspect()`/`await()` report the effective
+stage. The plan's resolution records explain the widening reason.
+
+### Couple cameras only for a real ordering requirement
+
+Suppose Fusion must stop using both cameras' resources before either camera
+stops. Add Fusion → Left and Fusion → Right **at Stop**. Those are separate
+from the camera → Fusion edges at Arm.
+
+Each stage graph is acyclic. Across stages, forward reachability now connects all
+three operators, so restarting any one includes Left, Right and Fusion. A Start
+request widens to Arm. This is a consequence of real lifetime ordering, not a
+separate restart-group API. Declare dependencies for actual lifetime ordering.
+
+## Who pauses and who receives callbacks?
+
+Return to the baseline graph with only Arm dependencies. Add a Detector that
+consumes Fusion's output through an ordinary same-process data edge, with no
+lifecycle dependency. Give Detector hooks of its own so that “no callbacks
+during a Left restart” is meaningful.
+
+<svg viewBox="0 0 340 424" role="img" aria-labelledby="lid-scope-title" aria-describedby="lid-scope-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-scope-title">One Left restart affects three disjoint sets</title>
+  <desc id="lid-scope-desc">Left, Fusion and Right sit in a row. Detector sits below Fusion and Monitor below Right. Left and Right each send data to Fusion and have an Arm edge into Fusion. Fusion sends data down to Detector, with no lifecycle edge. Restarting Left follows the Arm edge forward to Fusion, so C is Left and Fusion. Detector directly consumes data from a C member without belonging to C, so B is Detector. U is Right and Monitor. While the transaction runs, local dispatch pauses for C, B and U. First, at the fence, C and B have pending candidates canceled and frozen sources retired. Then lifecycle callbacks run for C members only. If publication succeeds, it resets C and B selectors and advances their Tag generations. U keeps its Tag. If the transaction rolls back instead, Tags stay unchanged and canceled candidates are not replayed.</desc>
+  <defs>
+    <marker id="lid-scope-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+    <pattern id="lid-scope-hatch" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.3"/>
+    </pattern>
+  </defs>
+  {/* Same operator positions as the reachability figure, plus Detector below Fusion. */}
+  <text x="14" y="16" fontSize="15" fontWeight="600" fill="currentColor">Restart Left with a data-only Detector</text>
+  {/* Followed lifecycle edge */}
+  <path d="M 74,50 H 134" stroke="#5F9000" strokeWidth="6" strokeLinecap="round" fill="none"/>
+  {/* C: callback closure */}
+  <g fill="#76B900" fillOpacity="0.15" stroke="#5F9000" strokeWidth="2.5">
+    <rect x="10" y="30" width="64" height="52" rx="8"/>
+    <rect x="134" y="30" width="72" height="52" rx="8"/>
+    <rect x="14" y="175" width="22" height="14" rx="3"/>
+    <rect x="284" y="252" width="22" height="20" rx="4"/>
+    <rect x="284" y="300" width="22" height="20" rx="4"/>
+    <rect x="284" y="328" width="22" height="20" rx="4"/>
+  </g>
+  {/* B: boundary receiver */}
+  <g fill="url(#lid-scope-hatch)" stroke="currentColor" strokeWidth="1.75" strokeDasharray="6 3">
+    <rect x="126" y="126" width="88" height="34" rx="8"/>
+    <rect x="176" y="175" width="22" height="14" rx="3"/>
+    <rect x="312" y="252" width="22" height="20" rx="4"/>
+    <rect x="312" y="328" width="22" height="20" rx="4"/>
+  </g>
+  {/* U: remaining operators */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="1.5 3.5" strokeLinecap="round">
+    <rect x="266" y="30" width="64" height="52" rx="8"/>
+    <rect x="242" y="126" width="88" height="34" rx="8"/>
+    <rect x="14" y="197" width="22" height="14" rx="3"/>
+  </g>
+  {/* Arm ordering edges (dashed, upper lane) and data edges (solid) */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75">
+    <path d="M 74,50 H 133" strokeDasharray="6 4" markerEnd="url(#lid-scope-arrow)"/>
+    <path d="M 266,50 H 207" strokeDasharray="6 4" markerEnd="url(#lid-scope-arrow)"/>
+    <path d="M 74,64 H 133" markerEnd="url(#lid-scope-arrow)"/>
+    <path d="M 266,64 H 207" markerEnd="url(#lid-scope-arrow)"/>
+    <path d="M 170,82 V 125" markerEnd="url(#lid-scope-arrow)"/>
+  </g>
+  <g fontSize="15" fill="currentColor" textAnchor="middle">
+    <text x="42" y="61">Left</text>
+    <text x="170" y="61">Fusion</text>
+    <text x="298" y="61">Right</text>
+    <text x="170" y="148">Detector</text>
+    <text x="286" y="148">Monitor</text>
+    <text x="104" y="43">Arm</text>
+    <text x="236" y="43">Arm</text>
+    <text x="104" y="80">data</text>
+    <text x="236" y="80">data</text>
+  </g>
+  <g fontSize="15" fill="currentColor">
+    <text x="178" y="108">data</text>
+    <text x="42" y="186">C: Left, Fusion</text>
+    <text x="204" y="186">B: Detector</text>
+    <text x="42" y="208">U: Right, Monitor</text>
+  </g>
+  {/* Transaction ladder: local dispatch stays paused for every set */}
+  <text x="14" y="240" fontSize="15" fontWeight="600" fill="currentColor">Local dispatch pauses for C, B and U</text>
+  <rect x="14" y="250" width="6" height="118" rx="3" fill="currentColor" fillOpacity="0.35"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="30" y="266"><tspan fontWeight="600">Fence</tspan>: cancel pending candidates</text>
+    <text x="30" y="286">and retire frozen sources</text>
+    <text x="30" y="314"><tspan fontWeight="600">Lifecycle</tspan>: C members only</text>
+    <text x="30" y="342"><tspan fontWeight="600">On success</tspan>: reset selectors</text>
+    <text x="30" y="362">and advance Tag generations</text>
+    <text x="14" y="394"><tspan fontWeight="600">RolledBack</tspan>: Tags unchanged, canceled</text>
+    <text x="14" y="414">candidates are not replayed</text>
+  </g>
+  <g fontSize="15" fontWeight="600" fill="currentColor" textAnchor="middle">
+    <text x="295" y="267">C</text>
+    <text x="323" y="267">B</text>
+    <text x="295" y="315">C</text>
+    <text x="295" y="343">C</text>
+    <text x="323" y="343">B</text>
+  </g>
+</svg>
+
+Detector’s data edge adds boundary handling without adding lifecycle callbacks.
+
+| Set and membership | During the transaction | On successful publication |
+|---|---|---|
+| C: target and compiled callback dependents | Cancel pending candidates and retire frozen sources at the fence, then run lifecycle callbacks | Reset selectors/readiness and advance Tag generation |
+| B: direct same-process consumers of C outputs, outside C | Cancel pending candidates and retire frozen sources at the fence. No lifecycle callbacks | Reset selectors/readiness and advance Tag generation |
+| U: remaining operators | Local dispatch pauses with the session. No lifecycle callbacks | Retain Tag generation |
+
+<Warning>
+  **Current boundary behavior.** B includes ordinary data consumers, not just
+  explicitly authored channel boundaries. It is a direct-consumer expansion,
+  not recursive traversal of every downstream operator. Its pending-work and
+  generation handling may change in upcoming releases. Do not rely on B keeping
+  its pending input selection or activation generation through a restart.
+</Warning>
+
+The runtime waits until every local owner reaches a control boundary with no
+activation in progress. It then prepares the transaction, runs callbacks for C,
+and resumes owners only after a resumable outcome. An unrelated operator is not
+reconstructed, but uninterrupted progress is not promised. This is a local
+session boundary, not distributed quiescence of interprocess neighbors.
+
+Preparation completes before C's lifecycle callbacks:
+
+| Order | Runtime work |
+|---|---|
+| 1 | Check that C/B receivers are not draining end-of-stream and their completion remains open |
+| 2 | Cancel and join the shared channel service, if used |
+| 3 | Cancel C/B pending candidates and retire their frozen sources |
+| 4 | Begin the tensor restart when tensor resources exist, then prepare rate state |
+
+A failure here produces `kFailedStopped` and fails the run before any callback.
+The channel service is shared across the session. Even a B receiver near
+end-of-stream can fail the fence.
+
+## Which stages repeat?
+
+The executor uses the **effective** entry stage. Compatible queued requests can
+coalesce into a union closure with the earliest shared entry stage. Several
+receipts can therefore identify the same transaction.
+
+| Effective entry | Pre-restart teardown | Forward suffix |
+|---|---|---|
+| `kStart` | Stop | Start |
+| `kArm` | Stop | Arm → Start |
+| `kWarmUp` | Stop | WarmUp → Arm → Start |
+| `kAllocate` | Stop → Release | Allocate → WarmUp → Arm → Start |
+| `kDiscover` | Stop → Release | Discover → Allocate → WarmUp → Arm → Start |
+| `kConfigure` | Stop → Release | Configure → Discover → Allocate → WarmUp → Arm → Start |
+
+A Start-entry transaction omits Release. That does not guarantee that Stop
+preserves application resources: an operator may release resources in Stop and
+recreate them in Start. Declare important teardown ordering at Stop/Release
+explicitly. Ordinary teardown follows those stage graphs. Rollback unwinds
+completed candidate work in reverse completion order. Independent Stop-peer
+ordering in initial/final session transitions need not be the restart graph's
+ordering.
+
+## Choose the control operation
+
+| Need | Operation | Result |
+|---|---|---|
+| Recover with current configuration | Explicit lifecycle restart | Re-enter the effective suffix in the same session |
+| Change a runtime-mutable scalar | Parameter update | Publish at an admitted next-compute boundary without a lifecycle restart |
+| Change a lifecycle-mutable scalar | Parameter update plus lifecycle transaction | Publish the candidate only after the transaction succeeds |
+| Replace topology, contracts or unsupported configuration | Compile an appropriate plan and start a new session | Fresh runtime instances and startup |
+| End execution | Request stop and join | End this session |
+
+Dedicated restart needs compile-time transaction capacity and explicit self,
+external or requester-to-target grants. A restriction-only control handle cannot
+add authority absent from the plan. Lifecycle-mutable parameter fields use
+parameter-origin authority after admission. They do not require the dedicated
+restart grant. Parameter control requires update/scope authority and its
+own supported profile. Keep the restart and parameter profile matrices separate.
+
+`compute()` can submit a nonblocking request and hand its receipt to off-callback
+control code. Only control code outside runtime callbacks uses a
+`LifecycleControlHandle` to inspect or await it. `LifecycleContext` cannot
+submit or await restarts. Acceptance does not mean completion. A caller-side
+wait timeout does not cancel the transaction.
+
+See [Restart control](/holoscan/sdk-user-guide/advanced/restart-control) for the
+complete APIs and [Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates)
+for update-sequence/result observation. Parameter updates do not return dedicated
+restart receipts. Atomic parameter batches are same-operator only: restarting
+both cameras does not atomically change both cameras' parameter values.
+
+## A model change has resource ownership
+
+Consider an application-defined Detector with a scalar `uint32_t model_id` that
+selects entries 0 and 1 in a fixed compatible catalog. Declare the field with
+`.range(0U, 1U)` and `.lifecycle_mutable(holoscan::LifecycleStage::kAllocate)`.
+Allocate owns model resources, WarmUp prepares them, Stop quiesces active use,
+and Release destroys the owned resource set. This is a design example, not a
+claim that the stock inference operator implements this contract.
+
+For Detector's own update, C is `{Detector}` if it has no outgoing lifecycle or
+rate dependencies. With no downstream consumer, B is empty. The incoming Fusion
+data edge does not pull the cameras or Fusion into the closure. Detector was
+in B for a Left restart. Membership depends on the target.
+
+An out-of-range model ID is rejected with `ParamUpdateStatus::kOutOfBounds`
+before lifecycle submission. To reason about restoration, instead use a valid
+catalog ID whose Allocate succeeds but WarmUp fails:
+
+1. Pre-restart Stop and Release use the old published value.
+2. Candidate Allocate succeeds, but candidate WarmUp fails.
+3. Candidate cleanup invokes Release for the completed allocation. The failed
+   WarmUp callback must clean its own unrecorded partial acquisition with RAII.
+4. RestoreOld reruns Allocate → WarmUp → Arm → Start using the old value.
+5. If cleanup, restoration and runtime recovery succeed, the update rolls back
+   and the run continues with the old published configuration.
+
+Restoration loads the old resource again because teardown already released it.
+There is no uninterrupted fallback instance or automatic reversal of external device effects.
+Stock `InferenceOp` does not expose a lifecycle-mutable model-catalog selector.
+Its Stop/Start restart reinitializes the same configuration. A different model
+map or port contract needs supported reconfiguration or a new plan/session.
+
+## Name the counter before asking whether it resets
+
+| Identity | On `kPublished` | On `kRolledBack` |
+|---|---|---|
+| `RunGenerationId` | Same RunSession | Same RunSession |
+| `ParamGeneration` | Advances for each participating parameter candidate. A dedicated restart alone need not change it | Old published values and generations remain |
+| `Tag.generation` / `Tag.sequence` | C/B generations advance and their activation sequences restart. U keeps its generation | C/B generations remain unchanged |
+| `SampleMetadata::sequence` | Runtime-owned output sequence continues across the restart | Runtime-owned output sequence continues |
+
+External endpoints retain their own publication-sequence authority. These
+counters describe different state and should be observed separately.
+
+Pre-restart teardown sees old published parameters. Restart-forward sees the
+candidate for a patched owner and retained current values for dependency-only
+members. Cleanup sees the view that created the work. Restoration sees the old
+view. Final teardown sees the then-current published view. Readiness, rate and
+resource generations are further identities, not aliases for one universal epoch.
+
+## Failure is not always recoverable
+
+{/*
+Mermaid equivalent of the outcome map below.
+Precondition: every local owner has paused at the control boundary.
+
+flowchart TD
+  F[Fence and runtime preparation] --> T[Teardown: Stop, plus Release when the entry is Allocate or earlier]
+  T --> S[Candidate forward suffix]
+  S -- succeeds --> P[Runtime and candidate publication]
+  P --> PUB([kPublished: dispatch resumes, C/B Tags advance, parameter changes become published])
+  S -- fails --> C[Clean up completed candidate work]
+  C --> R[Rerun the old suffix, recover the runtime]
+  R --> RB([kRolledBack: old lifecycle and values resume, Tags unchanged, warning, no replay])
+  F -. fails .-> FS{{kFailedStopped: the run fails, parameter candidates are retired, partial publication may already have changed internal state}}
+  T -. fails .-> FS
+  P -. fails .-> FS
+  C -. fails .-> FS
+  R -. fails .-> FS
+*/}
+<svg viewBox="0 0 340 620" role="img" aria-labelledby="lid-outcome-title" aria-describedby="lid-outcome-desc" style={{width: "100%", maxWidth: "400px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="lid-outcome-title">Restart transaction outcomes: published, rolled back or fail-stopped</title>
+  <desc id="lid-outcome-desc">A restart transaction after every owner has paused at the control boundary. Fence and runtime preparation come first. Then pre-restart teardown runs Stop, plus Release when the effective entry is Allocate or earlier. Then the candidate forward suffix runs. If it succeeds, runtime and candidate publication follow, and the result is kPublished: dispatch resumes, C and B Tag generations advance, and any parameter changes become published. If the forward suffix fails, completed candidate work is cleaned up, the old suffix is rerun with the old values and runtime services are recovered. The result is kRolledBack: the old lifecycle and values resume, Tags stay unchanged, a warning is reported and canceled work is not replayed. Fence and preparation, teardown, publication, cleanup, and restoration with recovery each carry a stop sign. If any of them fails, the result is kFailedStopped: the run fails, parameter candidates are retired, and partial publication may already have changed internal state.</desc>
+  <defs>
+    <marker id="lid-outcome-arrow" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="currentColor"/>
+    </marker>
+    <marker id="lid-outcome-arrow-ok" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="#5F9000"/>
+    </marker>
+  </defs>
+  <text x="14" y="16" fontSize="15" fontWeight="600" fill="currentColor">Owners paused at the control boundary</text>
+  {/* Shared steps, then the success column (left) and the restoration column (right) */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="14" y="28" width="312" height="36" rx="8"/>
+    <rect x="14" y="80" width="312" height="56" rx="8"/>
+    <rect x="14" y="152" width="312" height="36" rx="8"/>
+    <rect x="14" y="220" width="150" height="76" rx="8"/>
+    <rect x="176" y="220" width="150" height="76" rx="8"/>
+    <rect x="176" y="312" width="150" height="76" rx="8"/>
+  </g>
+  {/* Success path */}
+  <g fill="none" stroke="#5F9000" strokeWidth="2.5">
+    <path d="M 89,64 V 79" markerEnd="url(#lid-outcome-arrow-ok)"/>
+    <path d="M 89,136 V 151" markerEnd="url(#lid-outcome-arrow-ok)"/>
+    <path d="M 89,188 V 219" markerEnd="url(#lid-outcome-arrow-ok)"/>
+    <path d="M 89,296 V 311" markerEnd="url(#lid-outcome-arrow-ok)"/>
+  </g>
+  {/* Restoration path after a forward failure */}
+  <g fill="none" stroke="currentColor" strokeWidth="1.75" strokeDasharray="6 4">
+    <path d="M 251,188 V 219" markerEnd="url(#lid-outcome-arrow)"/>
+    <path d="M 251,296 V 311" markerEnd="url(#lid-outcome-arrow)"/>
+    <path d="M 251,388 V 403" markerEnd="url(#lid-outcome-arrow)"/>
+  </g>
+  {/* Outcomes: green pill, double-outline pill, stop sign */}
+  <rect x="14" y="312" width="150" height="30" rx="15" fill="#76B900" fillOpacity="0.15" stroke="#5F9000" strokeWidth="2.5"/>
+  <g fill="none" stroke="currentColor">
+    <rect x="176" y="404" width="150" height="30" rx="15" strokeWidth="1.5"/>
+    <rect x="180" y="408" width="142" height="22" rx="11" strokeWidth="1"/>
+  </g>
+  {/* Stop signs: a failure at this step yields kFailedStopped */}
+  <g fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round">
+    <polygon points="319.2,42.2 319.2,49.8 313.8,55.2 306.2,55.2 300.8,49.8 300.8,42.2 306.2,36.8 313.8,36.8"/>
+    <polygon points="319.2,94.2 319.2,101.8 313.8,107.2 306.2,107.2 300.8,101.8 300.8,94.2 306.2,88.8 313.8,88.8"/>
+    <polygon points="157.2,234.2 157.2,241.8 151.8,247.2 144.2,247.2 138.8,241.8 138.8,234.2 144.2,228.8 151.8,228.8"/>
+    <polygon points="319.2,234.2 319.2,241.8 313.8,247.2 306.2,247.2 300.8,241.8 300.8,234.2 306.2,228.8 313.8,228.8"/>
+    <polygon points="319.2,326.2 319.2,333.8 313.8,339.2 306.2,339.2 300.8,333.8 300.8,326.2 306.2,320.8 313.8,320.8"/>
+    <polygon points="33.2,539.2 33.2,546.8 27.8,552.2 20.2,552.2 14.8,546.8 14.8,539.2 20.2,533.8 27.8,533.8"/>
+  </g>
+  <path d="M 306,42 L 314,50 M 314,42 L 306,50 M 306,94 L 314,102 M 314,94 L 306,102 M 144,234 L 152,242 M 152,234 L 144,242 M 306,234 L 314,242 M 314,234 L 306,242 M 306,326 L 314,334 M 314,326 L 306,334 M 20,539 L 28,547 M 28,539 L 20,547" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" fill="none"/>
+  <g fontSize="15" fill="currentColor">
+    <text x="26" y="51">Fence and runtime preparation</text>
+    <text x="26" y="103">Teardown: Stop, plus Release when</text>
+    <text x="26" y="123">the entry is Allocate or earlier</text>
+    <text x="26" y="175">Candidate forward suffix</text>
+    <text x="97" y="208">succeeds</text>
+    <text x="259" y="208">fails</text>
+    <text x="24" y="243">Runtime and</text>
+    <text x="24" y="263">candidate</text>
+    <text x="24" y="283">publication</text>
+    <text x="186" y="243">Clean up</text>
+    <text x="186" y="263">completed</text>
+    <text x="186" y="283">candidate work</text>
+    <text x="186" y="335">Rerun the old</text>
+    <text x="186" y="355">suffix, recover</text>
+    <text x="186" y="375">the runtime</text>
+    <text x="14" y="362">Dispatch resumes</text>
+    <text x="14" y="382">C/B Tags advance</text>
+    <text x="14" y="402">Parameter changes</text>
+    <text x="14" y="422">become published</text>
+    <text x="176" y="454">Old lifecycle and</text>
+    <text x="176" y="474">values resume</text>
+    <text x="176" y="494">Tags unchanged</text>
+    <text x="176" y="514">Warning, no replay</text>
+    <text x="38" y="548"><tspan fontWeight="600" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">kFailedStopped</tspan>: any marked step fails</text>
+    <text x="14" y="570">The run fails. Parameter candidates are</text>
+    <text x="14" y="590">retired, and partial publication may</text>
+    <text x="14" y="610">already have changed internal state.</text>
+  </g>
+  <g fontSize="15" fontWeight="600" fill="currentColor" textAnchor="middle" fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="89" y="332">kPublished</text>
+    <text x="251" y="424">kRolledBack</text>
+  </g>
+</svg>
+
+A stop sign marks a step whose failure ends the run. Restoration re-executes
+the old suffix after completed candidate work has been cleaned up. It does not
+undo arbitrary device effects. Only participating parameter candidates change
+values on publication.
+
+| Failure or outcome | What follows |
+|---|---|
+| Fence/runtime preparation fails | FailedStopped before lifecycle callbacks |
+| Pre-restart teardown fails | FailedStopped without a forward suffix or restoration |
+| Forward callback fails | Unwind completed candidate work, then attempt old suffix restoration if cleanup succeeds |
+| Cleanup, restoration, runtime recovery or publication fails | FailedStopped and a failed run |
+| `kPublished` | Resume local dispatch. Publish participating parameter candidates and advance C/B receiver generations |
+| `kRolledBack` | Continue with old lifecycle epoch and published parameters, unchanged C/B Tag generations, and a warning diagnostic |
+
+RolledBack does not restore canceled candidates or queue contents. Its warning
+carries `detail.transaction_id`. FailedStopped ends the run without relaunching
+owners. A parameter candidate is retired without publication on that path.
+Partial runtime publication may already have changed internal state, so a
+failed run does not guarantee intact generations.
+
+A stop request cancels queued work and closes ingress. An already
+executing dedicated restart retains its actual outcome before terminal stop.
+Parameter-origin work has an additional stop-before-publication fence.
+
+## Inspect the plan, then observe the right result
+
+| Question | Evidence to inspect |
+|---|---|
+| Which checkpoints have callbacks? | `lifecycle_checkpoints()`, including `callback_present` and topological level |
+| Which same-stage edges exist? | `lifecycle_dependencies()` |
+| Who belongs to a target's closure? | `lifecycle_restart_closures()` |
+| Why was the entry stage widened? | Each closure record's `stage_resolutions` in `lifecycle_restart_closures()` |
+| Was a dedicated restart accepted and how did it finish? | Receipt, then control-handle `inspect()` / `await()` |
+| Did a parameter candidate publish or roll back? | Parameter control result for its accepted update sequence |
+| Which activation generation was observed? | Compare `ExecutionContext::tag()` before and after each transaction |
+
+The public plan does not expose every runtime receiver-binding record. For a
+plain downstream consumer, derive the data relationship from the graph and
+observe Tags and callback absence.
+See [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling) for inspection.
+
+For a restart that seems broader than expected, check forward lifecycle
+reachability before the requested stage. Lifecycle-selected nominal rates can
+add closure dependencies. A fixed-rate example does not exercise that path.
+If resources need rebuilding earlier, declare the actual Allocate ordering or
+lifecycle-mutable stage. Camera mode changes are device-specific: the owning
+operator must quiesce acquisition, invalidate the right resources and restart
+with valid timestamps. Restart does not promise physical exposure alignment.
+Keep such reconfiguration outside a CUDA capture region, which rejects restart
+targets or closure members.
+
+## Check your prediction
+
+Try answering these questions from the graph:
+
+| Question | Prediction |
+|---|---|
+| Can Left compute while Fusion is still in Arm? | No. Initial compute waits for global startup |
+| Does restarting Left include Right? | The baseline callback closure is Left/Fusion |
+| What changes after adding the Stop edges? | The closure includes both cameras and Fusion |
+| Does a data-only Detector receive callbacks? | No. It receives boundary handling |
+
+For a camera/IMU pipeline, predict the interval samples, missing policy and
+end-of-stream behavior using the
+[worked bracket](/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns#bracketedwindow-all-or-nothing-neighborhoods).
+
+## Recap
+
+- Fixed stages provide shared ordering, restart suffixes and cleanup rules.
+  Sparse hooks let each operator implement only its relevant work.
+- Startup is global and stage-major. Restart callback scope is compiled from
+  forward dependencies, then its effective entry stage is resolved.
+- Local dispatch pauses at the control boundary. Callback members, direct
+  boundary consumers and remaining operators have different restart effects.
+- Publication, restoration and failed-stop outcomes preserve different state.
+  Name each parameter, Tag and output counter explicitly.
+- Lifecycle readiness, hardware synchronization and temporal data selection
+  solve different problems. Declare each requirement through its own mechanism.

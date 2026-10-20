@@ -17,6 +17,14 @@ from collections.abc import Collection
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from source_link_target import (
+    SourceLinkError,
+    SourceLinkTarget,
+)
+from source_link_target import (
+    normalize_source_browser_url as normalize_repository_browser_url,
+)
+
 CANONICAL_SOURCE_BROWSER_URL = "https://github.com/nvidia-holoscan/holoscan-sdk"
 CANONICAL_SOURCE_REF = "main"
 ALLOWED_SOURCE_BROWSER_URLS = frozenset(
@@ -40,21 +48,11 @@ _SOURCE_LINK_RE = re.compile(
 )
 
 
-class SourceLinkError(ValueError):
-    """A source-link invariant violation."""
-
-
 def normalize_source_browser_url(value: str) -> str:
-    """Return a normalized GitHub or GitLab repository browser URL."""
-    browser_url = value.strip().rstrip("/")
-    parsed = urlsplit(browser_url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise SourceLinkError("source browser URL must be an https URL")
-    repository_path = parsed.path.rstrip("/").removesuffix("/-")
-    if not repository_path.endswith("/holoscan-sdk"):
+    """Apply the SDK repository contract to the shared browser normalization."""
+    browser_url = normalize_repository_browser_url(value.strip())
+    if not urlsplit(browser_url).path.removesuffix("/-").endswith("/holoscan-sdk"):
         raise SourceLinkError("source browser URL must identify a holoscan-sdk repository")
-    if "gitlab" in parsed.hostname and not browser_url.endswith("/-"):
-        browser_url += "/-"
     return browser_url
 
 
@@ -126,12 +124,24 @@ def _matched_target(match: re.Match[str]) -> tuple[str, str]:
     return normalize_source_browser_url(browser_url), match.group("ref")
 
 
-def _expected_route(docs_root: Path, match: re.Match[str]) -> str | None:
+def _expected_route(
+    docs_root: Path, match: re.Match[str], source_path_prefix: str = ""
+) -> str | None:
     """Return the canonical browser route when the checkout target exists."""
     raw_path = match.group("path")
     if not raw_path:
+        if source_path_prefix:
+            raise SourceLinkError(f"SDK source link is missing path prefix {source_path_prefix!r}")
         return None
-    relative = Path(unquote(re.split(r"[?#]", raw_path, maxsplit=1)[0]).lstrip("/"))
+    source_path = unquote(re.split(r"[?#]", raw_path, maxsplit=1)[0]).lstrip("/")
+    if source_path_prefix:
+        if source_path == source_path_prefix:
+            source_path = ""
+        elif source_path.startswith(source_path_prefix + "/"):
+            source_path = source_path[len(source_path_prefix) + 1 :]
+        else:
+            raise SourceLinkError(f"SDK source link is missing path prefix {source_path_prefix!r}")
+    relative = Path(source_path)
     public_root = docs_root.resolve().parent
     target = (public_root / relative).resolve()
     try:
@@ -152,8 +162,10 @@ def audit_consistent_source_links(
     paths: list[Path] | None = None,
     allowed_source_browser_urls: Collection[str] = ALLOWED_SOURCE_BROWSER_URLS,
     allowed_source_refs: Collection[str] = (),
+    source_path_prefix: str = "",
 ) -> int:
     """Require a rendered documentation tree to use one valid source browser and ref."""
+    SourceLinkTarget(CANONICAL_SOURCE_BROWSER_URL, CANONICAL_SOURCE_REF, source_path_prefix)
     targets: dict[tuple[str, str], list[str]] = {}
     count = 0
     findings: list[str] = []
@@ -164,7 +176,7 @@ def audit_consistent_source_links(
                 count += 1
                 target = _matched_target(match)
                 targets.setdefault(target, []).append(f"{relative}:{lineno}")
-                expected_route = _expected_route(docs_root, match)
+                expected_route = _expected_route(docs_root, match, source_path_prefix)
                 if expected_route and match.group("route") != expected_route:
                     findings.append(
                         f"{relative}:{lineno}: SDK source link uses "
@@ -201,6 +213,7 @@ def audit_source_links(
     paths: list[Path] | None = None,
     allowed_source_browser_urls: Collection[str] = ALLOWED_SOURCE_BROWSER_URLS,
     allowed_source_refs: Collection[str] = (),
+    source_path_prefix: str = "",
 ) -> int:
     """Require every current SDK source link to use one browser and ref."""
     expected_browser_url, expected_ref = validate_target(
@@ -209,6 +222,7 @@ def audit_source_links(
         allowed_source_browser_urls=allowed_source_browser_urls,
         allowed_source_refs=allowed_source_refs,
     )
+    SourceLinkTarget(expected_browser_url, expected_ref, source_path_prefix)
     findings: list[str] = []
     count = 0
     for path in source_files(docs_root, paths):
@@ -234,7 +248,7 @@ def audit_source_links(
                         f"{relative}:{lineno}: SDK source link uses {match.group(0)}; "
                         f"expected {expected}"
                     )
-                expected_route = _expected_route(docs_root, match)
+                expected_route = _expected_route(docs_root, match, source_path_prefix)
                 if expected_route and match.group("route") != expected_route:
                     findings.append(
                         f"{relative}:{lineno}: SDK source link uses "
@@ -282,6 +296,7 @@ def render_source_links(
     source_ref: str,
     allowed_source_browser_urls: Collection[str] = ALLOWED_SOURCE_BROWSER_URLS,
     allowed_source_refs: Collection[str] = (),
+    source_path_prefix: str = "",
 ) -> int:
     """Render canonical committed source links to one validated release target."""
     source_browser_url, source_ref = validate_target(
@@ -290,6 +305,7 @@ def render_source_links(
         allowed_source_browser_urls=allowed_source_browser_urls,
         allowed_source_refs=allowed_source_refs,
     )
+    target = SourceLinkTarget(source_browser_url, source_ref, source_path_prefix)
     audit_source_links(docs_root)
     count = 0
     for path in source_files(docs_root):
@@ -298,9 +314,12 @@ def render_source_links(
         def replace(match: re.Match[str]) -> str:
             nonlocal count
             count += 1
-            return (
-                f"{source_browser_url}/{match.group('route')}/{source_ref}"
-                f"{match.group('path') or ''}"
+            linked = urlsplit(match.group("path") or "")
+            return target.url(
+                unquote(linked.path).lstrip("/"),
+                directory=match.group("route") == "tree",
+                query=linked.query,
+                fragment=linked.fragment,
             )
 
         rendered = _SOURCE_LINK_RE.sub(replace, text)
@@ -310,6 +329,7 @@ def render_source_links(
         docs_root,
         expected_browser_url=source_browser_url,
         expected_ref=source_ref,
+        source_path_prefix=source_path_prefix,
         allowed_source_browser_urls=allowed_source_browser_urls,
         allowed_source_refs=allowed_source_refs,
     )
@@ -324,6 +344,11 @@ def main() -> int:
         default=CANONICAL_SOURCE_BROWSER_URL,
     )
     parser.add_argument("--source-ref", default=CANONICAL_SOURCE_REF)
+    parser.add_argument(
+        "--source-path-prefix",
+        default="",
+        help="Repository directory containing SDK public sources (default: repository root).",
+    )
     parser.add_argument(
         "--allowed-source-browser-url",
         action="append",
@@ -392,10 +417,12 @@ def main() -> int:
                 source_ref=args.source_ref,
                 allowed_source_browser_urls=allowed_source_browser_urls,
                 allowed_source_refs=args.allowed_source_ref,
+                source_path_prefix=args.source_path_prefix,
             )
             print(
                 f"Rendered {count} SDK source links with "
-                f"{normalize_source_browser_url(args.source_browser_url)}/.../{args.source_ref}."
+                f"{normalize_source_browser_url(args.source_browser_url)}/.../{args.source_ref}"
+                f"/{args.source_path_prefix}."
             )
         elif args.allow_rendered:
             count = audit_consistent_source_links(
@@ -404,6 +431,7 @@ def main() -> int:
                 paths=args.files or None,
                 allowed_source_browser_urls=allowed_source_browser_urls,
                 allowed_source_refs=args.allowed_source_ref,
+                source_path_prefix=args.source_path_prefix,
             )
             print(f"Checked {count} consistently rendered SDK source links.")
         else:

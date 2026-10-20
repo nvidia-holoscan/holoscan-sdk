@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace control_loop_benchmark;
+
+// The control loop's joint state as an owning generated schema. The six positions are scalar
+// fields so the generated object holds no heap storage, like the 80-byte POD it mirrors.
+table JointStateMessage {
+  sequence:ulong (id: 0);
+  scheduled_ns:long (id: 1);
+  entry_ns:long (id: 2);
+  checksum:ulong (id: 3);
+  p0:double (id: 4);
+  p1:double (id: 5);
+  p2:double (id: 6);
+  p3:double (id: 7);
+  p4:double (id: 8);
+  p5:double (id: 9);
+}
+
+root_type JointStateMessage;
+file_identifier "CLJS";

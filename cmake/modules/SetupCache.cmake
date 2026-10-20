@@ -1,65 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 4.0)
 
 list(APPEND CMAKE_MESSAGE_CONTEXT "cache")
 
-message(STATUS "Configuring Cache for CPM and Compiler Cache (SCCache)")
-
-function(check_cache_dir cache_dir_name)
-    list(APPEND CMAKE_MESSAGE_CONTEXT "check_cache_dir")
-
-    if(cache_dir_name STREQUAL "")
-        message(FATAL_ERROR "cache_dir_name is empty")
-    endif()
-
-    cmake_path(IS_RELATIVE ${cache_dir_name} is_relative)
-
-    # If the cache directory is a relative path, make it absolute path. Also normalize the path.
-    if(is_relative)
-        cmake_path(ABSOLUTE_PATH ${cache_dir_name} BASE_DIRECTORY ${CMAKE_SOURCE_DIR} NORMALIZE)
-    else()
-        cmake_path(NORMAL_PATH ${cache_dir_name})
-    endif()
-
-    # If the cache directory doesn't exist, create it
-    if(NOT EXISTS "${${cache_dir_name}}")
-        message(STATUS "Creating folder '${${cache_dir_name}}'...")
-        file(MAKE_DIRECTORY "${${cache_dir_name}}")
-    endif()
-
-    # Resolve symlinks to get the real path
-    get_filename_component(RESOLVED_CACHE_DIR "${${cache_dir_name}}" REALPATH)
-
-    # Update the cache directory with the resolved path
-    set(${cache_dir_name} "${RESOLVED_CACHE_DIR}" PARENT_SCOPE)
-
-    message(STATUS "Cache directory: ${RESOLVED_CACHE_DIR}")
-
-    # If CMAKE_FIND_ROOT_PATH is set, add the cache directory to it
-    if(NOT "${CMAKE_FIND_ROOT_PATH}" STREQUAL "")
-        message(STATUS "Cache directory '${RESOLVED_CACHE_DIR}'(by ${cache_dir_name}) "
-            " is not accessible from CMAKE_FIND_ROOT_PATH('${CMAKE_FIND_ROOT_PATH}'). "
-            " Appending the cache path to CMAKE_FIND_ROOT_PATH for CPM to find the downloaded packages...")
-
-        list(APPEND CMAKE_FIND_ROOT_PATH "${RESOLVED_CACHE_DIR}")
-        set(CMAKE_FIND_ROOT_PATH "${CMAKE_FIND_ROOT_PATH}" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(configure_cpm cache_dir_name)
-    list(APPEND CMAKE_MESSAGE_CONTEXT "configure_cpm")
-
-    if(cache_dir_name STREQUAL "")
-        message(FATAL_ERROR "cache_dir_name is empty")
-    endif()
-
-    # Set the CPM_SOURCE_CACHE environment
-    set(ENV{CPM_SOURCE_CACHE} "${${cache_dir_name}}/cpm")
-
-    message(STATUS "CPM source cache directory: $ENV{CPM_SOURCE_CACHE}")
-endfunction()
+include("${CMAKE_CURRENT_LIST_DIR}/SetupSourceCache.cmake")
+message(STATUS "Configuring Compiler Cache (SCCache)")
 
 # This function requires the following arguments:
 # - LANGUAGE: The language to be configured
@@ -139,30 +86,19 @@ function(configure_sccache cache_dir_name)
 endfunction()
 
 # ##############################################################################
-# Default HOLOSCAN_USE_CACHE_DIR and HOLOSCAN_CACHE_DIR when this module is reused and
-# variables are not set.
-
-if(NOT DEFINED HOLOSCAN_USE_CACHE_DIR)
-    set(HOLOSCAN_USE_CACHE_DIR ON)
-    message(STATUS "HOLOSCAN_USE_CACHE_DIR is not set. Defaulting to '${HOLOSCAN_USE_CACHE_DIR}'")
-endif()
-
-if(NOT DEFINED HOLOSCAN_CACHE_DIR)
-    set(HOLOSCAN_CACHE_DIR ".cache")
-    message(STATUS "HOLOSCAN_CACHE_DIR is not set. Defaulting to '${HOLOSCAN_CACHE_DIR}'")
-endif()
-
 if(HOLOSCAN_USE_CACHE_DIR)
-    check_cache_dir(HOLOSCAN_CACHE_DIR)
-    configure_cpm(HOLOSCAN_CACHE_DIR)
-
+    # Keep cached dependency sources visible to cross builds.
+    if(CMAKE_FIND_ROOT_PATH)
+        list(APPEND CMAKE_FIND_ROOT_PATH "${HOLOSCAN_CACHE_DIR}")
+        list(REMOVE_DUPLICATES CMAKE_FIND_ROOT_PATH)
+    endif()
     if(HOLOSCAN_USE_SCCACHE)
         configure_sccache(HOLOSCAN_CACHE_DIR)
     else()
         message(STATUS "SCCache is not enabled. Skipping compiler cache configuration.")
     endif()
 else()
-    message(STATUS "Cache disabled (HOLOSCAN_USE_CACHE_DIR=OFF). Skipping CPM and compiler cache setup.")
+    message(STATUS "Cache disabled (HOLOSCAN_USE_CACHE_DIR=OFF). Skipping compiler cache setup.")
 endif()
 
 list(POP_BACK CMAKE_MESSAGE_CONTEXT)
